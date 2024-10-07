@@ -2,7 +2,7 @@
 <project version="4">
   <component name="ProjectModuleManager">
     <modules>
-      <module fileurl="file://$PROJECT_DIR$/.idea/InventoryZ.iml" filepath="$PROJECT_DIR$/.idea/InventoryZ.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/TechTracker.iml" filepath="$PROJECT_DIR$/.idea/TechTracker.iml" />
     </modules>
   </component>
 </project>
