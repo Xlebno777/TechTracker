@@ -11,10 +11,10 @@
         <div class="collapse navbar-collapse" id="navbarNav">
           <ul class="navbar-nav">
             <li class="nav-item">
-              <router-link class="nav-link" to="/devices">Устройства</router-link>
+              <router-link class="nav-link" :to="{ name: 'DeviceTable' }">Устройства</router-link>
             </li>
             <li class="nav-item">
-              <router-link class="nav-link" to="/device/create">Добавить</router-link>
+              <router-link class="nav-link" :to="{ name: 'DeviceCreate' }">Добавить</router-link>
             </li>
           </ul>
         </div>

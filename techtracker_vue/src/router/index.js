@@ -1,6 +1,6 @@
 // frontend/src/router/index.js
 import { createRouter, createWebHistory } from 'vue-router'
-import DeviceList from '../components/DeviceList.vue'
+import DeviceTable from '../components/DeviceTable.vue'
 import DeviceForm from '../components/DeviceForm.vue'
 
 const routes = [
@@ -10,8 +10,8 @@ const routes = [
   },
   {
     path: '/devices',
-    name: 'DeviceList',
-    component: DeviceList
+    name: 'DeviceTable',
+    component: DeviceTable
   },
   {
     path: '/device/create',

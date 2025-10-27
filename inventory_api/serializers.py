@@ -106,18 +106,20 @@ class LogSerializer(serializers.ModelSerializer):
 # Используем `source` для указания связанного поля и `many=True` если связь OneToMany или ManyToMany.
 # Для OneToOne связей `many=False` (по умолчанию).
 class DeviceSerializer(serializers.ModelSerializer):
-    # Включаем связанные специфичные данные (только для чтения)
+    # Включаем связанные данные (только для чтения)
     computer_specs = ComputerSpecsSerializer(required=False, read_only=True)
     printer_scanner_specs = PrinterScannerSpecsSerializer(required=False, read_only=True)
     network_specs = NetworkDeviceSpecsSerializer(required=False, read_only=True)
-    # Включаем связанные данные для owner и assigned_to
-    owner = serializers.StringRelatedField(read_only=True)
-    assigned_to = serializers.StringRelatedField(read_only=True)
     # Включаем связанные данные для device_type и location
     device_type = DeviceTypeSerializer(read_only=True)
     location = LocationSerializer(read_only=True)
-    # Включаем количество логов (для удобства)
+    # Включаем количество логов
     logs_count = serializers.SerializerMethodField()
+
+    # --- Изменение: Используем PrimaryKeyRelatedField для owner и assigned_to ---
+    owner = serializers.PrimaryKeyRelatedField(queryset=User.objects.all(), required=False, allow_null=True)
+    assigned_to = serializers.PrimaryKeyRelatedField(queryset=User.objects.all(), required=False, allow_null=True)
+    # --- /Изменение --
 
     class Meta:
         model = Device

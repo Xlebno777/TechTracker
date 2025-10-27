@@ -240,14 +240,13 @@ export default {
     async fetchDeviceForEdit(id) {
       this.loading = true;
       this.error = null;
-      try {
-        const response = await apiClient.get(`api/devices/${id}/`); // ✅ Новый код
+      try { 
+        const response = await apiClient.get(`/api/devices/${id}/`);
         const deviceData = response.data;
 
-        // Заполняем основную форму
         this.form = {
           ...deviceData,
-          // Убираем связанные данные из основной формы, они будут вложены
+          // Убираем вложенные объекты из основной формы
           device_type: deviceData.device_type.id,
           location: deviceData.location.id,
           computer_specs: deviceData.computer_specs || {
@@ -261,15 +260,16 @@ export default {
           network_specs: deviceData.network_specs || {
             ports_count: null,
           }
-        };
-        this.isEditing = true;
+          // owner и assigned_to останутся числами, как и должны
+        }
+        this.isEditing = true
       } catch (err) {
         console.error("Ошибка при загрузке устройства для редактирования:", err);
         this.error = 'Не удалось загрузить устройство для редактирования.';
       } finally {
         this.loading = false;
       }
-    },
+    },        
     async handleSubmit() {
       this.loading = true;
       this.error = null;
