@@ -41,6 +41,25 @@ INSTALLED_APPS = [
     'inventory_api',
 ]
 
+REST_FRAMEWORK = {
+    'DEFAULT_AUTHENTICATION_CLASSES': [
+        'rest_framework.authentication.SessionAuthentication', # Аутентификация через сессии Django (удобно для тестов в браузере)
+        # 'rest_framework.authentication.TokenAuthentication', # Можно добавить позже для API-клиентов
+        # 'rest_framework_simplejwt.authentication.JWTAuthentication', # Или JWT токены
+    ],
+    'DEFAULT_PERMISSION_CLASSES': [
+        # 'rest_framework.permissions.IsAuthenticated', # <-- Глобальное требование аутентификации (опционально)
+        # Если раскомментировать строку выше, все API будут требовать входа по умолчанию.
+        # Но мы будем устанавливать разрешения на уровне ViewSet'ов, поэтому оставим пустым или укажем базовое.
+        'rest_framework.permissions.DjangoModelPermissions', # <-- Пример глобального разрешения (тоже опционально, лучше на уровне ViewSet'ов)
+        # Лучше указывать permission_classes в каждом ViewSet индивидуально, как мы сделаем ниже.
+    ],
+}
+
+# Опционально: настройка URL перенаправления после входа/выхода
+LOGIN_REDIRECT_URL = '/' # Куда перенаправлять после успешного входа (если не указан next)
+LOGOUT_REDIRECT_URL = '/' # Куда перенаправлять после выхода
+
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
@@ -102,6 +121,12 @@ AUTH_PASSWORD_VALIDATORS = [
     {
         'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator',
     },
+]
+
+# Указываем, какие домены доверенные для CSRF
+CSRF_TRUSTED_ORIGINS = [
+    'http://localhost:8080', # Адрес Vue-приложения
+    'http://127.0.0.1:8080', # Альтернативный адрес Vue-приложения
 ]
 
 

@@ -19,5 +19,5 @@ from django.urls import path, include
 
 urlpatterns = [
     path('admin/', admin.site.urls),
-    path('', include('inventory_api.urls')), # Подключаем URLы API
+    path('api/', include('inventory_api.urls')), # Подключаем URLы API
 ]
