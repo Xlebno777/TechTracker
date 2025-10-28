@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from .models import Device, DeviceType, Location, UserProfile, ComputerSpecs, PrinterScannerSpecs, NetworkDeviceSpecs, Cartridge, CartridgeLog, Log
-from django.contrib.auth.models import User
+from django.contrib.auth.models import User, Group
 from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework.exceptions import ValidationError
 
@@ -43,8 +43,7 @@ class UserProfileSerializer(serializers.ModelSerializer):
 class ComputerSpecsSerializer(serializers.ModelSerializer):
     class Meta:
         model = ComputerSpecs
-        fields = '__all__'
-    
+        exclude = ['device']
     def to_internal_value(self, data):
         # Убираем 'device' из данных перед стандартной валидацией
         # Это позволяет пройти валидацию, даже если 'device' не передан
@@ -58,7 +57,7 @@ class PrinterScannerSpecsSerializer(serializers.ModelSerializer):
     current_cartridge = serializers.PrimaryKeyRelatedField(queryset=Cartridge.objects.all(), required=False, allow_null=True)
     class Meta:
         model = PrinterScannerSpecs
-        fields = '__all__'
+        exclude = ['device']
 
     def to_internal_value(self, data):
         data = data.copy()
@@ -69,7 +68,7 @@ class PrinterScannerSpecsSerializer(serializers.ModelSerializer):
 class NetworkDeviceSpecsSerializer(serializers.ModelSerializer):
     class Meta:
         model = NetworkDeviceSpecs
-        fields = '__all__'
+        exclude = ['device']
 
     def to_internal_value(self, data):
         data = data.copy()
@@ -222,56 +221,50 @@ class DeviceCreateUpdateSerializer(serializers.ModelSerializer):
         return device
 
     def update(self, instance, validated_data):
-        # Извлекаем валидированные вложенные данные
         computer_specs_data = validated_data.pop('computer_specs', None)
         printer_scanner_specs_data = validated_data.pop('printer_scanner_specs', None)
         network_specs_data = validated_data.pop('network_specs', None)
 
-        # Обновляем основной объект Device
+        # --- обновляем сам Device
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
         instance.save()
 
-        # Обновляем или создаем/удаляем связанные специфичные данные
+        # --- Компьютерные спецификации
         if computer_specs_data is not None:
-            specs, created = ComputerSpecs.objects.get_or_create(device=instance)
-            for attr, value in computer_specs_data.items():
-                setattr(specs, attr, value)
+            specs, _ = ComputerSpecs.objects.get_or_create(device=instance)
+            for key, value in computer_specs_data.items():
+                setattr(specs, key, value)
             specs.save()
-        elif computer_specs_data is None:
-            try:
-                instance.computer_specs.delete()
-            except ComputerSpecs.DoesNotExist:
-                pass
 
+        # --- Принтерные спецификации
         if printer_scanner_specs_data is not None:
-            specs, created = PrinterScannerSpecs.objects.get_or_create(device=instance)
-            for attr, value in printer_scanner_specs_data.items():
-                setattr(specs, attr, value)
+            specs, _ = PrinterScannerSpecs.objects.get_or_create(device=instance)
+            for key, value in printer_scanner_specs_data.items():
+                setattr(specs, key, value)
             specs.save()
-        elif printer_scanner_specs_data is None:
-            try:
-                instance.printer_scanner_specs.delete()
-            except PrinterScannerSpecs.DoesNotExist:
-                pass
 
+        # --- Сетевые спецификации
         if network_specs_data is not None:
-            specs, created = NetworkDeviceSpecs.objects.get_or_create(device=instance)
-            for attr, value in network_specs_data.items():
-                setattr(specs, attr, value)
+            specs, _ = NetworkDeviceSpecs.objects.get_or_create(device=instance)
+            for key, value in network_specs_data.items():
+                setattr(specs, key, value)
             specs.save()
-        elif network_specs_data is None:
-            try:
-                instance.network_specs.delete()
-            except NetworkDeviceSpecs.DoesNotExist:
-                pass
 
         return instance
+
+# Опционально: создай сериализатор для Group, если хочешь возвращать ID и имя
+class GroupSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Group
+        fields = ['id', 'name']
 
 # --- User Serializer (для получения информации о пользователе) ---
 # Часто нужно получать данные пользователя, например, для владельца устройства.
 class UserSerializer(serializers.ModelSerializer):
+    groups = GroupSerializer(many=True, read_only=True) # Возвращает полную информацию о группах
+
     class Meta:
         model = User
-        fields = ['id', 'username', 'first_name', 'last_name', 'email'] # Выбираем нужные поля
+        fields = ['id', 'username', 'first_name', 'last_name', 'email', 'is_staff', 'groups'] # Выбираем нужные поля
         # exclude = ['password'] # Пароль исключаем всегда при сериализации

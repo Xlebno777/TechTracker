@@ -104,6 +104,26 @@
       </div>
 
       <div class="form-group">
+        <label for="owner">Владелец:</label>
+        <select id="owner" v-model="form.owner" class="form-control">
+          <option value="">Нет владельца</option>
+          <option v-for="user in users" :key="user.id" :value="user.id">
+            {{ user.username }} ({{ user.first_name }} {{ user.last_name }})
+          </option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label for="assigned_to">Назначен пользователю:</label>
+        <select id="assigned_to" v-model="form.assigned_to" class="form-control">
+          <option value="">Не назначен</option>
+          <option v-for="user in users" :key="user.id" :value="user.id">
+            {{ user.username }} ({{ user.first_name }} {{ user.last_name }})
+          </option>
+        </select>
+      </div>
+
+      <div class="form-group">
         <label for="notes">Заметки:</label>
         <textarea
           id="notes"
@@ -193,6 +213,8 @@ export default {
         ip_address: '',
         mac_address: '',
         notes: '',
+        owner: null, // ID владельца
+        assigned_to: null, // ID назначенного пользователя
         // Вложенные объекты для специфичных данных
         computer_specs: {
           cpu: '',
@@ -211,6 +233,8 @@ export default {
       },
       deviceTypes: [],
       locations: [],
+      users: [], // Добавляем список пользователей
+      currentUser: null, // Добавляем информацию о текущем пользователе
       loading: false,
       error: null,
       isEditing: false, // Флаг для определения режима редактирования
@@ -223,6 +247,24 @@ export default {
     }
   },
   methods: {
+    async fetchCurrentUser() {
+      try {
+        const response = await apiClient.get('users/me/');
+        this.currentUser = response.data;
+      } catch (err) {
+        console.error("Ошибка при загрузке данных пользователя:", err);
+        this.currentUser = null;
+      }
+    },
+    async fetchUsers() {
+      try {
+        const response = await apiClient.get('users/');
+        this.users = response.data;
+      } catch (err) {
+        console.error("Ошибка при загрузке пользователей:", err);
+        this.users = [];
+      }
+    },
     async fetchDeviceTypesAndLocations() {
       // Загружаем справочники
       try {
@@ -249,6 +291,8 @@ export default {
           // Убираем вложенные объекты из основной формы
           device_type: deviceData.device_type.id,
           location: deviceData.location.id,
+          owner: deviceData.owner ? deviceData.owner.id : null,
+          assigned_to: deviceData.assigned_to ? deviceData.assigned_to.id : null,
           computer_specs: deviceData.computer_specs || {
             cpu: '',
             ram_gb: null,
@@ -364,8 +408,9 @@ export default {
     }
   },
   async mounted() {
-    // Загружаем справочники при монтировании
+    await this.fetchCurrentUser(); // Получаем текущего пользователя
     await this.fetchDeviceTypesAndLocations();
+    await this.fetchUsers(); // Получаем список пользователей
 
     // Если передан deviceId, загружаем данные для редактирования
     if (this.deviceId) {
