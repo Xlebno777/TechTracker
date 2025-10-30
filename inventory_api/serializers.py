@@ -99,6 +99,22 @@ class LogSerializer(serializers.ModelSerializer):
         # exclude = ['created_by'] # Если будем устанавливать created_by в ViewSet
         # Включаем все, но в ViewSet установим created_by вручную
 
+# Опционально: создай сериализатор для Group, если хочешь возвращать ID и имя
+class GroupSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Group
+        fields = ['id', 'name']
+
+# --- User Serializer (для получения информации о пользователе) ---
+# Часто нужно получать данные пользователя, например, для владельца устройства.
+class UserSerializer(serializers.ModelSerializer):
+    groups = GroupSerializer(many=True, read_only=True) # Возвращает полную информацию о группах
+
+    class Meta:
+        model = User
+        fields = ['id', 'username', 'first_name', 'last_name', 'email', 'is_staff', 'groups'] # Выбираем нужные поля
+        # exclude = ['password'] # Пароль исключаем всегда при сериализации
+
 # --- Основной Device Serializer ---
 # Device - основная модель, к которой привязаны специфичные данные.
 # Мы хотим включить специфичные данные в JSON ответа для Device.
@@ -110,19 +126,22 @@ class DeviceSerializer(serializers.ModelSerializer):
     printer_scanner_specs = PrinterScannerSpecsSerializer(required=False, read_only=True)
     network_specs = NetworkDeviceSpecsSerializer(required=False, read_only=True)
     # Включаем связанные данные для device_type и location
-    device_type = DeviceTypeSerializer(read_only=True)
-    location = LocationSerializer(read_only=True)
+    device_type = serializers.CharField(source='device_type.name', read_only=True)
+    location = serializers.CharField(source='location.name', read_only=True)
     # Включаем количество логов
     logs_count = serializers.SerializerMethodField()
+    status = serializers.SerializerMethodField() 
 
-    # --- Изменение: Используем PrimaryKeyRelatedField для owner и assigned_to ---
-    owner = serializers.PrimaryKeyRelatedField(queryset=User.objects.all(), required=False, allow_null=True)
-    assigned_to = serializers.PrimaryKeyRelatedField(queryset=User.objects.all(), required=False, allow_null=True)
+    # --- Изменение: Используем UserSerializer для owner и assigned_to ---
+    # Это заставит DRF возвращать полный объект пользователя, а не только ID
+    owner = serializers.SerializerMethodField()
+    assigned_to = UserSerializer(read_only=True)
     # --- /Изменение --
 
     class Meta:
         model = Device
         fields = '__all__'
+        extra_fields = ['device_type_name', 'location_name', 'owner_name', 'status']
         # exclude = ['qr_code_id'] # Если не хотим отдавать qr_code_id клиенту, можно исключить
         # read_only_fields = ('qr_code_id', 'created_at', 'updated_at') # Указываем поля, которые не могут быть изменены через API
 
@@ -130,6 +149,22 @@ class DeviceSerializer(serializers.ModelSerializer):
         # obj - это экземпляр модели Device
         # Возвращаем количество связанных логов
         return obj.logs.count()
+    
+    def get_owner(self, obj):
+        if not obj.owner:
+            return None
+        return f"{obj.owner.username} ({obj.owner.first_name} {obj.owner.last_name})"
+    
+    def get_status(self, obj):
+        """Преобразует статус на русский язык."""
+        status_map = {
+            'active': 'В работе',
+            'in_repair': 'В ремонте',
+            'retired': 'Списано',
+            'in_stock': 'На складе',
+            'reserved': 'В резерве'
+        }
+        return status_map.get(obj.status, 'Неизвестно')
 
 # --- Сериализаторы для создания/обновления Device ---
 # При создании/обновлении Device, возможно, нужно одновременно создать/обновить связанные специфичные данные.
@@ -253,18 +288,5 @@ class DeviceCreateUpdateSerializer(serializers.ModelSerializer):
 
         return instance
 
-# Опционально: создай сериализатор для Group, если хочешь возвращать ID и имя
-class GroupSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Group
-        fields = ['id', 'name']
 
-# --- User Serializer (для получения информации о пользователе) ---
-# Часто нужно получать данные пользователя, например, для владельца устройства.
-class UserSerializer(serializers.ModelSerializer):
-    groups = GroupSerializer(many=True, read_only=True) # Возвращает полную информацию о группах
 
-    class Meta:
-        model = User
-        fields = ['id', 'username', 'first_name', 'last_name', 'email', 'is_staff', 'groups'] # Выбираем нужные поля
-        # exclude = ['password'] # Пароль исключаем всегда при сериализации

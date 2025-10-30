@@ -1,205 +1,266 @@
-<!-- frontend/src/components/DeviceForm.vue -->
 <template>
-  <div class="device-form">
-    <h2>{{ isEditing ? 'Редактировать' : 'Добавить' }} Устройство</h2>
+  <div class="device-form p-fluid p-p-3">
+    <h2 class="mb-4" style="font-size: 1.5rem; font-weight: 600; color: #2c3e50;">
+      {{ isEditing ? 'Редактировать' : 'Добавить' }} устройство
+    </h2>
 
+    <!-- Форма устройства -->
     <form @submit.prevent="handleSubmit">
-      <div class="form-group">
-        <label for="name">Название:</label>
-        <input
-          type="text"
-          id="name"
-          v-model="form.name"
-          class="form-control"
-          required
-        />
+      <!-- Название -->
+      <div class="p-field p-mb-3">
+        <label for="name" class="p-d-block p-font-bold p-text-lg">Название</label>
+        <InputText id="name" v-model="form.name" required class="p-inputtext-lg" />
       </div>
 
-      <div class="form-group">
-        <label for="serial_number">Серийный номер:</label>
-        <input
-          type="text"
-          id="serial_number"
-          v-model="form.serial_number"
-          class="form-control"
-          required
-        />
+      <!-- Серийный номер -->
+      <div class="p-field p-mb-3">
+        <label for="serial_number" class="p-d-block p-font-bold p-text-lg">Серийный номер</label>
+        <InputText id="serial_number" v-model="form.serial_number" required class="p-inputtext-lg" />
       </div>
 
-      <div class="form-group">
-        <label for="asset_number">Инвентарный номер:</label>
-        <input
-          type="text"
-          id="asset_number"
-          v-model="form.asset_number"
-          class="form-control"
-        />
+      <!-- Инвентарный номер -->
+      <div class="p-field p-mb-3">
+        <label for="asset_number" class="p-d-block p-font-bold p-text-lg">Инвентарный номер</label>
+        <InputText id="asset_number" v-model="form.asset_number" class="p-inputtext-lg" />
       </div>
 
-      <div class="form-group">
-        <label for="device_type">Тип устройства:</label>
-        <select
+      <!-- Тип устройства -->
+      <div class="p-field p-mb-3">
+        <label for="device_type" class="p-d-block p-font-bold p-text-lg">Тип устройства</label>
+        <Dropdown
           id="device_type"
           v-model="form.device_type"
-          class="form-control"
+          :options="deviceTypes"
+          optionLabel="name"
+          optionValue="id"
+          placeholder="Выберите тип"
           required
-        >
-          <option value="">Выберите тип</option>
-          <option v-for="type in deviceTypes" :key="type.id" :value="type.id">
-            {{ type.name }}
-          </option>
-        </select>
+          class="p-inputtext-lg"
+        />
       </div>
 
-      <div class="form-group">
-        <label for="status">Статус:</label>
-        <select
+      <!-- Статус -->
+      <div class="p-field p-mb-3">
+        <label for="status" class="p-d-block p-font-bold p-text-lg">Статус</label>
+        <Dropdown
           id="status"
           v-model="form.status"
-          class="form-control"
+          :options="statusOptions"
+          optionLabel="label"
+          optionValue="value"
+          placeholder="Выберите статус"
           required
-        >
-          <option value="">Выберите статус</option>
-          <option value="active">В работе</option>
-          <option value="in_repair">В ремонте</option>
-          <option value="retired">Списано</option>
-          <option value="in_stock">На складе</option>
-          <option value="reserved">В резерве</option>
-        </select>
+          class="p-inputtext-lg"
+        />
       </div>
 
-      <div class="form-group">
-        <label for="location">Местоположение:</label>
-        <select
+      <!-- Местоположение -->
+      <div class="p-field p-mb-3">
+        <label for="location" class="p-d-block p-font-bold p-text-lg">Местоположение</label>
+        <Dropdown
           id="location"
           v-model="form.location"
-          class="form-control"
+          :options="locations"
+          optionLabel="name"
+          optionValue="id"
+          placeholder="Выберите местоположение"
           required
-        >
-          <option value="">Выберите местоположение</option>
-          <option v-for="loc in locations" :key="loc.id" :value="loc.id">
-            {{ loc.name }}
-          </option>
-        </select>
-      </div>
-
-      <div class="form-group">
-        <label for="ip_address">IP-адрес:</label>
-        <input
-          type="text"
-          id="ip_address"
-          v-model="form.ip_address"
-          class="form-control"
+          class="p-inputtext-lg"
         />
       </div>
 
-      <div class="form-group">
-        <label for="mac_address">MAC-адрес:</label>
-        <input
-          type="text"
-          id="mac_address"
-          v-model="form.mac_address"
-          class="form-control"
+      <!-- IP-адрес -->
+      <div class="p-field p-mb-3">
+        <label for="ip_address" class="p-d-block p-font-bold p-text-lg">IP-адрес</label>
+        <InputText id="ip_address" v-model="form.ip_address" class="p-inputtext-lg" />
+      </div>
+
+      <!-- MAC-адрес -->
+      <div class="p-field p-mb-3">
+        <label for="mac_address" class="p-d-block p-font-bold p-text-lg">MAC-адрес</label>
+        <InputText id="mac_address" v-model="form.mac_address" class="p-inputtext-lg" />
+      </div>
+
+      <!-- Владелец -->
+      <div class="p-field p-mb-3">
+        <label for="owner" class="p-d-block p-font-bold p-text-lg">Владелец</label>
+        <Dropdown
+          id="owner"
+          v-model="form.owner"
+          :options="users"
+          optionLabel="username"
+          optionValue="id"
+          placeholder="Нет владельца"
+          showClear
+          class="p-inputtext-lg"
         />
       </div>
 
-      <div class="form-group">
-        <label for="owner">Владелец:</label>
-        <select id="owner" v-model="form.owner" class="form-control">
-          <option value="">Нет владельца</option>
-          <option v-for="user in users" :key="user.id" :value="user.id">
-            {{ user.username }} ({{ user.first_name }} {{ user.last_name }})
-          </option>
-        </select>
+      <!-- Назначен пользователю -->
+      <div class="p-field p-mb-3">
+        <label for="assigned_to" class="p-d-block p-font-bold p-text-lg">Назначен пользователю</label>
+        <Dropdown
+          id="assigned_to"
+          v-model="form.assigned_to"
+          :options="users"
+          optionLabel="username"
+          optionValue="id"
+          placeholder="Не назначен"
+          showClear
+          class="p-inputtext-lg"
+        />
       </div>
 
-      <div class="form-group">
-        <label for="assigned_to">Назначен пользователю:</label>
-        <select id="assigned_to" v-model="form.assigned_to" class="form-control">
-          <option value="">Не назначен</option>
-          <option v-for="user in users" :key="user.id" :value="user.id">
-            {{ user.username }} ({{ user.first_name }} {{ user.last_name }})
-          </option>
-        </select>
+      <!-- Заметки -->
+      <div class="p-field p-mb-3">
+        <label for="notes" class="p-d-block p-font-bold p-text-lg">Заметки</label>
+        <Textarea id="notes" v-model="form.notes" rows="3" autoResize class="p-inputtextarea-lg" />
       </div>
 
-      <div class="form-group">
-        <label for="notes">Заметки:</label>
-        <textarea
-          id="notes"
-          v-model="form.notes"
-          class="form-control"
-        ></textarea>
-      </div>
-
-      <!-- Специфичные поля (упрощённо, можно сделать динамически) -->
-      <div v-if="selectedDeviceType && (selectedDeviceType.name === 'Ноутбук' || selectedDeviceType.name === 'Настольный ПК' || selectedDeviceType.name === 'Моноблок')">
-        <h4>Спецификации ПК</h4>
-        <div class="form-group">
-          <label for="cpu">Процессор:</label>
-          <input type="text" id="cpu" v-model="form.computer_specs.cpu" class="form-control" />
+      <!-- Специфичные поля -->
+      <div
+        v-if="
+          selectedDeviceType &&
+          ['Ноутбук', 'Настольный ПК', 'Моноблок'].includes(selectedDeviceType.name)
+        "
+        class="p-mt-3 p-pb-3"
+      >
+        <h4 class="p-mb-3 p-font-bold">Спецификации ПК</h4>
+        <div class="p-field p-mb-3">
+          <label for="cpu" class="p-d-block p-font-bold p-text-lg">Процессор</label>
+          <InputText id="cpu" v-model="form.computer_specs.cpu" class="p-inputtext-lg" />
         </div>
-        <div class="form-group">
-          <label for="ram_gb">ОЗУ (ГБ):</label>
-          <input type="number" id="ram_gb" v-model.number="form.computer_specs.ram_gb" class="form-control" />
+        <div class="p-field p-mb-3">
+          <label for="ram_gb" class="p-d-block p-font-bold p-text-lg">ОЗУ (ГБ)</label>
+          <InputNumber id="ram_gb" v-model="form.computer_specs.ram_gb" class="p-inputtext-lg" />
         </div>
-        <!-- ... другие поля ComputerSpecs ... -->
       </div>
 
-      <div v-if="selectedDeviceType && (selectedDeviceType.name.includes('Принтер') || selectedDeviceType.name.includes('Сканер'))">
-        <h4>Спецификации МФУ</h4>
-        <div class="form-group">
-          <label for="printer_type">Тип принтера:</label>
-          <select id="printer_type" v-model="form.printer_scanner_specs.printer_type" class="form-control">
-            <option value="">Выберите тип</option>
-            <option value="laser">Лазерный</option>
-            <option value="inkjet">Струйный</option>
-            <option value="matrix">Матричный</option>
-          </select>
+      <div
+        v-if="
+          selectedDeviceType &&
+          (selectedDeviceType.name.includes('Принтер') ||
+            selectedDeviceType.name.includes('Сканер'))
+        "
+        class="p-mt-3 p-pb-3"
+      >
+        <h4 class="p-mb-3 p-font-bold">Спецификации МФУ</h4>
+        <div class="p-field p-mb-3">
+          <label for="printer_type" class="p-d-block p-font-bold p-text-lg">Тип принтера</label>
+          <Dropdown
+            id="printer_type"
+            v-model="form.printer_scanner_specs.printer_type"
+            :options="printerTypes"
+            optionLabel="label"
+            optionValue="value"
+            placeholder="Выберите тип"
+            class="p-inputtext-lg"
+          />
         </div>
-        <div class="form-group">
-          <label>
-            <input type="checkbox" v-model="form.printer_scanner_specs.color_printing" />
-            Цветная печать
-          </label>
+        <div class="p-field-checkbox p-mb-3">
+          <Checkbox
+            inputId="color_printing"
+            v-model="form.printer_scanner_specs.color_printing"
+            binary
+          />
+          <label for="color_printing" class="p-font-bold p-text-lg">Цветная печать</label>
         </div>
-        <!-- ... другие поля PrinterScannerSpecs ... -->
       </div>
 
-      <div v-if="selectedDeviceType && (selectedDeviceType.name.includes('Коммутатор') || selectedDeviceType.name.includes('Маршрутизатор') || selectedDeviceType.name.includes('Точка доступа'))">
-        <h4>Спецификации Сетевого устройства</h4>
-        <div class="form-group">
-          <label for="ports_count">Количество портов:</label>
-          <input type="number" id="ports_count" v-model.number="form.network_specs.ports_count" class="form-control" />
+      <div
+        v-if="
+          selectedDeviceType &&
+          ['Коммутатор', 'Маршрутизатор', 'Точка доступа'].some(type =>
+            selectedDeviceType.name.includes(type)
+          )
+        "
+        class="p-mt-3 p-pb-3"
+      >
+        <h4 class="p-mb-3 p-font-bold">Сетевые характеристики</h4>
+        <div class="p-field p-mb-3">
+          <label for="ports_count" class="p-d-block p-font-bold p-text-lg">Количество портов</label>
+          <InputNumber id="ports_count" v-model="form.network_specs.ports_count" class="p-inputtext-lg" />
         </div>
-        <!-- ... другие поля NetworkDeviceSpecs ... -->
       </div>
 
-      <button type="submit" class="btn btn-success" :disabled="loading">
-        {{ loading ? 'Загрузка...' : (isEditing ? 'Сохранить' : 'Создать') }}
-      </button>
-      <router-link to="/devices" class="btn btn-secondary ml-2">Отмена</router-link>
+      <!-- Кнопки -->
+      <div class="p-d-flex p-ai-center p-mt-4">
+        <Button
+          type="submit"
+          label="Сохранить"
+          icon="pi pi-check"
+          class="p-button-success p-button-lg p-mr-2"
+          :loading="loading"
+        />
+
+        <Button
+          v-if="isEditing && canDeleteDevice()"
+          label="Удалить"
+          icon="pi pi-trash"
+          class="p-button-danger p-button-lg p-mr-2"
+          @click="handleDelete"
+          :disabled="loading"
+        />
+
+        <Button
+          label="Отмена"
+          icon="pi pi-times"
+          class="p-button-secondary p-button-lg"
+          @click="$router.push('/devices')"
+          severity="secondary"
+        />
+      </div>
     </form>
 
-    <!-- Сообщение об ошибке -->
-    <div v-if="error" class="alert alert-danger mt-3">
-      Ошибка: {{ error }}
-    </div>
+    <!-- PrimeVue Confirm и Toast -->
+    <ConfirmDialog />
+    <Toast />
+
+    <!-- Ошибка -->
+    <Message
+      v-if="error"
+      severity="error"
+      :closable="false"
+      class="p-mt-4"
+      :text="`Ошибка: ${error}`"
+    />
   </div>
 </template>
 
 <script>
-// import axios from 'axios';
 import apiClient from '@/api';
+import { useConfirm } from 'primevue/useconfirm';
+import { useToast } from 'primevue/usetoast';
+import InputText from 'primevue/inputtext';
+import Textarea from 'primevue/textarea';
+import InputNumber from 'primevue/inputnumber';
+import Dropdown from 'primevue/dropdown';
+import Checkbox from 'primevue/checkbox';
+import Button from 'primevue/button';
+import ConfirmDialog from 'primevue/confirmdialog';
+import Toast from 'primevue/toast';
+import Message from 'primevue/message';
 
 export default {
   name: 'DeviceForm',
+  components: {
+    InputText,
+    Textarea,
+    InputNumber,
+    Dropdown,
+    Checkbox,
+    Button,
+    ConfirmDialog,
+    Toast,
+    Message
+  },
+  setup() {
+    const confirm = useConfirm();
+    const toast = useToast();
+    return { confirm, toast };
+  },
   props: {
-    // ID устройства для редактирования (если передан)
-    deviceId: {
-      type: String,
-      default: null
-    }
+    deviceId: { type: String, default: null }
   },
   data() {
     return {
@@ -207,240 +268,309 @@ export default {
         name: '',
         serial_number: '',
         asset_number: '',
-        device_type: '', // ID типа
+        device_type: '',
         status: 'active',
-        location: '', // ID местоположения
+        location: '',
         ip_address: '',
         mac_address: '',
         notes: '',
-        owner: null, // ID владельца
-        assigned_to: null, // ID назначенного пользователя
-        // Вложенные объекты для специфичных данных
-        computer_specs: {
-          cpu: '',
-          ram_gb: null,
-          // ... другие поля
-        },
-        printer_scanner_specs: {
-          printer_type: '',
-          color_printing: false,
-          // ... другие поля
-        },
-        network_specs: {
-          ports_count: null,
-          // ... другие поля
-        }
+        owner: null,
+        assigned_to: null,
+        computer_specs: { cpu: '', ram_gb: null },
+        printer_scanner_specs: { printer_type: '', color_printing: false },
+        network_specs: { ports_count: null }
       },
+      statusOptions: [
+        { label: 'В работе', value: 'active' },
+        { label: 'В ремонте', value: 'in_repair' },
+        { label: 'Списано', value: 'retired' },
+        { label: 'На складе', value: 'in_stock' },
+        { label: 'В резерве', value: 'reserved' }
+      ],
+      printerTypes: [
+        { label: 'Лазерный', value: 'laser' },
+        { label: 'Струйный', value: 'inkjet' },
+        { label: 'Матричный', value: 'matrix' }
+      ],
       deviceTypes: [],
       locations: [],
-      users: [], // Добавляем список пользователей
-      currentUser: null, // Добавляем информацию о текущем пользователе
+      users: [],
+      currentUser: null,
       loading: false,
       error: null,
-      isEditing: false, // Флаг для определения режима редактирования
+      isEditing: false
     };
   },
   computed: {
-    // Находим выбранный тип устройства для динамического отображения полей
     selectedDeviceType() {
-      return this.deviceTypes.find(type => type.id === this.form.device_type);
+      return this.deviceTypes.find(t => t.id === this.form.device_type);
     }
   },
   methods: {
+    hasGroup(groupName) {
+      return this.currentUser?.groups?.some(g => g.name === groupName);
+    },
+    canDeleteDevice() {
+      return this.hasGroup('Admins');
+    },
     async fetchCurrentUser() {
       try {
-        const response = await apiClient.get('users/me/');
-        this.currentUser = response.data;
-      } catch (err) {
-        console.error("Ошибка при загрузке данных пользователя:", err);
-        this.currentUser = null;
+        const res = await apiClient.get('api/users/me/');
+        this.currentUser = res.data;
+      } catch (e) {
+        console.error('Ошибка загрузки пользователя', e);
       }
     },
     async fetchUsers() {
       try {
-        const response = await apiClient.get('users/');
-        this.users = response.data;
-      } catch (err) {
-        console.error("Ошибка при загрузке пользователей:", err);
-        this.users = [];
+        const res = await apiClient.get('api/users/');
+        this.users = res.data;
+      } catch (e) {
+        console.error('Ошибка загрузки пользователей', e);
       }
     },
     async fetchDeviceTypesAndLocations() {
-      // Загружаем справочники
       try {
-        const [typesResponse, locationsResponse] = await Promise.all([
-          apiClient.get('api/devicetypes/'), // ✅ Новый код
-          apiClient.get('api/locations/') // ✅ Новый код
+        const [types, locs] = await Promise.all([
+          apiClient.get('api/devicetypes/'),
+          apiClient.get('api/locations/')
         ]);
-        this.deviceTypes = typesResponse.data;
-        this.locations = locationsResponse.data;
-      } catch (err) {
-        console.error("Ошибка при загрузке справочников:", err);
+        this.deviceTypes = types.data;
+        this.locations = locs.data;
+      } catch {
         this.error = 'Не удалось загрузить справочники.';
       }
     },
     async fetchDeviceForEdit(id) {
       this.loading = true;
-      this.error = null;
-      try { 
-        const response = await apiClient.get(`/api/devices/${id}/`);
-        const deviceData = response.data;
-
+      try {
+        const res = await apiClient.get(`/api/devices/${id}/`);
+        const d = res.data;
         this.form = {
-          ...deviceData,
-          // Убираем вложенные объекты из основной формы
-          device_type: deviceData.device_type.id,
-          location: deviceData.location.id,
-          owner: deviceData.owner ? deviceData.owner.id : null,
-          assigned_to: deviceData.assigned_to ? deviceData.assigned_to.id : null,
-          computer_specs: deviceData.computer_specs || {
-            cpu: '',
-            ram_gb: null,
-          },
-          printer_scanner_specs: deviceData.printer_scanner_specs || {
+          ...d,
+          device_type: d.device_type?.id,
+          location: d.location?.id,
+          owner: d.owner || null,
+          assigned_to: d.assigned_to || null,
+          computer_specs: d.computer_specs || { cpu: '', ram_gb: null },
+          printer_scanner_specs: d.printer_scanner_specs || {
             printer_type: '',
-            color_printing: false,
+            color_printing: false
           },
-          network_specs: deviceData.network_specs || {
-            ports_count: null,
-          }
-          // owner и assigned_to останутся числами, как и должны
-        }
-        this.isEditing = true
-      } catch (err) {
-        console.error("Ошибка при загрузке устройства для редактирования:", err);
+          network_specs: d.network_specs || { ports_count: null }
+        };
+        this.isEditing = true;
+      } catch {
         this.error = 'Не удалось загрузить устройство для редактирования.';
       } finally {
         this.loading = false;
       }
-    },        
+    },
     async handleSubmit() {
       this.loading = true;
       this.error = null;
-
-      // 👇 Добавь эту строку для отладки
-      console.log("Данные формы перед отправкой:", this.form);
-
-      const method = this.isEditing ? 'PUT' : 'POST';
-      const url = this.isEditing ? `api/devices/${this.deviceId}/` : 'api/devices/'; // Убедись, что используешь правильный путь
-      const payload = { ...this.form,
-        device_type: parseInt(this.form.device_type, 10),
-        location: parseInt(this.form.location, 10),
-       };
-
-      console.log("Payload перед отправкой:", payload);
+      const url = this.isEditing
+        ? `api/devices/${this.deviceId}/`
+        : 'api/devices/';
+      const method = this.isEditing ? 'put' : 'post';
+      const payload = {
+        ...this.form,
+        device_type: parseInt(this.form.device_type),
+        location: parseInt(this.form.location)
+      };
 
       try {
-        // --- ИСПОЛЬЗУЕМ МЕТОД ЭКЗЕМПЛЯРА ---
-        if (method === 'POST') {
-          await apiClient.post(url, payload);
-        } else if (method === 'PUT') {
-          await apiClient.put(url, payload);
-        }
-        // --- ИЛИ ПЕРЕДАЕМ ОБЪЕКТ КОНФИГУРАЦИИ ---
-        // await apiClient({ method, url, data: payload });
-        // --- Убедись, что используешь 'data: payload', а не 'payload' ---
-
-        alert(this.isEditing ? 'Устройство обновлено.' : 'Устройство создано.');
+        await apiClient[method](url, payload);
+        this.toast.add({
+          severity: 'success',
+          summary: this.isEditing ? 'Обновлено' : 'Создано',
+          detail: 'Устройство сохранено успешно',
+          life: 3000
+        });
         this.$router.push('/devices');
       } catch (err) {
-        console.error(`Ошибка при ${this.isEditing ? 'обновлении' : 'создании'} устройства:`, err);
-        this.handleError(err);
+        console.error('Ошибка при сохранении:', err);
+        this.error = err.response?.data?.detail || 'Ошибка при сохранении.';
       } finally {
         this.loading = false;
       }
     },
-    handleError(err) {
-      if (err.response) {
-        const status = err.response.status;
-        const statusText = err.response.statusText;
-        const responseData = err.response.data;
-
-        console.error("Данные ответа ошибки:", responseData); // Для отладки
-
-        if (typeof responseData === 'string') {
-          // Если ответ - строка (например, HTML-страница ошибки)
-          this.error = `Сервер вернул ошибку (${status} ${statusText}). Подробности в консоли.`;
-        } else if (typeof responseData === 'object' && responseData !== null) {
-          // Если ответ - объект (предположительно JSON с ошибками)
-          // Проверим, содержит ли он ошибки валидации
-          const allErrors = [];
-          // Проверяем основные поля устройства
-          Object.entries(responseData).forEach(([field, errors]) => {
-            if (Array.isArray(errors)) {
-              // Если это массив ошибок для конкретного поля (например, { name: ["Обязательное поле."] } )
-              allErrors.push(`${field}: ${errors.join(', ')}`);
-            } else if (typeof errors === 'object' && errors !== null) {
-              // Если это вложенный объект (например, computer_specs, printer_scanner_specs)
-              // Рекурсивно извлекаем ошибки из вложенного объекта
-              Object.entries(errors).forEach(([subField, subErrors]) => {
-                if (Array.isArray(subErrors)) {
-                  allErrors.push(`${field}.${subField}: ${subErrors.join(', ')}`);
-                } else {
-                  // Если внутри еще один уровень вложенности, можно добавить логику, но для простоты пока оставим
-                  allErrors.push(`${field}.${subField}: ${JSON.stringify(subErrors)}`); // Или просто строковое представление
-                }
-              });
-            } else {
-              // Неожиданный формат
-              allErrors.push(`${field}: ${JSON.stringify(errors)}`);
-            }
-          });
-
-          if (allErrors.length > 0) {
-            this.error = allErrors.join('; ');
-          } else {
-            // Объект пустой или не содержит ожидаемых ошибок
-            this.error = `Сервер вернул ошибку (${status} ${statusText}).`;
+    handleDelete() {
+      this.confirm.require({
+        message: `Удалить устройство "${this.form.name}"?`,
+        header: 'Подтверждение удаления',
+        icon: 'pi pi-exclamation-triangle',
+        acceptLabel: 'Удалить',
+        rejectLabel: 'Отмена',
+        acceptClass: 'p-button-danger',
+        rejectClass: 'p-button-secondary p-button-outlined',
+        accept: async () => {
+          try {
+            await apiClient.delete(`api/devices/${this.deviceId}/`);
+            this.toast.add({
+              severity: 'success',
+              summary: 'Удалено',
+              detail: 'Устройство успешно удалено',
+              life: 3000
+            });
+            this.$router.push('/devices');
+          } catch (e) {
+            this.toast.add({
+              severity: 'error',
+              summary: 'Ошибка',
+              detail: 'Не удалось удалить устройство',
+              life: 3000
+            });
           }
-        } else {
-          // Неизвестный формат ответа
-          this.error = `Сервер вернул ошибку (${status} ${statusText}).`;
+        },
+        reject: () => {
+          this.toast.add({
+            severity: 'info',
+            summary: 'Отменено',
+            detail: 'Удаление отменено',
+            life: 2000
+          });
         }
-      } else if (err.request) {
-        console.error("Ошибка запроса:", err.request);
-        this.error = 'Не удалось подключиться к серверу API. Проверьте соединение.';
-      } else {
-        const errorMessage = err.message || err || 'Неизвестная ошибка при настройке запроса';
-        console.error("Ошибка Axios:", errorMessage);
-        this.error = `Произошла ошибка: ${errorMessage}`;
-      }
+      });
     }
   },
   async mounted() {
-    await this.fetchCurrentUser(); // Получаем текущего пользователя
+    await this.fetchCurrentUser();
     await this.fetchDeviceTypesAndLocations();
-    await this.fetchUsers(); // Получаем список пользователей
-
-    // Если передан deviceId, загружаем данные для редактирования
-    if (this.deviceId) {
-      await this.fetchDeviceForEdit(this.deviceId);
-    }
+    await this.fetchUsers();
+    if (this.deviceId) await this.fetchDeviceForEdit(this.deviceId);
   }
 };
 </script>
 
 <style scoped>
-.form-group {
-  margin-bottom: 1rem;
+.device-form {
+  max-width: 800px;
+  margin: 2rem auto;
+  padding: 2rem 2.5rem;
+  background-color: #ffffff;
+  border-radius: 1rem;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.05);
+  font-family: 'Inter', 'Segoe UI', Roboto, sans-serif;
+  transition: all 0.3s ease;
 }
-.form-control {
+
+.device-form:hover {
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.08);
+}
+
+/* Заголовок */
+.device-form h2 {
+  font-size: 1.75rem;
+  font-weight: 700;
+  color: #1e293b;
+  margin-bottom: 2rem;
+  text-align: center;
+}
+
+/* Метки (labels) */
+.device-form label {
+  display: block;
+  font-weight: 600;
+  color: #334155;
+  margin-bottom: 0.5rem;
+  font-size: 1.05rem;
+}
+
+/* Поля ввода */
+.device-form .p-inputtext,
+.device-form .p-dropdown,
+.device-form .p-inputtextarea {
   width: 100%;
-  padding: 0.375rem 0.75rem;
   font-size: 1rem;
-  line-height: 1.5;
-  border: 1px solid #ced4da;
-  border-radius: 0.25rem;
+  padding: 0.8rem 1rem;
+  border-radius: 0.5rem;
 }
-.btn {
-  padding: 0.375rem 0.75rem;
+
+/* Отступы между полями */
+.p-field {
+  margin-bottom: 1.5rem;
+}
+
+/* Спецификации (разделители) */
+.device-form h4 {
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: #1e293b;
+  margin-top: 2rem;
+  margin-bottom: 1rem;
+  border-left: 4px solid #3b82f6;
+  padding-left: 0.5rem;
+}
+
+/* Кнопки */
+.device-form .p-button {
+  font-weight: 600;
+  border-radius: 0.5rem;
+  transition: transform 0.2s ease;
+  margin-inline: 1rem;
+}
+
+.device-form .p-button:hover {
+  transform: translateY(-2px);
+}
+
+/* Основная кнопка */
+.device-form .p-button-success {
+  background-color: #22c55e !important;
+  border: none;
+  
+}
+
+.device-form .p-button-success:hover {
+  background-color: #16a34a !important;
+}
+
+/* Вторичная кнопка */
+.device-form .p-button-secondary {
+  background-color: #e2e8f0 !important;
+  color: #334155 !important;
+  border: none;
+}
+
+.device-form .p-button-secondary:hover {
+  background-color: #cbd5e1 !important;
+  color: #1e293b !important;
+}
+
+/* Кнопка удаления */
+.device-form .p-button-danger {
+  background-color: #ef4444 !important;
+  border: none;
+}
+
+.device-form .p-button-danger:hover {
+  background-color: #dc2626 !important;
+}
+
+/* Сообщения */
+.p-message {
   font-size: 1rem;
-  line-height: 1.5;
-  border-radius: 0.25rem;
-  cursor: pointer;
+  border-radius: 0.5rem;
 }
-.btn-success { background-color: #28a745; border-color: #28a745; color: white; }
-.btn-secondary { background-color: #6c757d; border-color: #6c757d; color: white; }
-.ml-2 { margin-left: 0.5rem; }
-.mt-3 { margin-top: 1rem; }
+
+/* Сетка PrimeFlex */
+@media (min-width: 768px) {
+  .device-form form {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.5rem 2rem;
+  }
+
+  .device-form form > div.col-12,
+  .device-form form > div.p-field.p-mb-3:nth-last-child(-n+2) {
+    grid-column: 1 / -1;
+  }
+
+  .device-form .p-d-flex {
+    grid-column: 1 / -1;
+    justify-content: center;
+    gap: 1rem;
+  }
+}
 </style>
