@@ -1,3 +1,9 @@
+import qrcode
+import io
+from django.http import HttpResponse
+from django.core.files.base import ContentFile
+from PIL import Image
+
 from django.shortcuts import render
 from rest_framework import viewsets, status, filters
 from rest_framework.response import Response
@@ -67,22 +73,86 @@ class CartridgeLogViewSet(viewsets.ModelViewSet):
 
 # --- ViewSet для Log ---
 class LogViewSet(viewsets.ModelViewSet):
-    queryset = Log.objects.all()
+    queryset = Log.objects.all().select_related('device', 'created_by') # <-- Оптимизируем запросы
     serializer_class = LogSerializer
-    permission_classes = [IsAuthenticated, DjangoModelPermissions]
+    permission_classes = [IsAuthenticated, DjangoModelPermissions] # <-- Оставим стандартные разрешения
 
     def perform_create(self, serializer):
+        """
+        Переопределяем perform_create, чтобы автоматически установить created_by на текущего пользователя.
+        """
         serializer.save(created_by=self.request.user)
+
+    # Добавим фильтрацию, чтобы админ мог видеть все, а обычный пользователь - только свои
+    def get_queryset(self):
+        user = self.request.user
+        # Проверяем, является ли пользователь администратором
+        if user.is_staff:
+            # Админ видит все логи
+            return Log.objects.all().select_related('device', 'created_by')
+        else:
+            # Обычный пользователь видит только свои логи (например, заявки)
+            # Или только определённые типы логов, например, только 'request'
+            # В данном случае, если это ViewSet для заявок, можно ограничить по created_by
+            # Или создать отдельный ViewSet для заявок.
+            # Пока оставим так, чтобы обычный пользователь мог видеть только свои 'request'
+            return Log.objects.filter(created_by=user, log_type='request').select_related('device', 'created_by')
+
+    # Добавим разрешение на обновление статуса только админу
+    def get_permissions(self):
+        permission_classes = [IsAuthenticated]
+        # Для обновления (PUT, PATCH) проверяем, является ли пользователь админом
+        if self.action in ['update', 'partial_update']:
+            permission_classes.append(DjangoModelPermissions) # Или кастомное разрешение
+            # Лучше использовать кастомную проверку в методе update
+        else:
+            permission_classes.append(DjangoModelPermissions)
+        return [permission() for permission in permission_classes]
+
+    def update(self, request, *args, **kwargs):
+        instance = self.get_object()
+        user = request.user
+        # Только админ может обновлять статус
+        if not user.is_staff:
+            # Проверим, пытается ли пользователь изменить статус
+            if 'status' in request.data:
+                return Response(
+                    {"detail": "Только администратор может изменять статус заявки."},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            # Также можно запретить изменение других полей, кроме message (если разрешено)
+            # или просто разрешить только владельцу изменять свои заявки (кроме статуса)
+            if instance.created_by != user:
+                 return Response(
+                    {"detail": "Вы можете изменять только свои заявки."},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+        return super().update(request, *args, **kwargs)
+
+    def partial_update(self, request, *args, **kwargs):
+        # Аналогично для PATCH
+        instance = self.get_object()
+        user = request.user
+        if not user.is_staff:
+            if 'status' in request.data:
+                return Response(
+                    {"detail": "Только администратор может изменять статус заявки."},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            if instance.created_by != user:
+                 return Response(
+                    {"detail": "Вы можете изменять только свои заявки."},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+        return super().partial_update(request, *args, **kwargs)
 
 # --- ViewSet для Device ---
 class DeviceViewSet(viewsets.ModelViewSet):
     """
     Основной API для устройств с поддержкой фильтрации, поиска и сортировки.
     """
-    queryset = Device.objects.all().select_related(
-        'device_type', 'location', 'owner', 'assigned_to'
-    ).prefetch_related('logs')
-
+    queryset = Device.objects.all().select_related('device_type', 'location', 'owner', 'assigned_to') \
+                                    .prefetch_related('logs')
     permission_classes = [IsAuthenticated, DjangoModelPermissions]
 
     # --- 🔍 Добавляем фильтрацию и поиск ---
@@ -126,7 +196,74 @@ class DeviceViewSet(viewsets.ModelViewSet):
         all_my_devices = (owned_or_assigned | favorites).distinct()
         serializer = self.get_serializer(all_my_devices, many=True)
         return Response(serializer.data)
+    
+    # --- НОВЫЙ МЕТОД ДЛЯ QR-КОДА ---
+    @action(detail=True, methods=['get'], permission_classes=[IsAuthenticated])
+    def qr(self, request, pk=None):
+        """
+        Возвращает QR-код для конкретного устройства в формате PNG.
+        URL: /api/devices/{id}/qr/
+        """
+        device = self.get_object() # Получает устройство по pk, проверяет разрешения
 
+        # Создаём QR-код с qr_code_id
+        qr = qrcode.QRCode(
+            version=1, # Размер QR-кода (1 - минимальный)
+            error_correction=qrcode.constants.ERROR_CORRECT_L, # Уровень коррекции ошибок
+            box_size=10, # Размер "пикселя" QR-кода
+            border=4, # Размер рамки
+        )
+        qr.add_data(device.qr_code_id) # Добавляем qr_code_id в QR
+        qr.make(fit=True) # Создаём QR-код
+
+        # Создаём изображение
+        img = qr.make_image(fill_color="black", back_color="white")
+
+        # Сохраняем изображение в BytesIO (в памяти)
+        buffer = io.BytesIO()
+        img.save(buffer, format="PNG")
+        buffer.seek(0) # Перемещаем указатель в начало буфера
+
+        # Возвращаем HTTP-ответ с изображением
+        response = HttpResponse(buffer.getvalue(), content_type="image/png")
+        response['Content-Disposition'] = f'inline; filename="qr_{device.qr_code_id}.png"' # Необязательно
+        return response
+    # --- /НОВЫЙ МЕТОД ДЛЯ QR-КОДА ---
+
+    # --- НОВЫЙ МЕТОД: Переключение избранного ---
+    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
+    def toggle_favorite(self, request, pk=None):
+        """
+        POST /api/devices/{id}/toggle_favorite/
+        Добавляет/удаляет устройство с pk в избранное текущего пользователя.
+        """
+        device = self.get_object() # Получает устройство по pk
+        user = request.user
+
+        try:
+            user_profile = user.profile
+        except UserProfile.DoesNotExist:
+            # Создаем профиль, если его нет (альтернатива сигналу)
+            user_profile = UserProfile.objects.create(user=user)
+
+        # Проверяем, есть ли устройство в избранном
+        if user_profile.favorite_devices.filter(pk=device.pk).exists():
+            # Удаляем из избранного
+            user_profile.favorite_devices.remove(device)
+            message = "Устройство удалено из избранного."
+            is_favorite = False
+        else:
+            # Добавляем в избранное
+            user_profile.favorite_devices.add(device)
+            message = "Устройство добавлено в избранное."
+            is_favorite = True
+
+        # Возвращаем статус и сообщение
+        return Response(
+            {"message": message, "is_favorite": is_favorite, "device_id": device.id},
+            status=status.HTTP_200_OK
+        )
+    # --- /НОВЫЙ МЕТОД ---
 
 # --- ViewSet для User ---
 class UserViewSet(viewsets.ReadOnlyModelViewSet):

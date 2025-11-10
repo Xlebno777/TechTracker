@@ -38,23 +38,34 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'django_filters',
+    'django_extensions',
     'rest_framework',
+    'rest_framework.authtoken', # Если планируешь использовать токены
+    'dj_rest_auth',
     'inventory_api',
 ]
 
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
-        'rest_framework.authentication.SessionAuthentication', # Аутентификация через сессии Django (удобно для тестов в браузере)
+        'rest_framework.authentication.TokenAuthentication', # Аутентификация через сессии Django (удобно для тестов в браузере)
         # 'rest_framework.authentication.TokenAuthentication', # Можно добавить позже для API-клиентов
         # 'rest_framework_simplejwt.authentication.JWTAuthentication', # Или JWT токены
     ],
     'DEFAULT_PERMISSION_CLASSES': [
-        # 'rest_framework.permissions.IsAuthenticated', # <-- Глобальное требование аутентификации (опционально)
+        'rest_framework.permissions.IsAuthenticated', # <-- Глобальное требование аутентификации (опционально)
         # Если раскомментировать строку выше, все API будут требовать входа по умолчанию.
         # Но мы будем устанавливать разрешения на уровне ViewSet'ов, поэтому оставим пустым или укажем базовое.
-        'rest_framework.permissions.DjangoModelPermissions', # <-- Пример глобального разрешения (тоже опционально, лучше на уровне ViewSet'ов)
+        # 'rest_framework.permissions.DjangoModelPermissions', # <-- Пример глобального разрешения (тоже опционально, лучше на уровне ViewSet'ов)
         # Лучше указывать permission_classes в каждом ViewSet индивидуально, как мы сделаем ниже.
     ],
+}
+
+# Настройки dj-rest-auth для токенов
+REST_AUTH = {
+    'SESSION_LOGIN': False, # <-- ВАЖНО: Отключаем сессии
+    'USE_JWT': False, # <-- ВАЖНО: Отключаем JWT, будем использовать стандартные DRF токены
+    'TOKEN_MODEL': 'rest_framework.authtoken.models.Token', # <-- Указываем модель токена
+    #'USER_DETAILS_SERIALIZER': 'inventory_api.dj_rest_auth_serializers.UserDetailsSerializer'
 }
 
 # Опционально: настройка URL перенаправления после входа/выхода

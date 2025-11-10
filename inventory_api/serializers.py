@@ -1,59 +1,34 @@
+# inventory_api/serializers.py
+
 from rest_framework import serializers
 from .models import Device, DeviceType, Location, UserProfile, ComputerSpecs, PrinterScannerSpecs, NetworkDeviceSpecs, Cartridge, CartridgeLog, Log
 from django.contrib.auth.models import User, Group
 from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework.exceptions import ValidationError
 
+# --- Serializers для справочников ---
 class DeviceTypeSerializer(serializers.ModelSerializer):
     class Meta:
         model = DeviceType
-        fields = '__all__' # Или список конкретных полей
+        fields = '__all__'
 
 class LocationSerializer(serializers.ModelSerializer):
     class Meta:
         model = Location
         fields = '__all__'
 
-class UserProfileSerializer(serializers.ModelSerializer):
-    # Поле для отображения избранных устройств (только для чтения)
-    favorite_devices_list = serializers.StringRelatedField(source='favorite_devices', many=True, read_only=True)
-    # Поле для установки избранных устройств (требует кастомной логики в to_internal_value или create/update)
-    favorite_devices = serializers.PrimaryKeyRelatedField(queryset=Device.objects.all(), many=True, required=False)
-
-    class Meta:
-        model = UserProfile
-        fields = ['id', 'user', 'favorite_devices', 'favorite_devices_list'] # user - внешний ключ на User
-        # exclude = ['user'] # Если user автоматически определяется (например, текущий пользователь), можно исключить из входных данных
-        # Но в данном случае оставим, чтобы можно было создать/обновить связь через API (например, админом)
-
-    def update(self, instance, validated_data):
-        # Получаем список устройств из validated_data
-        favorite_devices_data = validated_data.pop('favorite_devices', None)
-        # Вызываем стандартный метод update для остальных полей
-        instance = super().update(instance, validated_data)
-
-        # Обновляем ManyToMany связь
-        if favorite_devices_data is not None:
-            instance.favorite_devices.set(favorite_devices_data)
-
-        return instance
-    
 # --- Serializers для специфичных данных ---
-# ComputerSpecs
 class ComputerSpecsSerializer(serializers.ModelSerializer):
     class Meta:
         model = ComputerSpecs
         exclude = ['device']
+
     def to_internal_value(self, data):
-        # Убираем 'device' из данных перед стандартной валидацией
-        # Это позволяет пройти валидацию, даже если 'device' не передан
-        data = data.copy() # Создаем копию, чтобы не изменять оригинальный объект
-        data.pop('device', None) # Удаляем 'device', если он есть
+        data = data.copy()
+        data.pop('device', None)
         return super().to_internal_value(data)
 
-# PrinterScannerSpecs
 class PrinterScannerSpecsSerializer(serializers.ModelSerializer):
-    # current_cartridge может быть null, поэтому указываем required=False
     current_cartridge = serializers.PrimaryKeyRelatedField(queryset=Cartridge.objects.all(), required=False, allow_null=True)
     class Meta:
         model = PrinterScannerSpecs
@@ -64,7 +39,6 @@ class PrinterScannerSpecsSerializer(serializers.ModelSerializer):
         data.pop('device', None)
         return super().to_internal_value(data)
 
-# NetworkDeviceSpecs
 class NetworkDeviceSpecsSerializer(serializers.ModelSerializer):
     class Meta:
         model = NetworkDeviceSpecs
@@ -75,86 +49,139 @@ class NetworkDeviceSpecsSerializer(serializers.ModelSerializer):
         data.pop('device', None)
         return super().to_internal_value(data)
 
-# Cartridge
+# --- Serializers для других моделей ---
 class CartridgeSerializer(serializers.ModelSerializer):
     class Meta:
         model = Cartridge
         fields = '__all__'
-        read_only_fields = ('remaining_pages',) # remaining_pages вычисляется автоматически, не принимаем при создании/обновлении
+        read_only_fields = ('remaining_pages',)
 
-# CartridgeLog
 class CartridgeLogSerializer(serializers.ModelSerializer):
     class Meta:
         model = CartridgeLog
         fields = '__all__'
 
-# Log
-class LogSerializer(serializers.ModelSerializer):
-    # created_by будет определяться автоматически при создании (см. ViewSet)
-    created_by = serializers.StringRelatedField(read_only=True) # Показываем имя пользователя
-    # created_by = serializers.PrimaryKeyRelatedField(read_only=True) # Или ID пользователя
-    class Meta:
-        model = Log
-        fields = '__all__'
-        # exclude = ['created_by'] # Если будем устанавливать created_by в ViewSet
-        # Включаем все, но в ViewSet установим created_by вручную
-
-# Опционально: создай сериализатор для Group, если хочешь возвращать ID и имя
+# --- Сериализаторы для Group и User ---
 class GroupSerializer(serializers.ModelSerializer):
     class Meta:
         model = Group
         fields = ['id', 'name']
 
-# --- User Serializer (для получения информации о пользователе) ---
-# Часто нужно получать данные пользователя, например, для владельца устройства.
-class UserSerializer(serializers.ModelSerializer):
-    groups = GroupSerializer(many=True, read_only=True) # Возвращает полную информацию о группах
-
+# --- UserListSerializer: Для использования в списках устройств (owner, assigned_to) ---
+# Не включает profile, чтобы избежать цикла
+class UserListSerializer(serializers.ModelSerializer):
+    groups = GroupSerializer(many=True, read_only=True)
     class Meta:
         model = User
-        fields = ['id', 'username', 'first_name', 'last_name', 'email', 'is_staff', 'groups'] # Выбираем нужные поля
-        # exclude = ['password'] # Пароль исключаем всегда при сериализации
+        fields = ['id', 'username', 'first_name', 'last_name', 'email', 'is_staff', 'groups']
+        # exclude = ['password', 'profile'] # profile исключаем
 
-# --- Основной Device Serializer ---
-# Device - основная модель, к которой привязаны специфичные данные.
-# Мы хотим включить специфичные данные в JSON ответа для Device.
-# Используем `source` для указания связанного поля и `many=True` если связь OneToMany или ManyToMany.
-# Для OneToOne связей `many=False` (по умолчанию).
+# --- UserProfileForDeviceSerializer: Упрощённый профиль для DeviceSerializer (если используется Вариант B) ---
+# Не используется в Варианте A, но оставим для ясности
+# class UserProfileForDeviceSerializer(serializers.ModelSerializer):
+#     favorite_devices = serializers.PrimaryKeyRelatedField(many=True, read_only=True) # Только ID устройств
+#     class Meta:
+#         model = UserProfile
+#         fields = ['id', 'user', 'favorite_devices']
+
+# --- UserWithProfileForDeviceSerializer: Для DeviceSerializer (если используется Вариант B) ---
+# Не используется в Варианте A, но оставим для ясности
+# class UserWithProfileForDeviceSerializer(serializers.ModelSerializer):
+#     groups = GroupSerializer(many=True, read_only=True)
+#     profile = UserProfileForDeviceSerializer(read_only=True)
+#     class Meta:
+#         model = User
+#         fields = ['id', 'username', 'first_name', 'last_name', 'email', 'is_staff', 'groups', 'profile']
+
+class LogSerializer(serializers.ModelSerializer):
+    # created_by будет определяться автоматически при создании (см. ViewSet)
+    created_by = UserListSerializer(read_only=True) # Показываем имя пользователя (или строку)
+    # created_by = serializers.StringRelatedField(read_only=True) # Или просто строку
+    device = serializers.PrimaryKeyRelatedField(queryset=Device.objects.all()) # Для создания/обновления передаём ID
+    # device = DeviceSerializer(read_only=True) # Для чтения возвращаем объект
+
+    class Meta:
+        model = Log
+        fields = '__all__' # Включаем все поля, включая priority и status
+        # exclude = ['created_by'] # Если будем устанавливать created_by в ViewSet
+        read_only_fields = ('timestamp', 'created_by') # created_by и timestamp не изменяются клиентом
+
+    def to_representation(self, instance):
+        """
+        Переопределяем to_representation, чтобы возвращать связанные объекты (device, created_by) как объекты, а не ID.
+        """
+        representation = super().to_representation(instance)
+        # device
+        request = self.context.get('request')
+        if instance.device and request and request.method in ['GET']:
+            representation['device'] = DeviceSerializer(instance.device).data
+        # created_by
+        if instance.created_by:
+             representation['created_by'] = UserListSerializer(instance.created_by).data
+        return representation
+
+# --- LimitedDeviceSerializer: Для использования в UserProfileSerializer ---
+# Возвращает ограниченную информацию о Device, чтобы избежать цикла через owner/assigned_to
+class LimitedDeviceSerializer(serializers.ModelSerializer):
+    device_type = serializers.CharField(source='device_type.name', read_only=True)
+    location = serializers.CharField(source='location.name', read_only=True)
+    # Возвращаем owner и assigned_to как строки, а не объекты User
+    owner = serializers.SerializerMethodField()
+    assigned_to = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Device
+        fields = '__all__' # Включаем все, но owner/assigned_to переопределены
+
+    def get_owner(self, obj):
+        if obj.owner:
+            return f"{obj.owner.username} ({obj.owner.first_name} {obj.owner.last_name})"
+        return None
+
+    def get_assigned_to(self, obj):
+        if obj.assigned_to:
+            return f"{obj.assigned_to.username} ({obj.assigned_to.first_name} {obj.assigned_to.last_name})"
+        return None
+
+# --- UserProfileSerializer: Для использования в UserSerializer (например, /api/users/me/) ---
+class UserProfileSerializer(serializers.ModelSerializer):
+    # favorite_devices возвращаем как объекты LimitedDeviceSerializer, чтобы избежать цикла
+    favorite_devices = LimitedDeviceSerializer(many=True, read_only=True, source='favorite_devices.all')
+    class Meta:
+        model = UserProfile
+        fields = ['id', 'user', 'favorite_devices']
+
+# --- UserSerializer: Для получения информации о пользователе (например, /api/users/me/) ---
+class UserSerializer(serializers.ModelSerializer):
+    groups = GroupSerializer(many=True, read_only=True)
+    profile = UserProfileSerializer(read_only=True)
+    class Meta:
+        model = User
+        fields = ['id', 'username', 'first_name', 'last_name', 'email', 'is_staff', 'groups', 'profile']
+
+# --- Основной DeviceSerializer (Вариант A) ---
 class DeviceSerializer(serializers.ModelSerializer):
-    # Включаем связанные данные (только для чтения)
     computer_specs = ComputerSpecsSerializer(required=False, read_only=True)
     printer_scanner_specs = PrinterScannerSpecsSerializer(required=False, read_only=True)
     network_specs = NetworkDeviceSpecsSerializer(required=False, read_only=True)
-    # Включаем связанные данные для device_type и location
+    # Возвращаем имена связанных справочников как строки
     device_type = serializers.CharField(source='device_type.name', read_only=True)
     location = serializers.CharField(source='location.name', read_only=True)
-    # Включаем количество логов
     logs_count = serializers.SerializerMethodField()
-    status = serializers.SerializerMethodField() 
+    status = serializers.SerializerMethodField()
 
-    # --- Изменение: Используем UserSerializer для owner и assigned_to ---
-    # Это заставит DRF возвращать полный объект пользователя, а не только ID
+    # --- ОБНОВЛЕНО: Используем UserListSerializer (Вариант A) ---
     owner = serializers.SerializerMethodField()
-    assigned_to = UserSerializer(read_only=True)
-    # --- /Изменение --
+    assigned_to = serializers.SerializerMethodField()
+    # --- /ОБНОВЛЕНО ---
 
     class Meta:
         model = Device
         fields = '__all__'
-        extra_fields = ['device_type_name', 'location_name', 'owner_name', 'status']
-        # exclude = ['qr_code_id'] # Если не хотим отдавать qr_code_id клиенту, можно исключить
-        # read_only_fields = ('qr_code_id', 'created_at', 'updated_at') # Указываем поля, которые не могут быть изменены через API
 
     def get_logs_count(self, obj):
-        # obj - это экземпляр модели Device
-        # Возвращаем количество связанных логов
         return obj.logs.count()
-    
-    def get_owner(self, obj):
-        if not obj.owner:
-            return None
-        return f"{obj.owner.username} ({obj.owner.first_name} {obj.owner.last_name})"
-    
+
     def get_status(self, obj):
         """Преобразует статус на русский язык."""
         status_map = {
@@ -165,13 +192,21 @@ class DeviceSerializer(serializers.ModelSerializer):
             'reserved': 'В резерве'
         }
         return status_map.get(obj.status, 'Неизвестно')
+    
+    # --- НОВЫЕ МЕТОДЫ: Форматирование owner и assigned_to ---
+    def get_owner(self, obj):
+        if not obj.owner:
+            return None
+        return f"{obj.owner.username} ({obj.owner.first_name} {obj.owner.last_name})"
+
+    def get_assigned_to(self, obj):
+        if not obj.assigned_to:
+            return None
+        return f"{obj.assigned_to.username} ({obj.assigned_to.first_name} {obj.assigned_to.last_name})"
+    # --- /НОВЫЕ МЕТОДЫ ---
 
 # --- Сериализаторы для создания/обновления Device ---
-# При создании/обновлении Device, возможно, нужно одновременно создать/обновить связанные специфичные данные.
-# Для этого переопределяем методы `create` и `update`.
-
 class DeviceCreateUpdateSerializer(serializers.ModelSerializer):
-    # Специфичные данные передаются как вложенные объекты
     computer_specs = ComputerSpecsSerializer(required=False)
     printer_scanner_specs = PrinterScannerSpecsSerializer(required=False)
     network_specs = NetworkDeviceSpecsSerializer(required=False)
@@ -179,40 +214,30 @@ class DeviceCreateUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Device
         fields = '__all__'
-        read_only_fields = ('qr_code_id', 'created_at', 'updated_at') # Эти поля не изменяются клиентом
+        read_only_fields = ('qr_code_id', 'created_at', 'updated_at')
 
     def is_spec_empty(self, spec_data):
-        """
-        Проверяет, является ли вложенный объект спецификации пустым.
-        """
         if not spec_data:
             return True
-        # Проверяем, есть ли хотя бы одно непустое значение
         for value in spec_data.values():
             if value not in [None, '', [], {}, False]:
                 return False
         return True
 
     def to_internal_value(self, data):
-        """
-        Переопределяем to_internal_value, чтобы изолировать валидацию вложенных объектов.
-        """
         data = data.copy()
 
-        # Извлекаем вложенные данные и сохраняем их отдельно
         computer_specs_data = data.pop('computer_specs', None)
         printer_scanner_specs_data = data.pop('printer_scanner_specs', None)
         network_specs_data = data.pop('network_specs', None)
 
-        # Валидируем ТОЛЬКО основной Device (без вложенных данных)
         validated_data = super().to_internal_value(data)
 
-        # Валидируем вложенные объекты ОТДЕЛЬНО, убирая 'device' поле
         validated_nested_data = {}
         if computer_specs_data is not None and not self.is_spec_empty(computer_specs_data):
             nested_serializer = self.fields['computer_specs']
             validated_computer_data = nested_serializer.to_internal_value(computer_specs_data)
-            validated_computer_data.pop('device', None) # Убедимся, что 'device' удален из валидированных данных
+            validated_computer_data.pop('device', None)
             validated_nested_data['computer_specs'] = validated_computer_data
 
         if printer_scanner_specs_data is not None and not self.is_spec_empty(printer_scanner_specs_data):
@@ -227,25 +252,18 @@ class DeviceCreateUpdateSerializer(serializers.ModelSerializer):
             validated_network_data.pop('device', None)
             validated_nested_data['network_specs'] = validated_network_data
 
-        # Объединяем валидированные данные
         validated_data.update(validated_nested_data)
-
-        # Сохраняем валидированные вложенные данные как атрибут экземпляра
         self._validated_nested_data = validated_nested_data
 
         return validated_data
 
-
     def create(self, validated_data):
-        # Извлекаем валидированные вложенные данные ИЗ атрибута экземпляра
-        computer_specs_data = validated_data.pop('computer_specs', None) # Удаляем из validated_data перед созданием Device
+        computer_specs_data = validated_data.pop('computer_specs', None)
         printer_scanner_specs_data = validated_data.pop('printer_scanner_specs', None)
         network_specs_data = validated_data.pop('network_specs', None)
 
-        # Создаём основной объект Device с очищенными validated_data
         device = Device.objects.create(**validated_data)
 
-        # Создаём связанные специфичные данные, добавив 'device' ID
         if computer_specs_data is not None:
             ComputerSpecs.objects.create(device=device, **computer_specs_data)
         if printer_scanner_specs_data is not None:
@@ -260,26 +278,22 @@ class DeviceCreateUpdateSerializer(serializers.ModelSerializer):
         printer_scanner_specs_data = validated_data.pop('printer_scanner_specs', None)
         network_specs_data = validated_data.pop('network_specs', None)
 
-        # --- обновляем сам Device
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
         instance.save()
 
-        # --- Компьютерные спецификации
         if computer_specs_data is not None:
             specs, _ = ComputerSpecs.objects.get_or_create(device=instance)
             for key, value in computer_specs_data.items():
                 setattr(specs, key, value)
             specs.save()
 
-        # --- Принтерные спецификации
         if printer_scanner_specs_data is not None:
             specs, _ = PrinterScannerSpecs.objects.get_or_create(device=instance)
             for key, value in printer_scanner_specs_data.items():
                 setattr(specs, key, value)
             specs.save()
 
-        # --- Сетевые спецификации
         if network_specs_data is not None:
             specs, _ = NetworkDeviceSpecs.objects.get_or_create(device=instance)
             for key, value in network_specs_data.items():
@@ -287,6 +301,3 @@ class DeviceCreateUpdateSerializer(serializers.ModelSerializer):
             specs.save()
 
         return instance
-
-
-

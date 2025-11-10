@@ -1,4 +1,5 @@
 from django.urls import path, include
+from django.contrib import admin
 from rest_framework.routers import DefaultRouter
 from . import views
 
@@ -28,6 +29,6 @@ router.register(r'users', views.UserViewSet) # Только эндпоинты �
 
 # Подключаем маршруты роутера к этому файлу
 urlpatterns = [
-    path('', include(router.urls)), # Все маршруты из роутера
+    path('', include(router.urls)),
     # Можно добавить дополнительные URL-ы, не связанные с ViewSet'ами, здесь
 ]

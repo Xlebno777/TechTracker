@@ -29,21 +29,114 @@
             <i class="pi pi-plus"></i>
             <span>Добавить</span>
           </router-link>
+          <!-- Ссылка "Заявка" для всех пользователей -->
+          <router-link
+            :to="{ name: 'RequestForm' }"
+            class="nav-link"
+            active-class="active"
+          >
+            <i class="pi pi-envelope"></i>
+            <span>Заявка</span>
+          </router-link>
+
+          <!-- Ссылка "Заявки" только для администраторов -->
+          <router-link
+            v-if="isAdminUser"
+            :to="{ name: 'RequestList' }"
+            class="nav-link"
+            active-class="active"
+          >
+            <i class="pi pi-list"></i>
+            <span>Заявки</span>
+          </router-link>
         </nav>
+
+        <!-- Кнопка "Вход/Выход" -->
+        <div class="nav-auth">
+          <button v-if="!isAuthenticated" class="btn btn-outline-success" @click="goToLogin">
+            Вход
+          </button>
+          <button v-else class="btn btn-outline-danger" @click="logout">
+            Выход ({{ currentUser.username }})
+          </button>
+        </div>
       </div>
     </header>
 
     <!-- Контент -->
     <main class="main-content">
-      <router-view />
+      <router-view v-if="!loadingAuth" />
+      <!-- Индикатор загрузки, если данные ещё не готовы -->
+      <div v-else class="p-d-flex p-jc-center p-ai-center" style="height: 70vh;">
+        <i class="pi pi-spin pi-spinner" style="font-size: 2rem; color: #007ad9;"></i>
+      </div>
     </main>
   </div>
 </template>
 
 <script>
+import apiClient from '@/api';
+
 export default {
-  name: 'App'
-}
+  name: 'App',
+  data() {
+    return {
+      currentUser: null,
+      isAuthenticated: false,
+      loadingAuth: true, // Добавим флаг загрузки
+    };
+  },
+  computed: {
+    // Вычисляемое свойство для проверки, является ли пользователь администратором
+    isAdminUser() {
+      if (!this.currentUser || !this.currentUser.groups) {
+        return false;
+      }
+      const isAdmin = this.currentUser.groups.some(group => group.name === 'Admins');
+      return isAdmin;
+    }
+  },
+  methods: {
+    goToLogin() {
+      this.$router.push('/login');
+    },
+    async logout() {
+      try {
+        // Вызываем API logout (dj-rest-auth удаляет токен на сервере)
+        await apiClient.post('auth/logout/');
+        // Очищаем локальное состояние (токен)
+        localStorage.removeItem('auth_token');
+        // localStorage.removeItem('user_authenticated'); // Необязательно, если не используем
+        this.currentUser = null;
+        this.isAuthenticated = false;
+        // Перенаправляем на страницу входа
+        this.$router.push('/login');
+      } catch (err) {
+        console.error("Ошибка выхода:", err);
+        // Даже если API logout не сработал, всё равно очищаем локальное состояние
+        localStorage.removeItem('auth_token');
+        // localStorage.removeItem('user_authenticated');
+        this.currentUser = null;
+        this.isAuthenticated = false;
+        this.$router.push('/login');
+      }
+    },
+    async refreshUser() {
+      try {
+        const response = await apiClient.get('users/me/');
+        this.currentUser = response.data;
+        this.isAuthenticated = true;
+      } catch {
+        this.currentUser = null;
+        this.isAuthenticated = false;
+      }
+      this.loadingAuth = false; // Убираем индикатор загрузки после проверки
+    }
+  },
+  async mounted() {
+    await this.refreshUser(); // Проверяем статус при монтировании App
+  }
+};
 </script>
 
 <style scoped>
@@ -129,5 +222,45 @@ export default {
   padding-top: 70px; /* чтобы не пряталось под navbar */
   padding-left: 1.5rem;
   padding-right: 1.5rem;
+}
+
+.nav-auth {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.btn {
+  padding: 0.375rem 0.75rem;
+  font-size: 0.875rem;
+  border-radius: 0.25rem;
+  cursor: pointer;
+  border: 1px solid transparent;
+  text-decoration: none;
+  display: inline-block;
+  text-align: center;
+  transition: color 0.15s ease-in-out, background-color 0.15s ease-in-out, border-color 0.15s ease-in-out, box-shadow 0.15s ease-in-out;
+}
+
+.btn-outline-success {
+  color: #28a745;
+  border-color: #28a745;
+}
+
+.btn-outline-success:hover {
+  color: #fff;
+  background-color: #28a745;
+  border-color: #28a745;
+}
+
+.btn-outline-danger {
+  color: #dc3545;
+  border-color: #dc3545;
+}
+
+.btn-outline-danger:hover {
+  color: #fff;
+  background-color: #dc3545;
+  border-color: #dc3545;
 }
 </style>

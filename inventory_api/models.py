@@ -209,10 +209,18 @@ class Log(models.Model):
         ('critical', 'Критический'),
     ]
 
+    STATUS_CHOICES = [
+        ('open', 'Открыта'),
+        ('in_progress', 'В работе'),
+        ('closed', 'Завершена'),
+        ('cancelled', 'Отменена'),
+    ]
+
     device = models.ForeignKey(Device, on_delete=models.CASCADE, related_name='logs')
     log_type = models.CharField(max_length=20, choices=LOG_TYPE_CHOICES)
     message = models.TextField()
     severity = models.CharField(max_length=20, choices=SEVERITY_CHOICES, default='medium')
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='open')
     timestamp = models.DateTimeField(auto_now_add=True)
     # Добавим поле для связи с пользователем, создавшим запись (например, заявку)
     created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='created_logs')

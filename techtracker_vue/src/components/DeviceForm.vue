@@ -315,7 +315,7 @@ export default {
     },
     async fetchCurrentUser() {
       try {
-        const res = await apiClient.get('api/users/me/');
+        const res = await apiClient.get('users/me/');
         this.currentUser = res.data;
       } catch (e) {
         console.error('Ошибка загрузки пользователя', e);
@@ -323,7 +323,7 @@ export default {
     },
     async fetchUsers() {
       try {
-        const res = await apiClient.get('api/users/');
+        const res = await apiClient.get('users/');
         this.users = res.data;
       } catch (e) {
         console.error('Ошибка загрузки пользователей', e);
@@ -332,8 +332,8 @@ export default {
     async fetchDeviceTypesAndLocations() {
       try {
         const [types, locs] = await Promise.all([
-          apiClient.get('api/devicetypes/'),
-          apiClient.get('api/locations/')
+          apiClient.get('devicetypes/'),
+          apiClient.get('locations/')
         ]);
         this.deviceTypes = types.data;
         this.locations = locs.data;
@@ -344,7 +344,7 @@ export default {
     async fetchDeviceForEdit(id) {
       this.loading = true;
       try {
-        const res = await apiClient.get(`/api/devices/${id}/`);
+        const res = await apiClient.get(`devices/${id}/`);
         const d = res.data;
         this.form = {
           ...d,
@@ -370,8 +370,8 @@ export default {
       this.loading = true;
       this.error = null;
       const url = this.isEditing
-        ? `api/devices/${this.deviceId}/`
-        : 'api/devices/';
+        ? `devices/${this.deviceId}/`
+        : 'devices/';
       const method = this.isEditing ? 'put' : 'post';
       const payload = {
         ...this.form,
@@ -406,7 +406,7 @@ export default {
         rejectClass: 'p-button-secondary p-button-outlined',
         accept: async () => {
           try {
-            await apiClient.delete(`api/devices/${this.deviceId}/`);
+            await apiClient.delete(`devices/${this.deviceId}/`);
             this.toast.add({
               severity: 'success',
               summary: 'Удалено',
