@@ -10,137 +10,58 @@
         </template>
 
         <template #content>
-          <form @submit.prevent="submitAuth">
-            <div class="p-fluid p-formgrid p-grid">
-
-              <!-- Username -->
-              <div class="p-field p-col-12 inputtext">
-                <label for="username" class="form-label">Имя пользователя</label>
-                <span class="p-input-icon-left">
-                  <InputText
-                    id="username"
-                    v-model="form.username"
-                    required
-                    placeholder="Введите логин"
-                    fluid
-                    class="p-inputtext-lg"
-                  />
-                </span>
+          <form @submit.prevent="handleSubmit">
+            <div class="p-fluid">
+              <div class="field mb-4">
+                <label for="username" class="font-semibold block mb-2">Имя пользователя</label>
+                <InputText id="username" v-model="form.username" class="w-full p-inputtext-lg" placeholder="Введите логин" />
               </div>
 
-              <!-- Password -->
-              <div class="p-field p-col-12 inputtext">
-                <label for="password" class="form-label">Пароль</label>
-                <Password
-                  id="password"
-                  v-model="form.password"
-                  required
-                  :feedback="false"
-                  toggleMask
-                  fluid
-                  inputClass="p-inputtext-lg"
-                  placeholder="Введите пароль"
-                />
+              <div class="field mb-4">
+                <label for="password" class="font-semibold block mb-2">Пароль</label>
+                <Password id="password" v-model="form.password" :feedback="false" toggleMask class="w-full" inputClass="w-full p-inputtext-lg" placeholder="Введите пароль" />
               </div>
 
-              <!-- Submit button -->
-              <div class="p-col-12 p-mt-3">
-                <Button
-                  type="submit"
-                  label="Войти"
-                  icon="pi pi-sign-in"
-                  class="p-button-rounded p-button-primary p-button-lg w-full"
-                  :loading="loading"
-                />
-              </div>
+              <Button type="submit" label="Войти" icon="pi pi-sign-in" class="w-full p-button-lg" :loading="loading" />
             </div>
           </form>
 
-          <Message
-            v-if="error"
-            severity="error"
-            class="p-mt-3"
-          >
-            {{ error }}
-          </Message>
+          <Message v-if="error" severity="error" class="mt-3" :closable="false">{{ error }}</Message>
         </template>
       </Card>
     </div>
   </div>
 </template>
 
-<script>
-import apiClient from '@/api';
+<script setup>
+import { ref } from 'vue';
+import { useRouter } from 'vue-router';
+import { useAuthStore } from '@/stores/auth';
 import Card from "primevue/card";
 import InputText from "primevue/inputtext";
 import Password from "primevue/password";
 import Button from "primevue/button";
 import Message from "primevue/message";
 
-export default {
-  name: "AuthPage",
-  components: {
-    Card,
-    InputText,
-    Password,
-    Button,
-    Message
-  },
-  data() {
-    return {
-      form: {
-        username: "",
-        password: "",
-      },
-      loading: false,
-      error: null,
-    };
-  },
-  methods: {
-    async submitAuth() {
-      this.loading = true;
-      this.error = null;
+const router = useRouter();
+const auth = useAuthStore();
 
-      try {
-        const response = await apiClient.post("auth/login/", {
-          username: this.form.username,
-          password: this.form.password,
-        });
+const form = ref({ username: "", password: "" });
+const loading = ref(false);
+const error = ref(null);
 
-        const token = response.data.key;
-        if (token) {
-          localStorage.setItem("auth_token", token);
-
-          // ✅ Сразу после логина грузим данные пользователя
-          const userResponse = await apiClient.get("users/me/");
-          localStorage.setItem("current_user", JSON.stringify(userResponse.data));
-
-          // 🔥 Обновляем глобальное состояние в App.vue
-          this.$root.refreshUser?.();
-        }
-
-        // ✅ Обновляем App.vue через event (обработаю ниже)
-        this.$emit('auth-success')
-
-        this.$router.push("/devices");
-      } catch (err) {
-        console.error("Ошибка аутентификации:", err);
-        let errorMessage = 'Произошла ошибка.';
-        if (err.response) {
-          if (err.response.status === 400) {
-            errorMessage = 'Неверное имя пользователя или пароль.';
-          } else if (err.response.status === 403) {
-            errorMessage = 'Доступ запрещён.';
-          } else if (err.response.status === 500) {
-            errorMessage = 'Внутренняя ошибка сервера.';
-          }
-        }
-        this.error = errorMessage;
-      } finally {
-        this.loading = false;
-      }
-    },
-  },
+const handleSubmit = async () => {
+  loading.value = true;
+  error.value = null;
+  try {
+    await auth.login(form.value.username, form.value.password);
+    router.push("/devices");
+  } catch (err) {
+    console.error(err);
+    error.value = "Неверное имя пользователя или пароль";
+  } finally {
+    loading.value = false;
+  }
 };
 </script>
 
@@ -150,58 +71,26 @@ export default {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(135deg, #e3eeff, #f7faff, #eef3ff);
-  background-size: 200% 200%;
-  animation: gradientMove 8s ease infinite;
-  padding: 1rem;
-}
-
-@keyframes gradientMove {
-  0% { background-position: 0% 50%; }
-  50% { background-position: 100% 50%; }
-  100% { background-position: 0% 50%; }
+  background: radial-gradient(circle at center, #f0f9ff 0%, #e0f2fe 100%);
 }
 
 .auth-card-container {
   width: 100%;
-  max-width: 430px;
+  max-width: 400px;
+  padding: 1rem;
 }
 
 .auth-card {
-  border-radius: 18px;
-  padding: 1rem;
-  box-shadow: 0 10px 35px rgba(0, 0, 0, 0.08);
-  background: rgba(255, 255, 255, 0.85);
-  backdrop-filter: blur(12px);
-  animation: fadeIn 0.6s ease-out;
+  border: none;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.08);
+  border-radius: 16px;
 }
 
 .auth-title {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 1.4rem;
-  font-weight: 600;
-  color: #1f2937;
-}
-
-.form-label {
-  font-weight: 600;
-  margin-bottom: 0.4rem;
-  display: block;
-}
-
-.inputtext{
-  margin-bottom: 2rem;
-  margin-top: 2rem;
-}
-
-.w-full {
-  width: 100%;
-}
-
-@keyframes fadeIn {
-  from { opacity: 0; transform: translateY(10px); }
-  to { opacity: 1; transform: translateY(0); }
+  color: #0f172a;
+  margin-bottom: 1rem;
 }
 </style>

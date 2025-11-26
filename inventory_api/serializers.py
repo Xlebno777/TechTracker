@@ -1,10 +1,6 @@
-# inventory_api/serializers.py
-
 from rest_framework import serializers
-from .models import Device, DeviceType, Location, UserProfile, ComputerSpecs, PrinterScannerSpecs, NetworkDeviceSpecs, Cartridge, CartridgeLog, Log
+from .models import Device, DeviceType, Location, UserProfile, ComputerSpecs, PrinterScannerSpecs, NetworkDeviceSpecs, Cartridge, CartridgeLog, Log, Metric
 from django.contrib.auth.models import User, Group
-from django.core.exceptions import ValidationError as DjangoValidationError
-from rest_framework.exceptions import ValidationError
 
 # --- Serializers для справочников ---
 class DeviceTypeSerializer(serializers.ModelSerializer):
@@ -67,145 +63,99 @@ class GroupSerializer(serializers.ModelSerializer):
         model = Group
         fields = ['id', 'name']
 
-# --- UserListSerializer: Для использования в списках устройств (owner, assigned_to) ---
-# Не включает profile, чтобы избежать цикла
+# --- UserListSerializer: Легковесный сериализатор пользователя ---
+# Используется в списках устройств и логах. НЕ содержит profile во избежание рекурсии.
 class UserListSerializer(serializers.ModelSerializer):
     groups = GroupSerializer(many=True, read_only=True)
+    
     class Meta:
         model = User
         fields = ['id', 'username', 'first_name', 'last_name', 'email', 'is_staff', 'groups']
-        # exclude = ['password', 'profile'] # profile исключаем
-
-# --- UserProfileForDeviceSerializer: Упрощённый профиль для DeviceSerializer (если используется Вариант B) ---
-# Не используется в Варианте A, но оставим для ясности
-# class UserProfileForDeviceSerializer(serializers.ModelSerializer):
-#     favorite_devices = serializers.PrimaryKeyRelatedField(many=True, read_only=True) # Только ID устройств
-#     class Meta:
-#         model = UserProfile
-#         fields = ['id', 'user', 'favorite_devices']
-
-# --- UserWithProfileForDeviceSerializer: Для DeviceSerializer (если используется Вариант B) ---
-# Не используется в Варианте A, но оставим для ясности
-# class UserWithProfileForDeviceSerializer(serializers.ModelSerializer):
-#     groups = GroupSerializer(many=True, read_only=True)
-#     profile = UserProfileForDeviceSerializer(read_only=True)
-#     class Meta:
-#         model = User
-#         fields = ['id', 'username', 'first_name', 'last_name', 'email', 'is_staff', 'groups', 'profile']
 
 class LogSerializer(serializers.ModelSerializer):
-    # created_by будет определяться автоматически при создании (см. ViewSet)
-    created_by = UserListSerializer(read_only=True) # Показываем имя пользователя (или строку)
-    # created_by = serializers.StringRelatedField(read_only=True) # Или просто строку
-    device = serializers.PrimaryKeyRelatedField(queryset=Device.objects.all()) # Для создания/обновления передаём ID
-    # device = DeviceSerializer(read_only=True) # Для чтения возвращаем объект
+    # Возвращаем объект пользователя для created_by
+    created_by = UserListSerializer(read_only=True)
+    # При чтении возвращаем объект устройства, при записи принимаем ID
+    device = serializers.PrimaryKeyRelatedField(queryset=Device.objects.all())
 
     class Meta:
         model = Log
-        fields = '__all__' # Включаем все поля, включая priority и status
-        # exclude = ['created_by'] # Если будем устанавливать created_by в ViewSet
-        read_only_fields = ('timestamp', 'created_by') # created_by и timestamp не изменяются клиентом
+        fields = '__all__'
+        read_only_fields = ('timestamp', 'created_by')
 
     def to_representation(self, instance):
         """
-        Переопределяем to_representation, чтобы возвращать связанные объекты (device, created_by) как объекты, а не ID.
+        При GET запросах возвращаем вложенный объект устройства для удобства отображения.
         """
         representation = super().to_representation(instance)
-        # device
         request = self.context.get('request')
         if instance.device and request and request.method in ['GET']:
-            representation['device'] = DeviceSerializer(instance.device).data
-        # created_by
-        if instance.created_by:
-             representation['created_by'] = UserListSerializer(instance.created_by).data
+            # Используем LimitedDeviceSerializer чтобы не тянуть лишние вложенности в логах
+            representation['device'] = LimitedDeviceSerializer(instance.device).data
         return representation
 
-# --- LimitedDeviceSerializer: Для использования в UserProfileSerializer ---
-# Возвращает ограниченную информацию о Device, чтобы избежать цикла через owner/assigned_to
+# --- LimitedDeviceSerializer ---
+# Используется внутри UserProfileSerializer для списка избранного.
+# Возвращает объекты owner/location/type, но НЕ использует полные сериализаторы,
+# которые могут вызвать тяжелые запросы.
 class LimitedDeviceSerializer(serializers.ModelSerializer):
-    device_type = serializers.CharField(source='device_type.name', read_only=True)
-    location = serializers.CharField(source='location.name', read_only=True)
-    # Возвращаем owner и assigned_to как строки, а не объекты User
-    owner = serializers.SerializerMethodField()
-    assigned_to = serializers.SerializerMethodField()
-
-    class Meta:
-        model = Device
-        fields = '__all__' # Включаем все, но owner/assigned_to переопределены
-
-    def get_owner(self, obj):
-        if obj.owner:
-            return f"{obj.owner.username} ({obj.owner.first_name} {obj.owner.last_name})"
-        return None
-
-    def get_assigned_to(self, obj):
-        if obj.assigned_to:
-            return f"{obj.assigned_to.username} ({obj.assigned_to.first_name} {obj.assigned_to.last_name})"
-        return None
-
-# --- UserProfileSerializer: Для использования в UserSerializer (например, /api/users/me/) ---
-class UserProfileSerializer(serializers.ModelSerializer):
-    # favorite_devices возвращаем как объекты LimitedDeviceSerializer, чтобы избежать цикла
-    favorite_devices = LimitedDeviceSerializer(many=True, read_only=True, source='favorite_devices.all')
-    class Meta:
-        model = UserProfile
-        fields = ['id', 'user', 'favorite_devices']
-
-# --- UserSerializer: Для получения информации о пользователе (например, /api/users/me/) ---
-class UserSerializer(serializers.ModelSerializer):
-    groups = GroupSerializer(many=True, read_only=True)
-    profile = UserProfileSerializer(read_only=True)
-    class Meta:
-        model = User
-        fields = ['id', 'username', 'first_name', 'last_name', 'email', 'is_staff', 'groups', 'profile']
-
-# --- Основной DeviceSerializer (Вариант A) ---
-class DeviceSerializer(serializers.ModelSerializer):
-    computer_specs = ComputerSpecsSerializer(required=False, read_only=True)
-    printer_scanner_specs = PrinterScannerSpecsSerializer(required=False, read_only=True)
-    network_specs = NetworkDeviceSpecsSerializer(required=False, read_only=True)
-    # Возвращаем имена связанных справочников как строки
-    device_type = serializers.CharField(source='device_type.name', read_only=True)
-    location = serializers.CharField(source='location.name', read_only=True)
-    logs_count = serializers.SerializerMethodField()
-    status = serializers.SerializerMethodField()
-
-    # --- ОБНОВЛЕНО: Используем UserListSerializer (Вариант A) ---
-    owner = serializers.SerializerMethodField()
-    assigned_to = serializers.SerializerMethodField()
-    # --- /ОБНОВЛЕНО ---
+    device_type = DeviceTypeSerializer(read_only=True)
+    location = LocationSerializer(read_only=True)
+    owner = UserListSerializer(read_only=True)
+    assigned_to = UserListSerializer(read_only=True)
 
     class Meta:
         model = Device
         fields = '__all__'
 
+# --- UserProfileSerializer ---
+class UserProfileSerializer(serializers.ModelSerializer):
+    # favorite_devices возвращаем как объекты LimitedDeviceSerializer
+    favorite_devices = LimitedDeviceSerializer(many=True, read_only=True, source='favorite_devices.all')
+
+    class Meta:
+        model = UserProfile
+        fields = ['id', 'user', 'favorite_devices']
+
+# --- UserSerializer: Полный сериализатор пользователя ---
+# Используется для /api/users/me/
+class UserSerializer(serializers.ModelSerializer):
+    groups = GroupSerializer(many=True, read_only=True)
+    profile = UserProfileSerializer(read_only=True)
+
+    class Meta:
+        model = User
+        fields = ['id', 'username', 'first_name', 'last_name', 'email', 'is_staff', 'groups', 'profile']
+
+# --- Основной DeviceSerializer ---
+# Используется для CRUD операций с устройствами
+class DeviceSerializer(serializers.ModelSerializer):
+    # Вложенные спецификации
+    computer_specs = ComputerSpecsSerializer(required=False, read_only=True)
+    printer_scanner_specs = PrinterScannerSpecsSerializer(required=False, read_only=True)
+    network_specs = NetworkDeviceSpecsSerializer(required=False, read_only=True)
+    
+    # Вложенные объекты справочников (возвращаем объекты {id, name})
+    device_type = DeviceTypeSerializer(read_only=True)
+    location = LocationSerializer(read_only=True)
+    
+    # Вложенные пользователи (возвращаем объекты {id, username...})
+    owner = UserListSerializer(read_only=True)
+    assigned_to = UserListSerializer(read_only=True)
+    
+    # Вычисляемое поле
+    logs_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Device
+        fields = '__all__'
+        extra_fields = ['logs_count']
+
     def get_logs_count(self, obj):
         return obj.logs.count()
 
-    def get_status(self, obj):
-        """Преобразует статус на русский язык."""
-        status_map = {
-            'active': 'В работе',
-            'in_repair': 'В ремонте',
-            'retired': 'Списано',
-            'in_stock': 'На складе',
-            'reserved': 'В резерве'
-        }
-        return status_map.get(obj.status, 'Неизвестно')
-    
-    # --- НОВЫЕ МЕТОДЫ: Форматирование owner и assigned_to ---
-    def get_owner(self, obj):
-        if not obj.owner:
-            return None
-        return f"{obj.owner.username} ({obj.owner.first_name} {obj.owner.last_name})"
-
-    def get_assigned_to(self, obj):
-        if not obj.assigned_to:
-            return None
-        return f"{obj.assigned_to.username} ({obj.assigned_to.first_name} {obj.assigned_to.last_name})"
-    # --- /НОВЫЕ МЕТОДЫ ---
-
 # --- Сериализаторы для создания/обновления Device ---
+# Отдельный сериализатор для записи, чтобы обрабатывать вложенные спецификации
 class DeviceCreateUpdateSerializer(serializers.ModelSerializer):
     computer_specs = ComputerSpecsSerializer(required=False)
     printer_scanner_specs = PrinterScannerSpecsSerializer(required=False)
@@ -226,7 +176,8 @@ class DeviceCreateUpdateSerializer(serializers.ModelSerializer):
 
     def to_internal_value(self, data):
         data = data.copy()
-
+        
+        # Извлекаем данные спецификаций
         computer_specs_data = data.pop('computer_specs', None)
         printer_scanner_specs_data = data.pop('printer_scanner_specs', None)
         network_specs_data = data.pop('network_specs', None)
@@ -234,6 +185,8 @@ class DeviceCreateUpdateSerializer(serializers.ModelSerializer):
         validated_data = super().to_internal_value(data)
 
         validated_nested_data = {}
+        
+        # Валидация спецификаций
         if computer_specs_data is not None and not self.is_spec_empty(computer_specs_data):
             nested_serializer = self.fields['computer_specs']
             validated_computer_data = nested_serializer.to_internal_value(computer_specs_data)
@@ -301,3 +254,12 @@ class DeviceCreateUpdateSerializer(serializers.ModelSerializer):
             specs.save()
 
         return instance
+    
+class MetricSerializer(serializers.ModelSerializer):
+    # Для записи (POST) нам нужен только ID устройства
+    # Для чтения (GET) ID обычно достаточно, так как фронтенд знает, чей график строит
+    
+    class Meta:
+        model = Metric
+        fields = ['id', 'device', 'metric_type', 'value', 'timestamp']
+        read_only_fields = ('timestamp',)    

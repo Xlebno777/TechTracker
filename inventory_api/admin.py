@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Device, DeviceType, Location, UserProfile, ComputerSpecs, PrinterScannerSpecs, NetworkDeviceSpecs, Cartridge, CartridgeLog, Log
+from .models import Device, DeviceType, Location, UserProfile, ComputerSpecs, PrinterScannerSpecs, NetworkDeviceSpecs, Cartridge, CartridgeLog, Log, Metric
 
 @admin.register(DeviceType)
 class DeviceTypeAdmin(admin.ModelAdmin):
@@ -101,7 +101,14 @@ class CartridgeLogAdmin(admin.ModelAdmin):
 
 @admin.register(Log)
 class LogAdmin(admin.ModelAdmin):
-    list_display = ('device', 'log_type', 'severity', 'timestamp', 'created_by')
-    list_filter = ('log_type', 'severity', 'timestamp', 'device__device_type')
+    list_display = ('device', 'log_type', 'priority', 'timestamp', 'created_by')
+    list_filter = ('log_type', 'priority', 'timestamp', 'device__device_type')
     search_fields = ('device__name', 'message')
     readonly_fields = ('timestamp',) # timestamp заполняется автоматически
+
+@admin.register(Metric)
+class MetricAdmin(admin.ModelAdmin):
+    list_display = ('device', 'metric_type', 'value', 'timestamp')
+    list_filter = ('metric_type', 'timestamp', 'device')
+    # Для больших таблиц полезно убрать ссылку на полное редактирование, если записей миллионы
+    # Но для начала подойдет стандартный вид.

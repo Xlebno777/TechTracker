@@ -1,320 +1,249 @@
 <template>
-  <div class="request-list p-p-4">
-    <h2 class="list-title">Список заявок</h2>
+  <div class="p-4 request-list-container">
+    <div class="flex justify-content-between align-items-center mb-4">
+      <h2 class="text-2xl font-bold m-0 text-900">Список заявок</h2>
+      <Button icon="pi pi-refresh" rounded text @click="fetchData" :loading="loading" />
+    </div>
 
-    <!-- Панель фильтров -->
-    <div class="filters-panel p-p-4 p-mb-4">
-      <div class="filters-header">
-        <i class="pi pi-sliders-h"></i>
-        <h3>Фильтры</h3>
-      </div>
-
-      <div class="filters-row">
-        <div class="filter-item">
-          <label class="filter-label">Устройство</label>
-          <Dropdown
-            v-model="filters.device"
-            :options="devices"
-            optionLabel="name"
-            optionValue="id"
-            placeholder="Все устройства"
-            showClear
-          />
+    <!-- Фильтры -->
+    <div class="card p-4 mb-4 shadow-1 border-round bg-white">
+      <div class="grid formgrid p-fluid">
+        <div class="col-12 md:col-3 mb-3">
+          <label class="font-semibold block mb-2">Устройство</label>
+          <Dropdown v-model="filters.device" :options="devices" optionLabel="name" optionValue="id" showClear placeholder="Все" />
         </div>
-        <div class="filter-item">
-          <label class="filter-label">Приоритет</label>
-          <Dropdown
-            v-model="filters.priority"
-            :options="priorityOptions"
-            optionLabel="label"
-            optionValue="value"
-            placeholder="Все приоритеты"
-            showClear
-          />
+        <div class="col-12 md:col-3 mb-3">
+          <label class="font-semibold block mb-2">Приоритет</label>
+          <Dropdown v-model="filters.priority" :options="priorityOptions" optionLabel="label" optionValue="value" showClear placeholder="Все" />
         </div>
-        <div class="filter-item">
-          <label class="filter-label">Статус</label>
-          <Dropdown
-            v-model="filters.status"
-            :options="statusOptions"
-            optionLabel="label"
-            optionValue="value"
-            placeholder="Все статусы"
-            showClear
-          />
+        <div class="col-12 md:col-3 mb-3">
+          <label class="font-semibold block mb-2">Статус</label>
+          <Dropdown v-model="filters.status" :options="statusOptions" optionLabel="label" optionValue="value" showClear placeholder="Все" />
         </div>
-        <div class="filter-item">
-          <label class="filter-label">Пользователь</label>
-          <Dropdown
-            v-model="filters.user"
-            :options="users"
-            optionLabel="username"
-            optionValue="id"
-            placeholder="Все пользователи"
-            showClear
-          />
+        <div class="col-12 md:col-3 mb-3">
+          <label class="font-semibold block mb-2">Автор</label>
+          <Dropdown v-model="filters.user" :options="users" optionLabel="username" optionValue="id" showClear placeholder="Все" />
         </div>
-        <div class="filter-item search-item">
-          <label class="filter-label">Поиск в сообщении</label>
-          <InputText
-            v-model="filters.message"
-            placeholder="Введите текст..."
-          />
+        <div class="col-12 mb-3">
+          <span class="p-input-icon-left w-full">
+            <i class="pi pi-search" />
+            <InputText v-model="filters.message" placeholder="Поиск по тексту сообщения..." class="w-full" />
+          </span>
         </div>
-        <div class="filter-item">
-          <Button
-            label="Сбросить"
-            icon="pi pi-filter-slash"
-            class="p-button-outlined p-button-secondary"
-            @click="resetFilters"
-          />
+        <div class="col-12">
+            <Button label="Сбросить фильтры" icon="pi pi-filter-slash" severity="secondary" outlined class="w-auto" @click="resetFilters" />
         </div>
       </div>
     </div>
 
     <!-- Таблица -->
-    <DataTable
-      :value="filteredRequests"
-      paginator
-      :rows="10"
-      class="p-datatable-sm p-datatable-gridlines"
-      stripedRows
-      responsiveLayout="scroll"
-    >
-      <template #empty>Заявки не найдены.</template>
-      <Column field="message" header="Сообщение" sortable></Column>
-      <Column field="device.name" header="Устройство" sortable></Column>
+    <DataTable :value="filteredRequests" :loading="loading" paginator :rows="10" stripedRows responsiveLayout="scroll" class="shadow-2 border-round">
+      <template #empty><div class="p-3 text-center">Заявок нет.</div></template>
+
+      <Column field="message" header="Сообщение" style="min-width: 300px" sortable />
+      
+      <Column field="device.name" header="Устройство" sortable />
+
+      <!-- Приоритет -->
       <Column field="priority" header="Приоритет" sortable>
-        <template #body="slotProps">{{ getPriorityLabel(slotProps.data.priority) }}</template>
+        <template #body="{ data }">
+          <Tag :value="getPriorityLabel(data.priority)" :severity="getPrioritySeverity(data.priority)" />
+        </template>
       </Column>
+
+      <!-- Статус -->
       <Column field="status" header="Статус" sortable>
-        <template #body="slotProps">{{ getStatusLabel(slotProps.data.status) }}</template>
+        <template #body="{ data }">
+          <Tag :value="getStatusLabel(data.status)" :severity="getStatusSeverity(data.status)" />
+        </template>
       </Column>
-      <Column field="created_by.username" header="Кем создано" sortable></Column>
-      <Column field="timestamp" header="Дата" sortable>
-        <template #body="slotProps">{{ formatDate(slotProps.data.timestamp) }}</template>
+
+      <Column field="created_by.username" header="Автор" sortable>
+        <template #body="{ data }">
+           {{ data.created_by?.username || '—' }}
+        </template>
       </Column>
-      <Column v-if="isAdminUser" header="Действия">
-        <template #body="slotProps">
-          <Button
-            label="Изменить статус"
-            icon="pi pi-pencil"
-            class="p-button-sm"
-            @click="openStatusDialog(slotProps.data)"
-          />
+
+      <Column header="Дата" field="timestamp" sortable>
+        <template #body="{ data }">
+          {{ new Date(data.timestamp).toLocaleDateString('ru-RU', {day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit'}) }}
+        </template>
+      </Column>
+
+      <Column v-if="auth.isAdmin" header="Действия" style="width: 100px">
+        <template #body="{ data }">
+          <Button icon="pi pi-pencil" text rounded severity="info" @click="openStatusDialog(data)" />
         </template>
       </Column>
     </DataTable>
 
-    <!-- Диалог -->
-    <Dialog
-      v-model:visible="statusDialogVisible"
-      header="Изменить статус"
-      :modal="true"
-      :closable="true"
-      :style="{ width: '350px' }"
-    >
-      <div class="p-field">
-        <label for="new_status" class="p-field-label">Новый статус</label>
-        <Dropdown
-          id="new_status"
-          v-model="selectedRequestStatus"
-          :options="statusOptions"
-          optionLabel="label"
-          optionValue="value"
-        />
+    <!-- Диалог смены статуса -->
+    <Dialog v-model:visible="statusDialogVisible" header="Изменить статус" modal :style="{ width: '350px' }">
+      <div class="field mt-3">
+        <label class="font-semibold block mb-2">Новый статус</label>
+        <Dropdown v-model="selectedRequestStatus" :options="statusOptions" optionLabel="label" optionValue="value" class="w-full" />
       </div>
       <template #footer>
-        <Button
-          label="Сохранить"
-          icon="pi pi-check"
-          class="p-button-success"
-          @click="updateStatus"
-        />
-        <Button
-          label="Отмена"
-          icon="pi pi-times"
-          class="p-button-secondary"
-          @click="statusDialogVisible = false"
-        />
+        <Button label="Отмена" text icon="pi pi-times" @click="statusDialogVisible = false" />
+        <Button label="Сохранить" icon="pi pi-check" @click="updateStatus" autofocus />
       </template>
     </Dialog>
+
     <Toast />
   </div>
 </template>
 
-<script>
+<script setup>
+import { ref, computed, onMounted } from 'vue';
 import apiClient from '@/api';
+import { useAuthStore } from '@/stores/auth';
+import { useToast } from 'primevue/usetoast';
+
+// UI Components
 import DataTable from 'primevue/datatable';
 import Column from 'primevue/column';
 import Dropdown from 'primevue/dropdown';
 import InputText from 'primevue/inputtext';
-import Dialog from 'primevue/dialog';
 import Button from 'primevue/button';
+import Dialog from 'primevue/dialog';
+import Tag from 'primevue/tag';
 import Toast from 'primevue/toast';
-import { useToast } from 'primevue/usetoast';
 
-export default {
-  name: 'RequestList',
-  components: { DataTable, Column, Dropdown, InputText, Dialog, Button, Toast },
-  data() {
-    return {
-      requests: [],
-      devices: [],
-      users: [],
-      filters: {
-        device: null,
-        priority: null,
-        status: null,
-        user: null,
-        message: '',
-      },
-      priorityOptions: [
-        { label: 'Низкий', value: 'low' },
-        { label: 'Средний', value: 'medium' },
-        { label: 'Высокий', value: 'high' },
-        { label: 'Критический', value: 'critical' },
-      ],
-      statusOptions: [
-        { label: 'Открыта', value: 'open' },
-        { label: 'В работе', value: 'in_progress' },
-        { label: 'Завершена', value: 'closed' },
-        { label: 'Отменена', value: 'cancelled' },
-      ],
-      selectedRequest: null,
-      selectedRequestStatus: null,
-      statusDialogVisible: false,
-    };
-  },
-  setup() {
-    const toast = useToast();
-    return { toast };
-  },
-  computed: {
-    isAdminUser() {
-      if (!this.currentUser || !this.currentUser.groups) {
-        return false;
-      }
-      return this.currentUser.groups.some(group => group.name === 'Admins');
-    },
-    filteredRequests() {
-      return this.requests.filter(req =>
-        (!this.filters.device || req.device.id === this.filters.device) &&
-        (!this.filters.priority || req.priority === this.filters.priority) &&
-        (!this.filters.status || req.status === this.filters.status) &&
-        (!this.filters.user || req.created_by?.id === this.filters.user) &&
-        (!this.filters.message || req.message.toLowerCase().includes(this.filters.message.toLowerCase()))
-      );
-    },
-  },
-  methods: {
-    async fetchData() {
-      const [reqRes, devRes, userRes] = await Promise.all([
-        apiClient.get('logs/?log_type=request'),
-        apiClient.get('devices/'),
-        apiClient.get('users/'),
-      ]);
-      this.requests = reqRes.data;
-      this.devices = devRes.data;
-      this.users = userRes.data;
-    },
-    getPriorityLabel(value) {
-      return this.priorityOptions.find(option => option.value === value)?.label || value;
-    },
-    getStatusLabel(value) {
-      return this.statusOptions.find(option => option.value === value)?.label || value;
-    },
-    formatDate(dateString) {
-      return new Date(dateString).toLocaleString();
-    },
-    resetFilters() {
-      this.filters = { device: null, priority: null, status: null, user: null, message: '' };
-    },
-    openStatusDialog(request) {
-      this.selectedRequest = request;
-      this.selectedRequestStatus = request.status;
-      this.statusDialogVisible = true;
-    },
-    async updateStatus() {
-      try {
-        await apiClient.patch(`logs/${this.selectedRequest.id}/`, {
-          status: this.selectedRequestStatus,
-        });
-        this.selectedRequest.status = this.selectedRequestStatus;
-        this.toast.add({ severity: 'success', summary: 'Обновлено', detail: 'Статус заявки обновлён', life: 3000 });
-        this.statusDialogVisible = false;
-      } catch {
-        this.toast.add({ severity: 'error', summary: 'Ошибка', detail: 'Не удалось обновить статус', life: 3000 });
-      }
-    },
-  },
-  async mounted() {
-    await this.fetchData();
-  },
+const auth = useAuthStore();
+const toast = useToast();
+
+const requests = ref([]);
+const devices = ref([]);
+const users = ref([]);
+const loading = ref(true);
+
+const statusDialogVisible = ref(false);
+const selectedRequest = ref(null);
+const selectedRequestStatus = ref(null);
+
+const filters = ref({
+  device: null,
+  priority: null,
+  status: null,
+  user: null,
+  message: ''
+});
+
+const priorityOptions = [
+  { label: 'Низкий', value: 'low' },
+  { label: 'Средний', value: 'medium' },
+  { label: 'Высокий', value: 'high' },
+  { label: 'Критический', value: 'critical' }
+];
+
+const statusOptions = [
+  { label: 'Открыта', value: 'open' },
+  { label: 'В работе', value: 'in_progress' },
+  { label: 'Завершена', value: 'closed' },
+  { label: 'Отменена', value: 'cancelled' }
+];
+
+// --- Helpers ---
+const getPriorityLabel = (val) => {
+    if (!val) return '—';
+    return priorityOptions.find(o => o.value === val)?.label || val;
 };
+
+const getStatusLabel = (val) => {
+    if (!val) return '—';
+    return statusOptions.find(o => o.value === val)?.label || val;
+};
+
+const getPrioritySeverity = (val) => {
+  if (!val) return 'secondary'; // Если нет приоритета - серый
+  switch (val) {
+    case 'critical': return 'danger';  // Красный
+    case 'high': return 'warning';     // Оранжевый/Желтый
+    case 'low': return 'success';      // Зеленый
+    case 'medium': return 'info';      // Синий
+    default: return 'info';            // Fallback
+  }
+};
+
+const getStatusSeverity = (val) => {
+  if (!val) return 'secondary';
+  switch (val) {
+    case 'closed': return 'success';
+    case 'cancelled': return 'danger';
+    case 'in_progress': return 'info';
+    case 'open': return 'warning';
+    default: return 'secondary';
+  }
+};
+
+// --- Computed ---
+const filteredRequests = computed(() => {
+  return requests.value.filter(req => {
+    const matchDevice = !filters.value.device || req.device?.id === filters.value.device;
+    const matchPriority = !filters.value.priority || req.priority === filters.value.priority;
+    const matchStatus = !filters.value.status || req.status === filters.value.status;
+    const matchUser = !filters.value.user || req.created_by?.id === filters.value.user;
+    const matchMessage = !filters.value.message || req.message.toLowerCase().includes(filters.value.message.toLowerCase());
+    
+    return matchDevice && matchPriority && matchStatus && matchUser && matchMessage;
+  });
+});
+
+// --- Actions ---
+const fetchData = async () => {
+  loading.value = true;
+  try {
+    const [reqRes, devRes, userRes] = await Promise.all([
+      apiClient.get('logs/?log_type=request'),
+      apiClient.get('devices/'),
+      apiClient.get('users/')
+    ]);
+    requests.value = reqRes.data;
+    devices.value = devRes.data;
+    users.value = userRes.data;
+  } catch (e) {
+    toast.add({ severity: 'error', summary: 'Ошибка', detail: 'Не удалось загрузить данные' });
+  } finally {
+    loading.value = false;
+  }
+};
+
+const openStatusDialog = (req) => {
+  selectedRequest.value = req;
+  selectedRequestStatus.value = req.status;
+  statusDialogVisible.value = true;
+};
+
+const updateStatus = async () => {
+  if (!selectedRequest.value) return;
+  try {
+    await apiClient.patch(`logs/${selectedRequest.value.id}/`, { status: selectedRequestStatus.value });
+    
+    const idx = requests.value.findIndex(r => r.id === selectedRequest.value.id);
+    if (idx !== -1) requests.value[idx].status = selectedRequestStatus.value;
+    
+    toast.add({ severity: 'success', summary: 'Успех', detail: 'Статус обновлен', life: 3000 });
+    statusDialogVisible.value = false;
+  } catch (e) {
+    toast.add({ severity: 'error', summary: 'Ошибка', detail: 'Сбой обновления' });
+  }
+};
+
+const resetFilters = () => {
+    filters.value = { device: null, priority: null, status: null, user: null, message: '' };
+};
+
+onMounted(() => {
+  fetchData();
+});
 </script>
 
 <style scoped>
-.request-list {
-  font-family: 'Inter', sans-serif;
-}
-
-.list-title {
-  font-size: 1.6rem;
-  font-weight: 600;
-  color: #2c3e50;
-  margin-bottom: 1rem;
-  text-align: center;
-}
-
-.filters-panel {
-  border-radius: 16px;
-  background: linear-gradient(145deg, rgba(255, 255, 255, 0.85), rgba(240, 245, 255, 0.8));
-  backdrop-filter: blur(8px);
-  padding: 1.5rem;
-  margin-bottom: 2rem;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
-}
-
-.filters-header {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  margin-bottom: 1rem;
-  color: #1f2937;
-}
-
-.filters-header i {
-  margin-right: 0.5rem;
-  font-size: 1.4rem;
-  color: #2563eb;
-}
-
-.filters-row {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 1.5rem;
-}
-
-.filter-item {
-  min-width: 200px;
-}
-
-.filter-label {
-  font-size: 0.9rem;
-  font-weight: 600;
-  margin-bottom: 0.4rem;
-  color: #374151;
-}
-
-.p-inputtext,
-.p-dropdown {
-  width: 100%;
-  border-radius: 0.5rem;
-}
-
-.search-item .p-inputtext {
-  width: 220px;
+.w-full { width: 100%; }
+.request-list-container { max-width: 1400px; margin: 0 auto; }
+.grid { display: flex; flex-wrap: wrap; margin: -0.5rem; }
+.col-12 { flex: 0 0 100%; padding: 0.5rem; }
+@media (min-width: 768px) {
+  .md\:col-3 { flex: 0 0 25%; max-width: 25%; }
 }
 </style>

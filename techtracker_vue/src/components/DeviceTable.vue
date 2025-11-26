@@ -1,629 +1,368 @@
 <template>
-  <div class="device-table p-p-4">
-    <h2 class="p-mb-4" style="font-size: 1.6rem; font-weight: 600; color: #2c3e50;">
-      Таблица устройств
-    </h2>
-
-    <!-- Кнопка добавить -->
-    <div class="button-create p-d-flex p-jc-between p-ai-center p-mb-3">
+  <div class="device-table p-4">
+    <div class="flex justify-content-between align-items-center mb-4">
+      <h2 class="text-2xl font-bold m-0 text-900">Таблица устройств</h2>
       <Button
         v-if="canCreateDevice"
         label="Добавить устройство"
         icon="pi pi-plus"
-        class="p-button-success"
+        severity="success"
         @click="$router.push('/device/create')"
       />
     </div>
 
     <!-- Панель фильтров -->
-    <div class="filters-panel p-p-4 p-mb-4">
-      <div class="filters-header">
-        <i class="pi pi-sliders-h" style="font-size: 1.4rem; color: #2563eb; margin-right: 0.5rem;"></i>
-        <h3>Фильтры устройств</h3>
-      </div>
-    
-      <div class="filters-row">
-        <div class="filter-item">
-          <label class="filter-label"><i class="pi pi-desktop p-mr-2"></i>Тип устройства</label>
-          <Dropdown
-            v-model="filters.device_type"
-            :options="deviceTypes"
-            optionLabel="name"
-            optionValue="id"
-            placeholder="Все типы"
-            showClear
-          />
+    <div class="card p-4 mb-4 shadow-1 border-round bg-white">
+      <div class="grid formgrid p-fluid">
+        <div class="col-12 md:col-3 mb-3">
+          <label class="font-semibold block mb-2">Тип</label>
+          <Dropdown v-model="filters.device_type" :options="deviceTypes" optionLabel="name" optionValue="id" showClear placeholder="Все" />
         </div>
-      
-        <div class="filter-item">
-          <label class="filter-label"><i class="pi pi-cog p-mr-2"></i>Статус</label>
-          <Dropdown
-            v-model="filters.status"
-            :options="statusOptions"
-            optionLabel="label"
-            optionValue="value"
-            placeholder="Все статусы"
-            showClear
-          />
+        <div class="col-12 md:col-3 mb-3">
+          <label class="font-semibold block mb-2">Статус</label>
+          <Dropdown v-model="filters.status" :options="statusOptions" optionLabel="label" optionValue="value" showClear placeholder="Все" />
         </div>
-      
-        <div class="filter-item">
-          <label class="filter-label"><i class="pi pi-map-marker p-mr-2"></i>Местоположение</label>
-          <Dropdown
-            v-model="filters.location"
-            :options="locations"
-            optionLabel="name"
-            optionValue="id"
-            placeholder="Все местоположения"
-            showClear
-          />
+        <div class="col-12 md:col-3 mb-3">
+          <label class="font-semibold block mb-2">Местоположение</label>
+          <Dropdown v-model="filters.location" :options="locations" optionLabel="name" optionValue="id" showClear placeholder="Все" />
         </div>
-      
-        <div class="filter-item">
-          <label class="filter-label"><i class="pi pi-user p-mr-2"></i>Владелец</label>
-          <Dropdown
-            v-model="filters.owner"
-            :options="users"
-            optionLabel="username"
-            optionValue="id"
-            placeholder="Все владельцы"
-            showClear
-          />
+        <div class="col-12 md:col-3 mb-3">
+          <label class="font-semibold block mb-2">Владелец</label>
+          <Dropdown v-model="filters.owner" :options="users" optionLabel="username" optionValue="id" showClear placeholder="Все" />
         </div>
-      
-        <div class="filter-item search-item">
-          <label class="filter-label"><i class="pi pi-search p-mr-2"></i>Поиск</label>
-          <InputText v-model="filters.search" placeholder="Название или сер. №" />
+        <div class="col-12 md:col-9 mb-3">
+          <label class="font-semibold block mb-2">Поиск</label>
+          <span class="p-input-icon-left w-full">
+            <i class="pi pi-search" />
+            <InputText v-model="filters.search" placeholder="Название или серийный номер..." class="w-full" />
+          </span>
         </div>
-      
-        <div class="filter-item">
-          <label class="filter-label">&nbsp;</label>
-          <Button
-            label="Сбросить"
-            icon="pi pi-filter-slash"
-            class="p-button-outlined p-button-secondary"
-            @click="resetFilters"
-          />
+        <div class="col-12 md:col-3 mb-3 flex align-items-end">
+          <Button label="Сбросить" icon="pi pi-filter-slash" severity="secondary" outlined class="w-full" @click="resetFilters" />
         </div>
       </div>
     </div>
 
     <!-- Таблица -->
-    <DataTable
-      :value="filteredDevices"
-      :loading="loading"
-      paginator
-      :rows="10"
-      stripedRows
-      responsiveLayout="scroll"
-      class="p-datatable-sm p-datatable-gridlines"
-    >
-      <template #empty>Устройства не найдены.</template>
-      <template #loading>Загрузка устройств...</template>
+    <DataTable :value="filteredDevices" :loading="loading" paginator :rows="10" stripedRows responsiveLayout="scroll" class="shadow-2 border-round">
+      <template #empty><div class="p-3 text-center">Устройства не найдены.</div></template>
 
-      <Column header="Избранное" style="width: 80px;"> <!-- Укажем ширину -->
-        <template #body="slotProps">
-          <!-- Иконка звезды -->
+      <!-- Избранное -->
+      <Column header="" style="width: 3rem">
+        <template #body="{ data }">
           <Button
-            :icon="isDeviceFavorite(slotProps.data) ? 'pi pi-star-fill' : 'pi pi-star'"
-            :class="isDeviceFavorite(slotProps.data) ? 'p-button-warning p-button-text' : 'p-button-outlined p-button-secondary'"
-            @click="toggleFavorite(slotProps.data)"
-            aria-label="Переключить избранное"
-            size="small"
+            :icon="isDeviceFavorite(data) ? 'pi pi-star-fill' : 'pi pi-star'"
+            :severity="isDeviceFavorite(data) ? 'warning' : 'secondary'"
             text
+            rounded
+            @click="toggleFavorite(data)"
           />
         </template>
       </Column>
-      <Column field="name" header="Название" sortable />
-      <Column field="serial_number" header="Серийный номер" sortable />
-      <Column field="asset_number" header="Инв. номер" sortable />
-      <Column header="Тип" field="device_type" sortable />
-      <Column header="Статус" field="status" sortable />
-      <Column header="Местоположение" field="location" sortable />
-      <Column header="Владелец" field="owner" sortable />
-      <Column field="ip_address" header="IP" />
-      <Column field="mac_address" header="MAC" />
 
-      <Column header="Действия" style="width: 120px;">
-        <template #body="slotProps">
+      <Column field="name" header="Название" sortable />
+      <Column field="serial_number" header="S/N" sortable />
+      <Column field="asset_number" header="Инв. №" sortable />
+      
+      <!-- Тип (Объект) -->
+      <Column header="Тип" field="device_type.name" sortable />
+      
+      <!-- Статус (Маппинг) -->
+      <Column field="status" header="Статус" sortable>
+        <template #body="{ data }">
+          <Tag :value="getStatusLabel(data.status)" :severity="getStatusSeverity(data.status)" />
+        </template>
+      </Column>
+
+      <!-- Местоположение (Объект) -->
+      <Column header="Место" field="location.name" sortable />
+
+      <!-- Владелец (Форматирование) -->
+      <Column header="Владелец" sortable field="owner.username">
+        <template #body="{ data }">
+          {{ getOwnerName(data.owner) }}
+        </template>
+      </Column>
+
+      <Column field="ip_address" header="IP" />
+
+      <!-- Действия -->
+      <Column header="Действия" style="width: 120px">
+        <template #body="{ data }">
           <SplitButton
             label="Действия"
             icon="pi pi-cog"
-            :model="getMenuItems(slotProps.data)"
+            :model="getMenuItems(data)"
             severity="secondary"
             size="small"
-            :disabled="!canPerformAnyAction(slotProps.data)"
-          ></SplitButton>
+            text
+            raised
+          />
         </template>
       </Column>
     </DataTable>
 
-    <Dialog
-      v-model:visible="detailDialogVisible"
-      :header="`Информация об устройстве: ${selectedDevice?.name}`"
-      :modal="true"
-      :closable="true"
-      :style="{ width: '50vw' }"
-      :draggable="false"
-      :resizable="false"
-    >
-      <div v-if="selectedDevice" class="p-text-center">
-        <!-- Отображение QR-кода -->
-        <img
-          v-if="qrCodeUrl"
-          :src="qrCodeUrl"
-          alt="QR-код устройства"
-          class="p-mb-3"
-          style="max-width: 200px; max-height: 200px; display: block; margin: 0 auto;"
-        />
-        <div v-else class="p-mb-3">Загрузка QR-кода...</div>
+    <!-- Модальное окно деталей -->
+    <Dialog v-model:visible="detailDialogVisible" :header="selectedDevice?.name" modal :style="{ width: '50vw' }" :breakpoints="{ '960px': '75vw', '640px': '90vw' }">
+      <div v-if="selectedDevice" class="flex flex-column align-items-center">
+        <img v-if="qrCodeUrl" :src="qrCodeUrl" alt="QR" class="mb-3 shadow-2 border-round" style="max-width: 150px" />
+        
+        <div class="grid w-full">
+            <div class="col-6 font-bold">Серийный номер:</div>
+            <div class="col-6">{{ selectedDevice.serial_number }}</div>
+            
+            <div class="col-6 font-bold">Владелец:</div>
+            <div class="col-6">{{ getOwnerName(selectedDevice.owner) }}</div>
 
-        <!-- Подробная информация -->
-        <div class="p-grid p-nogutter p-ai-center">
-          <div class="p-col-6 p-text-left"><strong>Название:</strong></div>
-          <div class="p-col-6 p-text-left">{{ selectedDevice.name }}</div>
+            <div class="col-6 font-bold">Назначен:</div>
+            <div class="col-6">{{ getOwnerName(selectedDevice.assigned_to) }}</div>
+            
+            <div class="col-6 font-bold">Заметки:</div>
+            <div class="col-6">{{ selectedDevice.notes || '-' }}</div>
         </div>
-        <div class="p-grid p-nogutter p-ai-center">
-          <div class="p-col-6 p-text-left"><strong>Серийный номер:</strong></div>
-          <div class="p-col-6 p-text-left">{{ selectedDevice.serial_number }}</div>
-        </div>
-        <div class="p-grid p-nogutter p-ai-center">
-          <div class="p-col-6 p-text-left"><strong>Инвентарный номер:</strong></div>
-          <div class="p-col-6 p-text-left">{{ selectedDevice.asset_number || '—' }}</div>
-        </div>
-        <div class="p-grid p-nogutter p-ai-center">
-          <div class="p-col-6 p-text-left"><strong>Тип:</strong></div>
-          <div class="p-col-6 p-text-left">{{ selectedDevice.device_type?.name || '—' }}</div>
-        </div>
-        <div class="p-grid p-nogutter p-ai-center">
-          <div class="p-col-6 p-text-left"><strong>Статус:</strong></div>
-          <div class="p-col-6 p-text-left">{{ selectedDevice.status }}</div>
-        </div>
-        <div class="p-grid p-nogutter p-ai-center">
-          <div class="p-col-6 p-text-left"><strong>Местоположение:</strong></div>
-          <div class="p-col-6 p-text-left">{{ selectedDevice.location?.name || '—' }}</div>
-        </div>
-        <div class="p-grid p-nogutter p-ai-center">
-          <div class="p-col-6 p-text-left"><strong>Владелец:</strong></div>
-          <div class="p-col-6 p-text-left">{{ getOwnerName(selectedDevice.owner) }}</div>
-        </div>
-        <div class="p-grid p-nogutter p-ai-center">
-          <div class="p-col-6 p-text-left"><strong>IP-адрес:</strong></div>
-          <div class="p-col-6 p-text-left">{{ selectedDevice.ip_address || '—' }}</div>
-        </div>
-        <div class="p-grid p-nogutter p-ai-center">
-          <div class="p-col-6 p-text-left"><strong>MAC-адрес:</strong></div>
-          <div class="p-col-6 p-text-left">{{ selectedDevice.mac_address || '—' }}</div>
-        </div>
-        <div class="p-grid p-nogutter p-ai-center">
-          <div class="p-col-6 p-text-left"><strong>Заметки:</strong></div>
-          <div class="p-col-6 p-text-left">{{ selectedDevice.notes || '—' }}</div>
-        </div>
-        <!-- Можно добавить и специфичные данные, если нужно -->
       </div>
-      <template #footer>
-        <Button label="Закрыть" icon="pi pi-times" @click="detailDialogVisible = false" class="p-button-text" />
-      </template>
     </Dialog>
+
     <ConfirmDialog />
     <Toast />
-
-    <Message v-if="error" severity="error" class="p-mt-3" :text="error" />
   </div>
 </template>
 
-<script>
-import apiClient from '@/api'
-import { useConfirm } from 'primevue/useconfirm'
-import { useToast } from 'primevue/usetoast'
-import DataTable from 'primevue/datatable'
-import Column from 'primevue/column'
-import Dropdown from 'primevue/dropdown'
-import InputText from 'primevue/inputtext'
-import Button from 'primevue/button'
-import ConfirmDialog from 'primevue/confirmdialog'
-import Toast from 'primevue/toast'
-import Message from 'primevue/message'
-import Dialog from 'primevue/dialog'
-import SplitButton from 'primevue/splitbutton'
+<script setup>
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue';
+import { useRouter } from 'vue-router';
+import apiClient from '@/api';
+import { useAuthStore } from '@/stores/auth'; // Используем Store
+import { useConfirm } from 'primevue/useconfirm';
+import { useToast } from 'primevue/usetoast';
 
-export default {
-  name: 'DeviceTable',
-  components: {
-    DataTable,
-    Column,
-    Dropdown,
-    InputText,
-    Button,
-    ConfirmDialog,
-    Toast,
-    Message,
-    Dialog,
-    SplitButton
-  },
-  setup() {
-    const confirm = useConfirm()
-    const toast = useToast()
-    return { confirm, toast }
-  },
-  data() {
-    return {
-      devices: [],
-      deviceTypes: [],
-      locations: [],
-      users: [],
-      currentUser: null,
-      loading: true,
-      error: null,
-      filters: {
-        device_type: '',
-        status: '',
-        location: '',
-        owner: '',
-        search: ''
-      },
-      statusOptions: [
-        { label: 'В работе', value: 'active' },
-        { label: 'В ремонте', value: 'in_repair' },
-        { label: 'Списано', value: 'retired' },
-        { label: 'На складе', value: 'in_stock' },
-        { label: 'В резерве', value: 'reserved' }
-      ],
-      detailDialogVisible: false,
-      selectedDevice: null,
-      qrCodeUrl: null
-    }
-  },
-  computed: {
-    filteredDevices() {
-      return this.devices.filter(d => {
-        const matchesType = !this.filters.device_type || d.device_type.id === this.filters.device_type
-        const matchesStatus = !this.filters.status || d.status === this.filters.status
-        const matchesLocation = !this.filters.location || d.location.id === this.filters.location
-        const matchesOwner = !this.filters.owner || d.owner === this.filters.owner
-        const matchesSearch =
-          !this.filters.search ||
-          d.name.toLowerCase().includes(this.filters.search.toLowerCase()) ||
-          d.serial_number.toLowerCase().includes(this.filters.search.toLowerCase())
-        return matchesType && matchesStatus && matchesLocation && matchesOwner && matchesSearch
-      })
-    },
-    canCreateDevice() {
-      return this.hasGroup('Admins') || this.hasGroup('PowerUsers')
-    }
-  },
-  methods: {
-    canPerformAnyAction(device) {
-      // Проверяем, есть ли у пользователя право на редактирование, удаление или просмотр деталей
-      // Можно добавить другие проверки, если нужно
-      return this.canEditDevice(device) || this.canDeleteDevice(device) || true; // Всегда можно посмотреть детали
-    },
-    getMenuItems(device) {
-      const items = [];
+// Импорты UI
+import DataTable from 'primevue/datatable';
+import Column from 'primevue/column';
+import Dropdown from 'primevue/dropdown';
+import InputText from 'primevue/inputtext';
+import Button from 'primevue/button';
+import SplitButton from 'primevue/splitbutton';
+import Dialog from 'primevue/dialog';
+import Tag from 'primevue/tag';
+import ConfirmDialog from 'primevue/confirmdialog';
+import Toast from 'primevue/toast';
 
-      // Кнопка "Подробнее" (всегда доступна)
-      items.push({
-        label: 'Подробнее',
-        icon: 'pi pi-info-circle',
-        command: () => {
-          this.showDetails(device);
-        }
-      });
+const router = useRouter();
+const auth = useAuthStore();
+const confirm = useConfirm();
+const toast = useToast();
 
-      // Кнопка "Редактировать" (только если разрешено)
-      if (this.canEditDevice(device)) {
-        items.push({
-          label: 'Редактировать',
-          icon: 'pi pi-pencil',
-          command: () => {
-            this.$router.push(`/device/edit/${device.id}`);
-          }
-        });
-      }
+// Данные
+const devices = ref([]);
+const deviceTypes = ref([]);
+const locations = ref([]);
+const users = ref([]);
+const loading = ref(true);
 
-      // Кнопка "Удалить" (только если разрешено)
-      if (this.canDeleteDevice(device)) {
-        items.push({
-          label: 'Удалить',
-          icon: 'pi pi-trash',
-          command: () => {
-            this.confirmDelete(device);
-          }
-        });
-      }
+// Состояние UI
+const detailDialogVisible = ref(false);
+const selectedDevice = ref(null);
+const qrCodeUrl = ref(null);
 
-      // "В избранное" больше нет в этом меню
-      return items;
-    },
-    // --- НОВЫЙ МЕТОД: Переключение избранного ---
-    async toggleFavorite(device) {
-      if (!this.currentUser || !this.currentUser.profile) {
-        console.error("currentUser или его profile не загружен");
-        this.toast.add({ severity: 'error', summary: 'Ошибка', detail: 'Данные пользователя не загружены', life: 3000 });
-        return;
-      }
-    
-      try {
-        const response = await apiClient.post(`devices/${device.id}/toggle_favorite/`);
-        const { message, is_favorite: isFavorite } = response.data;
-      
-        // Обновляем локальное состояние currentUser.profile.favorite_devices
-        // Проверяем, что profile и favorite_devices - это объекты/массивы
-        if (this.currentUser.profile) {
-          if (!this.currentUser.profile.favorite_devices) {
-            // Если favorite_devices не определен, инициализируем как пустой массив
-            this.currentUser.profile.favorite_devices = [];
-          }
-        
-          if (!Array.isArray(this.currentUser.profile.favorite_devices)) {
-            // Если favorite_devices не массив (например, объект или число), логируем ошибку и инициализируем заново
-            console.error("favorite_devices не является массивом, перезаписываем как пустой массив.");
-            this.currentUser.profile.favorite_devices = [];
-          }
-        
-          if (isFavorite) {
-            // Добавляем в избранное
-            // Проверяем, нет ли уже в списке (по ID)
-            if (!this.currentUser.profile.favorite_devices.some(d => d.id === device.id)) {
-              // Добавляем копию объекта устройства (или только ID, если это все, что есть)
-              // Лучше добавить весь объект устройства, чтобы он был доступен в isDeviceFavorite
-              this.currentUser.profile.favorite_devices.push(device);
-            }
-          } else {
-            // Удаляем из избранного
-            this.currentUser.profile.favorite_devices = this.currentUser.profile.favorite_devices.filter(d => d.id !== device.id);
-          }
-        }
-      
-        this.toast.add({ severity: 'success', summary: 'Избранное', detail: message, life: 3000 });
-      } catch (e) {
-        console.error("Ошибка переключения избранного:", e);
-        this.toast.add({ severity: 'error', summary: 'Ошибка', detail: 'Не удалось изменить статус избранного', life: 3000 });
-      }
-    },
-    isDeviceFavorite(device) {
-      if (!this.currentUser || !this.currentUser.profile || !this.currentUser.profile.favorite_devices) {
-        return false; // Если профиль или список избранных не загружен, считаем, что не в избранном
-      }
-    
-      // Проверяем, что favorite_devices - это массив
-      if (!Array.isArray(this.currentUser.profile.favorite_devices)) {
-        console.warn("favorite_devices не является массивом в isDeviceFavorite.");
-        return false;
-      }
-    
-      // Проверяем, есть ли ID устройства в списке избранных
-      return this.currentUser.profile.favorite_devices.some(favDevice => favDevice.id === device.id);
-    },
-    async showDetails(device) {
-      this.selectedDevice = device;
-      this.qrCodeUrl = null; // Сбрасываем URL QR-кода
-      this.detailDialogVisible = true;
+const filters = ref({
+  device_type: null,
+  status: null,
+  location: null,
+  owner: null,
+  search: ''
+});
 
-      try {
-        // Генерируем URL для QR-кода (он будет запрошен браузером)
-        // Используем axios.get с responseType 'blob' для получения изображения как бинарных данных
-        const response = await apiClient.get(`devices/${device.id}/qr/`, {
-          responseType: 'blob' // Важно!
-        });
+// Константы статусов
+const statusOptions = [
+  { label: 'В работе', value: 'active' },
+  { label: 'В ремонте', value: 'in_repair' },
+  { label: 'Списано', value: 'retired' },
+  { label: 'На складе', value: 'in_stock' },
+  { label: 'В резерве', value: 'reserved' }
+];
 
-        // Создаём URL из бинарных данных
-        const blob = response.data;
-        this.qrCodeUrl = URL.createObjectURL(blob);
-      } catch (e) {
-        console.error("Ошибка загрузки QR-кода:", e);
-        this.qrCodeUrl = null; // Оставляем null или показываем сообщение об ошибке
-        // this.toast.add({ severity: 'error', summary: 'QR-код', detail: 'Не удалось загрузить QR-код', life: 3000 });
-      }
-    },
-    hasGroup(group) {
-      return this.currentUser?.groups?.some(g => g.name === group)
-    },
-    getOwnerName(ownerObjectOrId) {
-      // Если передан null/undefined, возвращаем '—'
-      if (!ownerObjectOrId) return '—';
+// --- Helpers ---
 
-      // Проверяем, является ли ownerObjectOrId объектом (новое поведение)
-      if (typeof ownerObjectOrId === 'object' && ownerObjectOrId !== null) {
-        const user = ownerObjectOrId; // Это сам объект пользователя
-        const fullName = `${user.first_name || ''} ${user.last_name || ''}`.trim();
-        return fullName ? `${user.username} (${fullName})` : user.username;
-      }
-    
-      // Если это всё ещё ID (старое поведение, на всякий случай), ищем в this.users
-      // (Это не должно сработать, если DeviceSerializer обновлён)
-      const user = this.users.find(u => u.id === ownerObjectOrId);
-      if (user) {
-        const fullName = `${user.first_name || ''} ${user.last_name || ''}`.trim();
-        return fullName ? `${user.username} (${fullName})` : user.username;
-      }
-      return '—';
-    },
-    async fetchAll() {
-      try {
-        const [devices, types, locations, users, me] = await Promise.all([
-          apiClient.get('devices/'),
-          apiClient.get('devicetypes/'),
-          apiClient.get('locations/'),
-          apiClient.get('users/'),
-          apiClient.get('users/me/')
-        ])
-        this.devices = devices.data
-        this.deviceTypes = types.data
-        this.locations = locations.data
-        this.users = users.data
-        this.currentUser = me.data
-      } catch (e) {
-        console.error(e)
-        this.error = 'Ошибка загрузки данных'
-      } finally {
-        this.loading = false
-      }
-    },
-    resetFilters() {
-      this.filters = { device_type: '', status: '', location: '', owner: '', search: '' }
-    },
-    canEditDevice(device) {
-      if (!this.currentUser) return false;
-      // Редактировать могут: Admin, PowerUsers, владелец, назначенный
-      const isOwner = device.owner && device.owner.id === this.currentUser.id; // <-- Обрати внимание на .id
-      const isAssigned = device.assigned_to && device.assigned_to.id === this.currentUser.id; // <-- Обрати внимание на .id
+// Форматирование имени (принимает объект UserListSerializer)
+const getOwnerName = (userObj) => {
+  if (!userObj) return '—';
+  // Теперь это объект, а не строка!
+  const nameParts = [userObj.first_name, userObj.last_name].filter(Boolean).join(' ');
+  return nameParts ? `${userObj.username} (${nameParts})` : userObj.username;
+};
 
-      return this.hasGroup('Admins') || this.hasGroup('PowerUsers') || isOwner || isAssigned;
-    },
+const getStatusLabel = (val) => statusOptions.find(o => o.value === val)?.label || val;
 
-    // Метод canDeleteDevice не изменился, так как не зависит от owner/assigned_to
-    canDeleteDevice() {
-      if (!this.currentUser) return false;
-      // Удалять могут только Admin
-      return this.hasGroup('Admins');
-    },
-    confirmDelete(device) {
-      this.confirm.require({
-        message: `Удалить устройство "${device.name}"?`,
-        header: 'Подтверждение удаления',
-        icon: 'pi pi-exclamation-triangle',
-        acceptLabel: 'Удалить',
-        rejectLabel: 'Отмена',
-        acceptClass: 'p-button-danger',
-        accept: async () => {
-          try {
-            await apiClient.delete(`devices/${device.id}/`)
-            this.devices = this.devices.filter(d => d.id !== device.id)
-            this.toast.add({ severity: 'success', summary: 'Удалено', detail: 'Устройство удалено', life: 3000 })
-          } catch (e) {
-            this.toast.add({ severity: 'error', summary: 'Ошибка', detail: 'Не удалось удалить', life: 3000 })
-          }
-        }
-      })
-    }
-  },
-  mounted() {
-    this.fetchAll()
-  },
-  beforeUnmount() {
-    if (this.qrCodeUrl) {
-      URL.revokeObjectURL(this.qrCodeUrl);
-    }
+const getStatusSeverity = (val) => {
+  switch (val) {
+    case 'active': return 'success';
+    case 'in_repair': return 'warning';
+    case 'retired': return 'danger';
+    default: return 'info';
   }
-}
+};
+
+// Права доступа
+const canCreateDevice = computed(() => auth.isAdmin || auth.isPowerUser);
+
+const canEditDevice = (device) => {
+  if (!auth.user) return false;
+  const isOwner = device.owner?.id === auth.user.id;
+  const isAssigned = device.assigned_to?.id === auth.user.id;
+  return auth.isAdmin || auth.isPowerUser || isOwner || isAssigned;
+};
+
+const canDeleteDevice = () => auth.isAdmin;
+
+// Фильтрация
+const filteredDevices = computed(() => {
+  return devices.value.filter(d => {
+    const matchType = !filters.value.device_type || d.device_type?.id === filters.value.device_type;
+    const matchStatus = !filters.value.status || d.status === filters.value.status;
+    const matchLoc = !filters.value.location || d.location?.id === filters.value.location;
+    const matchOwner = !filters.value.owner || d.owner?.id === filters.value.owner; // Сравниваем ID
+    
+    const searchLower = filters.value.search.toLowerCase();
+    const matchSearch = !filters.value.search || 
+      d.name.toLowerCase().includes(searchLower) || 
+      d.serial_number.toLowerCase().includes(searchLower);
+
+    return matchType && matchStatus && matchLoc && matchOwner && matchSearch;
+  });
+});
+
+// --- Actions ---
+
+// Избранное (работаем через Store)
+const isDeviceFavorite = (device) => {
+  return auth.user?.profile?.favorite_devices?.some(d => d.id === device.id);
+};
+
+const toggleFavorite = async (device) => {
+  try {
+    const res = await apiClient.post(`devices/${device.id}/toggle_favorite/`);
+    const isFav = res.data.is_favorite;
+    
+    // Обновляем локально в Store, чтобы не перезагружать страницу
+    // ВАЖНО: Мы мутируем состояние Pinia напрямую, это допустимо, но лучше через action
+    const favs = auth.user.profile.favorite_devices;
+    if (isFav) {
+        // Добавляем (объект device уже содержит нужные поля благодаря LimitedDeviceSerializer)
+        favs.push(device);
+    } else {
+        const idx = favs.findIndex(d => d.id === device.id);
+        if (idx !== -1) favs.splice(idx, 1);
+    }
+    
+    toast.add({ severity: 'success', summary: isFav ? 'Добавлено' : 'Удалено', detail: res.data.message, life: 2000 });
+  } catch (e) {
+    toast.add({ severity: 'error', summary: 'Ошибка', detail: 'Не удалось обновить избранное' });
+  }
+};
+
+const getMenuItems = (device) => {
+  const items = [
+    {
+      label: 'Подробнее',
+      icon: 'pi pi-info-circle',
+      command: () => showDetails(device)
+    }
+  ];
+
+  if (canEditDevice(device)) {
+    items.push({
+      label: 'Редактировать',
+      icon: 'pi pi-pencil',
+      command: () => router.push(`/device/edit/${device.id}`)
+    });
+  }
+
+  if (canDeleteDevice()) {
+    items.push({
+      label: 'Удалить',
+      icon: 'pi pi-trash',
+      command: () => confirmDelete(device)
+    });
+  }
+  return items;
+};
+
+const showDetails = async (device) => {
+  selectedDevice.value = device;
+  detailDialogVisible.value = true;
+  qrCodeUrl.value = null;
+  try {
+    const res = await apiClient.get(`devices/${device.id}/qr/`, { responseType: 'blob' });
+    qrCodeUrl.value = URL.createObjectURL(res.data);
+  } catch (e) {
+    console.error(e);
+  }
+};
+
+const confirmDelete = (device) => {
+  confirm.require({
+    message: `Удалить устройство "${device.name}"?`,
+    header: 'Подтверждение',
+    icon: 'pi pi-exclamation-triangle',
+    acceptLabel: 'Да',
+    rejectLabel: 'Нет',
+    acceptClass: 'p-button-danger',
+    accept: async () => {
+      try {
+        await apiClient.delete(`devices/${device.id}/`);
+        devices.value = devices.value.filter(d => d.id !== device.id);
+        toast.add({ severity: 'success', summary: 'Удалено', detail: 'Устройство удалено', life: 3000 });
+      } catch (e) {
+        toast.add({ severity: 'error', summary: 'Ошибка', detail: 'Не удалось удалить' });
+      }
+    }
+  });
+};
+
+const resetFilters = () => {
+  filters.value = { device_type: null, status: null, location: null, owner: null, search: '' };
+};
+
+const fetchData = async () => {
+  loading.value = true;
+  try {
+    const [devRes, typesRes, locRes, usersRes] = await Promise.all([
+      apiClient.get('devices/'),
+      apiClient.get('devicetypes/'),
+      apiClient.get('locations/'),
+      apiClient.get('users/')
+    ]);
+    devices.value = devRes.data;
+    deviceTypes.value = typesRes.data;
+    locations.value = locRes.data;
+    users.value = usersRes.data;
+  } catch (e) {
+    toast.add({ severity: 'error', summary: 'Ошибка', detail: 'Не удалось загрузить данные' });
+  } finally {
+    loading.value = false;
+  }
+};
+
+onMounted(() => {
+  fetchData();
+});
+
+onBeforeUnmount(() => {
+  if (qrCodeUrl.value) URL.revokeObjectURL(qrCodeUrl.value);
+});
 </script>
 
 <style scoped>
-.device-table {
-  font-family: 'Inter', 'Segoe UI', Roboto, sans-serif;
-  color: #1f2937;
-  background-color: #f9fafb;
-  border-radius: 12px;
+/* Стили для сетки, если PrimeFlex не подключен глобально */
+.grid { display: flex; flex-wrap: wrap; margin: -0.5rem; }
+.col-12 { flex: 0 0 100%; padding: 0.5rem; }
+@media (min-width: 768px) {
+  .md\:col-3 { flex: 0 0 25%; max-width: 25%; }
+  .md\:col-9 { flex: 0 0 75%; max-width: 75%; }
 }
-
-.button-create{
-  margin-bottom: 1.5rem;
-}
-
-.filters-panel {
-  position: relative;
-  border-radius: 16px;
-  background: linear-gradient(145deg, rgba(255, 255, 255, 0.85), rgba(240, 245, 255, 0.8));
-  backdrop-filter: blur(8px);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
-  border: 1px solid rgba(255, 255, 255, 0.5);
-  transition: all 0.3s ease;
-}
-
-.filters-panel:hover {
-  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.1);
-}
-
-/* Заголовок панели */
-.filters-header {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  margin-bottom: 1.5rem;
-}
-
-.filters-header h3 {
-  font-size: 1.2rem;
-  font-weight: 600;
-  color: #1f2937;
-  margin: 0;
-  text-align: center;
-}
-
-/* Контейнер с фильтрами */
-.filters-row {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  align-items: flex-end;
-  gap: 1.5rem;
-  text-align: center;
-}
-
-/* Каждый фильтр */
-.filter-item {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  min-width: 170px;
-  margin-bottom: 2em;
-}
-
-/* Подписи над полями */
-.filter-label {
-  font-weight: 600;
-  color: #374151;
-  margin-bottom: 0.5rem;
-  font-size: 0.95rem;
-  display: flex;
-  align-items: center;
-  gap: 0.25rem;
-}
-
-/* Поля ввода и dropdown */
-.filter-item .p-inputtext,
-.filter-item .p-dropdown {
-  width: 190px;
-  font-size: 0.95rem;
-  border-radius: 10px;
-}
-
-/* Поисковое поле чуть шире */
-.search-item .p-inputtext {
-  width: 230px;
-}
-
-/* Кнопка сброса */
-.filter-item .p-button {
-  border-radius: 10px;
-  font-size: 0.9rem;
-  padding: 0.5rem 1rem;
-}
-
-/* Таблица */
-.p-datatable {
-  border-radius: 10px;
-  background: #ffffff;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.04);
-  margin-top: 2em;
-}
-
-/* Заголовки */
-.p-datatable-thead > tr > th {
-  background: #f3f4f6;
-  font-weight: 600;
-  color: #374151;
-}
-
-/* Ряд таблицы */
-.p-datatable-tbody > tr:hover {
-  background: #f9fafb;
-}
-
-/* Кнопки */
-.p-button {
-  font-family: inherit;
-  border-radius: 8px;
-}
+.w-full { width: 100%; }
+.mb-2 { margin-bottom: 0.5rem; }
+.mb-3 { margin-bottom: 1rem; }
+.mb-4 { margin-bottom: 1.5rem; }
 </style>

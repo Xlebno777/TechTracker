@@ -17,14 +17,14 @@ from django_filters.rest_framework import DjangoFilterBackend
 from .models import (
     Device, DeviceType, Location, UserProfile,
     ComputerSpecs, PrinterScannerSpecs, NetworkDeviceSpecs,
-    Cartridge, CartridgeLog, Log
+    Cartridge, CartridgeLog, Log, Metric
 )
 from .serializers import (
     DeviceSerializer, DeviceCreateUpdateSerializer,
     DeviceTypeSerializer, LocationSerializer,
     UserProfileSerializer, ComputerSpecsSerializer,
     PrinterScannerSpecsSerializer, NetworkDeviceSpecsSerializer,
-    CartridgeSerializer, CartridgeLogSerializer, LogSerializer, UserSerializer
+    CartridgeSerializer, CartridgeLogSerializer, LogSerializer, UserSerializer, MetricSerializer
 )
 
 # --- ViewSet для справочников ---
@@ -275,3 +275,22 @@ class UserViewSet(viewsets.ReadOnlyModelViewSet):
     def me(self, request):
         serializer = self.get_serializer(request.user)
         return Response(serializer.data)
+    
+class MetricViewSet(viewsets.ModelViewSet):
+    queryset = Metric.objects.all()
+    serializer_class = MetricSerializer
+    permission_classes = [IsAuthenticated, DjangoModelPermissions]
+    
+    # Подключаем фильтрацию
+    filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
+    
+    # Поля, по которым можно фильтровать (точное совпадение)
+    filterset_fields = ['device', 'metric_type']
+    
+    # Поля для сортировки
+    ordering_fields = ['timestamp', 'value']
+    ordering = ['-timestamp']
+
+    # Оптимизация: если фронт запрашивает график, ему нужно много точек.
+    # Можно настроить пагинацию отдельно, если глобальная слишком мала,
+    # но пока оставим стандартную.

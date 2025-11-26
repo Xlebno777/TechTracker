@@ -1,4 +1,5 @@
 import { createApp } from 'vue'
+import { createPinia } from 'pinia'
 import App from './App.vue'
 import router from './router' // Импортируем router
 import PrimeVue from 'primevue/config';
@@ -14,6 +15,7 @@ import 'primeflex/primeflex.css';                   // (опционально) 
 
 const app = createApp(App)
 
+app.use(createPinia());
 app.use(router) // Используем router
 app.use(PrimeVue, {
     theme: {
@@ -26,5 +28,6 @@ app.use(PrimeVue, {
 });
 app.use(ToastService);
 app.use(ConfirmationService);
+
 
 app.mount('#app')

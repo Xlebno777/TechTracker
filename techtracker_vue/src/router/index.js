@@ -5,7 +5,7 @@ import DeviceForm from '../components/DeviceForm.vue'
 import AuthPage from '../components/AuthPage.vue'
 import RequestForm from '../components/RequestForm.vue'
 import RequestList from '../components/RequestList.vue'
-
+import Dashboard from '../components/DashboardMain.vue'
 
 
 const routes = [
@@ -49,6 +49,12 @@ const routes = [
     path: '/login', // <-- Путь для страницы входа
     name: 'AuthPage',
     component: AuthPage
+  },
+  {
+    path: '/dashboard',
+    name: 'Dashboard', // Теперь главная - это дашборд
+    component: Dashboard,
+    meta: { requiresAuth: true }
   }
 ]
 

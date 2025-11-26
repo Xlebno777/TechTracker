@@ -202,7 +202,7 @@ class Log(models.Model):
         ('request', 'Заявка'),
     ]
 
-    SEVERITY_CHOICES = [
+    PRIORITY_CHOICES = [
         ('low', 'Низкий'),
         ('medium', 'Средний'),
         ('high', 'Высокий'),
@@ -219,7 +219,7 @@ class Log(models.Model):
     device = models.ForeignKey(Device, on_delete=models.CASCADE, related_name='logs')
     log_type = models.CharField(max_length=20, choices=LOG_TYPE_CHOICES)
     message = models.TextField()
-    severity = models.CharField(max_length=20, choices=SEVERITY_CHOICES, default='medium')
+    priority = models.CharField(max_length=20, choices=PRIORITY_CHOICES, default='medium')
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='open')
     timestamp = models.DateTimeField(auto_now_add=True)
     # Добавим поле для связи с пользователем, создавшим запись (например, заявку)
@@ -232,5 +232,34 @@ class Log(models.Model):
         verbose_name = "Лог"
         verbose_name_plural = "Логи"
         ordering = ['-timestamp'] # Сортировка по убыванию времени
+
+class Metric(models.Model):
+    METRIC_TYPES = [
+        ('cpu_load', 'Загрузка ЦП (%)'),
+        ('memory_usage', 'Использование ОЗУ (%)'),
+        ('disk_usage', 'Использование диска (%)'),
+        ('pages_printed', 'Отпечатано страниц'),
+        ('temperature', 'Температура (°C)'),
+        ('uptime', 'Время работы (сек)'),
+        ('ping_latency', 'Задержка сети (мс)'),
+    ]
+
+    device = models.ForeignKey(Device, on_delete=models.CASCADE, related_name='metrics')
+    metric_type = models.CharField(max_length=50, choices=METRIC_TYPES)
+    value = models.FloatField() # Используем Float, чтобы хранить и проценты (45.5), и целые числа
+    timestamp = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Метрика"
+        verbose_name_plural = "Метрики"
+        ordering = ['-timestamp']
+        # Индексы критически важны для быстрого построения графиков
+        indexes = [
+            models.Index(fields=['device', 'metric_type', '-timestamp']),
+            models.Index(fields=['timestamp']),
+        ]
+
+    def __str__(self):
+        return f"{self.device.name} - {self.metric_type}: {self.value} ({self.timestamp})"
 
 # ... другие модели (например, Request для заявок)

@@ -26,4 +26,17 @@ apiClient.interceptors.request.use(
   }
 );
 
+apiClient.interceptors.response.use(
+  response => response,
+  error => {
+    if (error.response && error.response.status === 401) {
+      // Если сервер вернул 401 (Unauthorized), значит токен невалиден
+      localStorage.removeItem('auth_token');
+      window.location.href = '/login'; // Жесткий редирект или через router
+    }
+    return Promise.reject(error);
+  }
+);
+
+
 export default apiClient;
