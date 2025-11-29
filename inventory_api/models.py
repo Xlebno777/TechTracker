@@ -261,5 +261,20 @@ class Metric(models.Model):
 
     def __str__(self):
         return f"{self.device.name} - {self.metric_type}: {self.value} ({self.timestamp})"
+    
+    
+class PrintJob(models.Model):
+    device = models.ForeignKey(Device, on_delete=models.CASCADE, related_name='print_jobs')
+    user_name = models.CharField(max_length=150) # Имя пользователя в Windows
+    document_name = models.CharField(max_length=255)
+    pages = models.PositiveIntegerField()
+    printer_name = models.CharField(max_length=255)
+    timestamp = models.DateTimeField(auto_now_add=True)
+    # file = models.FileField(upload_to='print_archives/', null=True, blank=True) # На будущее
+
+    def __str__(self):
+        return f"{self.document_name} ({self.pages} p.) by {self.user_name}"
+
+  
 
 # ... другие модели (например, Request для заявок)

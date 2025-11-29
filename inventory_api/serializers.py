@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Device, DeviceType, Location, UserProfile, ComputerSpecs, PrinterScannerSpecs, NetworkDeviceSpecs, Cartridge, CartridgeLog, Log, Metric
+from .models import Device, DeviceType, Location, UserProfile, ComputerSpecs, PrinterScannerSpecs, NetworkDeviceSpecs, Cartridge, CartridgeLog, Log, Metric, PrintJob
 from django.contrib.auth.models import User, Group
 
 # --- Serializers для справочников ---
@@ -256,10 +256,50 @@ class DeviceCreateUpdateSerializer(serializers.ModelSerializer):
         return instance
     
 class MetricSerializer(serializers.ModelSerializer):
-    # Для записи (POST) нам нужен только ID устройства
-    # Для чтения (GET) ID обычно достаточно, так как фронтенд знает, чей график строит
+    # Поле для приема серийного номера (только для записи)
+    serial_number = serializers.CharField(write_only=True)
     
+    # Поле device теперь только для чтения (сервер сам его заполнит)
+    device = serializers.PrimaryKeyRelatedField(read_only=True)
+
     class Meta:
         model = Metric
-        fields = ['id', 'device', 'metric_type', 'value', 'timestamp']
-        read_only_fields = ('timestamp',)    
+        fields = ['id', 'device', 'serial_number', 'metric_type', 'value', 'timestamp']
+        read_only_fields = ('timestamp', 'device')
+
+    def create(self, validated_data):
+        # 1. Достаем серийный номер из пришедших данных
+        serial = validated_data.pop('serial_number')
+        
+        try:
+            # 2. Ищем устройство в базе по серийнику
+            device = Device.objects.get(serial_number=serial)
+        except Device.DoesNotExist:
+            # Если устройства нет - выбрасываем ошибку (агент увидит 400 Bad Request)
+            raise serializers.ValidationError(f"Device with serial number '{serial}' not found.")
+
+        # 3. Создаем метрику, привязанную к найденному устройству
+        metric = Metric.objects.create(device=device, **validated_data)
+        return metric
+    
+class PrintJobSerializer(serializers.ModelSerializer):
+    # Агент шлет серийный номер ПК, к которому подключен принтер
+    serial_number = serializers.CharField(write_only=True)
+    device = serializers.PrimaryKeyRelatedField(read_only=True)
+
+    class Meta:
+        model = PrintJob
+        fields = ['id', 'serial_number', 'device', 'user_name', 'document_name', 'pages', 'printer_name', 'timestamp']
+
+    def create(self, validated_data):
+        serial = validated_data.pop('serial_number')
+        try:
+            device = Device.objects.get(serial_number=serial)
+        except Device.DoesNotExist:
+            raise serializers.ValidationError(f"Device {serial} not found")
+        
+        # Здесь можно добавить логику уменьшения счетчика картриджа!
+        # device.printer_scanner_specs.current_cartridge.remaining_pages -= validated_data['pages']
+        # device.printer_scanner_specs.current_cartridge.save()
+        
+        return PrintJob.objects.create(device=device, **validated_data)

@@ -17,14 +17,14 @@ from django_filters.rest_framework import DjangoFilterBackend
 from .models import (
     Device, DeviceType, Location, UserProfile,
     ComputerSpecs, PrinterScannerSpecs, NetworkDeviceSpecs,
-    Cartridge, CartridgeLog, Log, Metric
+    Cartridge, CartridgeLog, Log, Metric, PrintJob
 )
 from .serializers import (
     DeviceSerializer, DeviceCreateUpdateSerializer,
     DeviceTypeSerializer, LocationSerializer,
     UserProfileSerializer, ComputerSpecsSerializer,
     PrinterScannerSpecsSerializer, NetworkDeviceSpecsSerializer,
-    CartridgeSerializer, CartridgeLogSerializer, LogSerializer, UserSerializer, MetricSerializer
+    CartridgeSerializer, CartridgeLogSerializer, LogSerializer, UserSerializer, MetricSerializer, PrintJobSerializer
 )
 
 # --- ViewSet для справочников ---
@@ -294,3 +294,19 @@ class MetricViewSet(viewsets.ModelViewSet):
     # Оптимизация: если фронт запрашивает график, ему нужно много точек.
     # Можно настроить пагинацию отдельно, если глобальная слишком мала,
     # но пока оставим стандартную.
+
+class PrintJobViewSet(viewsets.ModelViewSet):
+    queryset = PrintJob.objects.all()
+    serializer_class = PrintJobSerializer
+    permission_classes = [IsAuthenticated, DjangoModelPermissions]
+    
+    # Подключаем фильтрацию
+    filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
+    
+    # Поля, по которым можно фильтровать (точное совпадение)
+    filterset_fields = ['serial_number', 'device', 'user_name', 'document_name', 'printer_name']
+    
+    # Поля для сортировки
+    ordering_fields = ['id', 'serial_number', 'device', 'user_name', 'document_name', 'pages', 'printer_name', 'timestamp']
+    ordering = ['-id']
+

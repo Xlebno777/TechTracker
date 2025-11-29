@@ -27,6 +27,7 @@ router.register(r'cartridelogs', views.CartridgeLogViewSet)
 router.register(r'logs', views.LogViewSet)
 router.register(r'users', views.UserViewSet) # Только эндпоинты чтения
 router.register(r'metrics', views.MetricViewSet)
+router.register(r'printjob', views.PrintJobViewSet)
 
 # Подключаем маршруты роутера к этому файлу
 urlpatterns = [
