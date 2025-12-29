@@ -42,6 +42,7 @@ INSTALLED_APPS = [
     'rest_framework',
     'rest_framework.authtoken', # Если планируешь использовать токены
     'dj_rest_auth',
+    'import_export',
     'inventory_api',
 ]
 

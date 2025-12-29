@@ -1,4 +1,7 @@
 from django.contrib import admin
+from import_export import resources, fields
+from import_export.widgets import ForeignKeyWidget
+from import_export.admin import ImportExportModelAdmin
 from .models import Device, DeviceType, Location, UserProfile, ComputerSpecs, PrinterScannerSpecs, NetworkDeviceSpecs, Cartridge, CartridgeLog, Log, Metric
 
 @admin.register(DeviceType)
@@ -106,8 +109,28 @@ class LogAdmin(admin.ModelAdmin):
     search_fields = ('device__name', 'message')
     readonly_fields = ('timestamp',) # timestamp заполняется автоматически
 
+# Создаем ресурс для настройки того, КАК экспортировать данные
+class MetricResource(resources.ModelResource):
+    # Чтобы вместо ID устройства выводилось его имя, используем widget
+    device = fields.Field(
+        column_name='Устройство',
+        attribute='device',
+        widget=ForeignKeyWidget(Device, field='name')
+    )
+    
+    # Переименуем остальные колонки для красоты
+    metric_type = fields.Field(attribute='get_metric_type_display', column_name='Тип метрики')
+    value = fields.Field(attribute='value', column_name='Значение')
+    timestamp = fields.Field(attribute='timestamp', column_name='Время')
+
+    class Meta:
+        model = Metric
+        fields = ('device', 'metric_type', 'value', 'timestamp') # Порядок колонок
+        export_order = ('timestamp', 'device', 'metric_type', 'value')
+
 @admin.register(Metric)
-class MetricAdmin(admin.ModelAdmin):
+class MetricAdmin(ImportExportModelAdmin):
+    resource_class = MetricResource
     list_display = ('device', 'metric_type', 'value', 'timestamp')
     list_filter = ('metric_type', 'timestamp', 'device')
     # Для больших таблиц полезно убрать ссылку на полное редактирование, если записей миллионы
