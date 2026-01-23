@@ -15,6 +15,7 @@ techtracker_env/
 venv/
 env.local/
 .venv/
+.env
 
 # IDE
 .vscode/

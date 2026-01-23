@@ -304,9 +304,9 @@ class PrintJobViewSet(viewsets.ModelViewSet):
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
     
     # Поля, по которым можно фильтровать (точное совпадение)
-    filterset_fields = ['serial_number', 'device', 'user_name', 'document_name', 'printer_name']
+    filterset_fields = ['device', 'device__serial_number', 'user_name', 'document_name', 'printer_name']
     
     # Поля для сортировки
-    ordering_fields = ['id', 'serial_number', 'device', 'user_name', 'document_name', 'pages', 'printer_name', 'timestamp']
+    ordering_fields = ['id', 'device__serial_number', 'device', 'user_name', 'document_name', 'pages', 'printer_name', 'timestamp']
     ordering = ['-id']
 

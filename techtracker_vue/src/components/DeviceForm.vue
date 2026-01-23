@@ -350,8 +350,8 @@ export default {
           ...d,
           device_type: d.device_type?.id,
           location: d.location?.id,
-          owner: d.owner || null,
-          assigned_to: d.assigned_to || null,
+          owner: d.owner?.id || null,
+          assigned_to: d.assigned_to?.id || null,
           computer_specs: d.computer_specs || { cpu: '', ram_gb: null },
           printer_scanner_specs: d.printer_scanner_specs || {
             printer_type: '',
@@ -375,8 +375,10 @@ export default {
       const method = this.isEditing ? 'put' : 'post';
       const payload = {
         ...this.form,
-        device_type: parseInt(this.form.device_type),
-        location: parseInt(this.form.location)
+        device_type: this.form.device_type ? parseInt(this.form.device_type) : null,
+        location: this.form.location ? parseInt(this.form.location) : null,
+        owner: this.form.owner ? parseInt(this.form.owner) : null,
+        assigned_to: this.form.assigned_to ? parseInt(this.form.assigned_to) : null
       };
 
       try {
