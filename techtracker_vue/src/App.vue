@@ -23,6 +23,11 @@
             <span>Добавить</span>
           </router-link>
 
+          <router-link :to="{ name: 'Printers' }" class="nav-link" active-class="active">
+            <i class="pi pi-print"></i>
+            <span>Принтеры</span>
+          </router-link>
+
           <router-link :to="{ name: 'RequestForm' }" class="nav-link" active-class="active">
             <i class="pi pi-envelope"></i>
             <span>Заявка</span>

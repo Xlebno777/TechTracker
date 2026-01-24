@@ -1,5 +1,8 @@
 import qrcode
 import io
+import ipaddress
+import re
+import uuid
 from django.http import HttpResponse
 from django.core.files.base import ContentFile
 from PIL import Image
@@ -26,6 +29,44 @@ from .serializers import (
     PrinterScannerSpecsSerializer, NetworkDeviceSpecsSerializer,
     CartridgeSerializer, CartridgeLogSerializer, LogSerializer, UserSerializer, MetricSerializer, PrintJobSerializer
 )
+from .permissions import PrintJobPermission, PrinterAgentPermission
+
+
+def _normalize_ip(value):
+    if not value:
+        return None
+    try:
+        return str(ipaddress.ip_address(value))
+    except ValueError:
+        return None
+
+
+def _build_printer_serial(base, max_len=100):
+    raw = base or str(uuid.uuid4())
+    cleaned = re.sub(r'[^A-Za-z0-9._-]+', '_', raw)
+    serial = f"PRN-{cleaned}"[:max_len]
+    if not Device.objects.filter(serial_number=serial).exists():
+        return serial
+    # Если конфликт — добавляем суффикс
+    for idx in range(1, 1000):
+        candidate = f"{serial[:max_len-4]}-{idx}"
+        if not Device.objects.filter(serial_number=candidate).exists():
+            return candidate
+    return f"PRN-{uuid.uuid4().hex[:8]}"
+
+
+def _get_printer_device_type():
+    type_q = (
+        Q(name__icontains='принтер') |
+        Q(name__icontains='printer') |
+        Q(name__icontains='мфу') |
+        Q(name__icontains='mfu')
+    )
+    device_type = DeviceType.objects.filter(type_q).first()
+    if device_type:
+        return device_type
+    device_type, _ = DeviceType.objects.get_or_create(name='Принтер')
+    return device_type
 
 # --- ViewSet для справочников ---
 class DeviceTypeViewSet(viewsets.ModelViewSet):
@@ -196,6 +237,95 @@ class DeviceViewSet(viewsets.ModelViewSet):
         all_my_devices = (owned_or_assigned | favorites).distinct()
         serializer = self.get_serializer(all_my_devices, many=True)
         return Response(serializer.data)
+
+    @action(detail=False, methods=['get'], permission_classes=[IsAuthenticated], url_path='favorite_printers')
+    def favorite_printers(self, request):
+        """
+        Возвращает избранные принтеры текущего пользователя.
+        Принтер определяется по printer_scanner_specs или имени типа устройства.
+        """
+        user = request.user
+        try:
+            favorites = user.profile.favorite_devices.all()
+        except UserProfile.DoesNotExist:
+            favorites = Device.objects.none()
+
+        printer_q = (
+            Q(printer_scanner_specs__isnull=False) |
+            Q(device_type__name__icontains='принтер') |
+            Q(device_type__name__icontains='printer') |
+            Q(device_type__name__icontains='мфу') |
+            Q(device_type__name__icontains='mfu')
+        )
+        favorites = favorites.filter(printer_q).distinct()
+        serializer = self.get_serializer(favorites, many=True)
+        return Response(serializer.data)
+
+    @action(detail=False, methods=['post'], permission_classes=[PrinterAgentPermission], url_path='sync_printers')
+    def sync_printers(self, request):
+        """
+        Принимает список принтеров (name/ip_address) и синхронизирует с БД.
+        """
+        payload = request.data.get('printers', request.data)
+        if not isinstance(payload, list):
+            return Response({"detail": "Expected list of printers."}, status=status.HTTP_400_BAD_REQUEST)
+
+        device_type = _get_printer_device_type()
+        created = 0
+        updated = 0
+        skipped = 0
+
+        for item in payload:
+            if not isinstance(item, dict):
+                skipped += 1
+                continue
+
+            name = (item.get('name') or item.get('printer_name') or item.get('display_name') or '').strip()
+            ip_raw = (item.get('ip_address') or item.get('ip') or '').strip()
+            ip = _normalize_ip(ip_raw)
+
+            if not name and not ip:
+                skipped += 1
+                continue
+
+            device = None
+            if ip:
+                device = Device.objects.filter(ip_address=ip).first()
+            if device is None and name:
+                device = Device.objects.filter(name=name).first()
+
+            if device:
+                changed = False
+                if name and device.name != name:
+                    device.name = name
+                    changed = True
+                if ip and device.ip_address != ip:
+                    device.ip_address = ip
+                    changed = True
+                if device.device_type_id != device_type.id:
+                    device.device_type = device_type
+                    changed = True
+                if changed:
+                    device.save()
+                    updated += 1
+                else:
+                    skipped += 1
+            else:
+                serial = _build_printer_serial(ip or name)
+                device = Device.objects.create(
+                    name=name or f"Printer {ip or serial}",
+                    serial_number=serial,
+                    device_type=device_type,
+                    ip_address=ip,
+                )
+                created += 1
+
+            PrinterScannerSpecs.objects.get_or_create(device=device)
+
+        return Response(
+            {"created": created, "updated": updated, "skipped": skipped},
+            status=status.HTTP_200_OK
+        )
     
     # --- НОВЫЙ МЕТОД ДЛЯ QR-КОДА ---
     @action(detail=True, methods=['get'], permission_classes=[IsAuthenticated])
@@ -298,7 +428,7 @@ class MetricViewSet(viewsets.ModelViewSet):
 class PrintJobViewSet(viewsets.ModelViewSet):
     queryset = PrintJob.objects.all()
     serializer_class = PrintJobSerializer
-    permission_classes = [IsAuthenticated, DjangoModelPermissions]
+    permission_classes = [PrintJobPermission]
     
     # Подключаем фильтрацию
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
@@ -309,4 +439,3 @@ class PrintJobViewSet(viewsets.ModelViewSet):
     # Поля для сортировки
     ordering_fields = ['id', 'device__serial_number', 'device', 'user_name', 'document_name', 'pages', 'printer_name', 'timestamp']
     ordering = ['-id']
-

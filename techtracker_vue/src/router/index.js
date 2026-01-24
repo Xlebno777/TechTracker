@@ -6,6 +6,7 @@ import AuthPage from '../components/AuthPage.vue'
 import RequestForm from '../components/RequestForm.vue'
 import RequestList from '../components/RequestList.vue'
 import Dashboard from '../components/DashboardMain.vue'
+import PrintersPage from '../components/PrintersPage.vue'
 
 
 const routes = [
@@ -55,6 +56,12 @@ const routes = [
     name: 'Dashboard', // Теперь главная - это дашборд
     component: Dashboard,
     meta: { requiresAuth: true }
+  },
+  {
+    path: '/printers',
+    name: 'Printers',
+    component: PrintersPage,
+    meta: { requiresAuth: true }
   }
 ]
 
@@ -68,7 +75,7 @@ const router = createRouter({ // <-- router создаётся ЗДЕСЬ
 router.beforeEach((to, from, next) => {
   const hasToken = localStorage.getItem('auth_token') !== null;
 
-  if (to.name === 'DeviceTable' || to.name === 'DeviceCreate' || to.name === 'DeviceEdit' || to.name === 'RequestForm' || to.name === 'RequestList') {
+  if (to.name === 'DeviceTable' || to.name === 'DeviceCreate' || to.name === 'DeviceEdit' || to.name === 'RequestForm' || to.name === 'RequestList' || to.name === 'Printers') {
     if (!hasToken) {
       next({ name: 'AuthPage' });
     } else {

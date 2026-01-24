@@ -284,19 +284,34 @@ class MetricSerializer(serializers.ModelSerializer):
     
 class PrintJobSerializer(serializers.ModelSerializer):
     # Агент шлет серийный номер ПК, к которому подключен принтер
-    serial_number = serializers.CharField(write_only=True)
+    serial_number = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    # Альтернатива: агент может прислать IP принтера
+    printer_ip = serializers.CharField(write_only=True, required=False, allow_blank=True)
     device = serializers.PrimaryKeyRelatedField(read_only=True)
 
     class Meta:
         model = PrintJob
-        fields = ['id', 'serial_number', 'device', 'user_name', 'document_name', 'pages', 'printer_name', 'timestamp']
+        fields = ['id', 'serial_number', 'printer_ip', 'device', 'user_name', 'document_name', 'pages', 'printer_name', 'timestamp']
 
     def create(self, validated_data):
-        serial = validated_data.pop('serial_number')
-        try:
-            device = Device.objects.get(serial_number=serial)
-        except Device.DoesNotExist:
-            raise serializers.ValidationError(f"Device {serial} not found")
+        serial = (validated_data.pop('serial_number', '') or '').strip()
+        printer_ip = (validated_data.pop('printer_ip', '') or '').strip()
+
+        device = None
+        if printer_ip:
+            device = Device.objects.filter(ip_address=printer_ip).first()
+
+        if device is None and serial:
+            device = Device.objects.filter(serial_number=serial).first()
+
+        if device is None:
+            # Последняя попытка: матчинг по имени принтера (если совпадает с Device.name)
+            printer_name = validated_data.get('printer_name')
+            if printer_name:
+                device = Device.objects.filter(name=printer_name).first()
+
+        if device is None:
+            raise serializers.ValidationError("Printer device not found by IP/serial/name")
         
         # Здесь можно добавить логику уменьшения счетчика картриджа!
         # device.printer_scanner_specs.current_cartridge.remaining_pages -= validated_data['pages']

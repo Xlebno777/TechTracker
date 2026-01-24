@@ -7,6 +7,9 @@ import sys
 import os
 import subprocess
 import win32evtlog # Требует pip install pywin32
+import win32print
+import win32com.client
+import re
 
 # Настройка путей
 if getattr(sys, 'frozen', False):
@@ -97,13 +100,16 @@ def send_print_job(api_base, token, serial, user, doc, pages, printer):
         'Authorization': f'Token {token}',
         'Content-Type': 'application/json'
     }
+    printer_name = printer.get('name') if isinstance(printer, dict) else printer
     payload = {
         'serial_number': serial,
         'user_name': user,
         'document_name': doc,
         'pages': pages,
-        'printer_name': printer
+        'printer_name': printer_name
     }
+    if isinstance(printer, dict) and printer.get('ip_address'):
+        payload['printer_ip'] = printer.get('ip_address')
 
     try:
         response = requests.post(url, json=payload, headers=headers, timeout=10)
@@ -117,10 +123,98 @@ def send_print_job(api_base, token, serial, user, doc, pages, printer):
         logging.error(f"Connection error (print): {e}")
         return False
 
+IP_RE = re.compile(r'(?:\d{1,3}\.){3}\d{1,3}')
+
+
+def _extract_ip(value):
+    if not value:
+        return None
+    match = IP_RE.search(value)
+    return match.group(0) if match else None
+
+
+def _get_tcpip_ports():
+    try:
+        locator = win32com.client.Dispatch("WbemScripting.SWbemLocator")
+        service = locator.ConnectServer(".", "root\\cimv2")
+        ports = service.ExecQuery("SELECT Name, HostAddress FROM Win32_TCPIPPrinterPort")
+        return {p.Name: p.HostAddress for p in ports if p.Name}
+    except Exception as e:
+        logging.warning(f"Failed to read TCP/IP ports: {e}")
+        return {}
+
+
+def collect_printers():
+    printers = []
+    ports = _get_tcpip_ports()
+    flags = win32print.PRINTER_ENUM_LOCAL | win32print.PRINTER_ENUM_CONNECTIONS
+
+    try:
+        items = win32print.EnumPrinters(flags)
+    except Exception as e:
+        logging.error(f"EnumPrinters error: {e}")
+        return printers
+
+    for item in items:
+        try:
+            name = item[2]
+            handle = win32print.OpenPrinter(name)
+            info = win32print.GetPrinter(handle, 2)
+            win32print.ClosePrinter(handle)
+
+            port_name = info.get('pPortName', '') if isinstance(info, dict) else ''
+            ip = ports.get(port_name) or _extract_ip(port_name) or _extract_ip(name)
+
+            printers.append({
+                'name': name,
+                'ip_address': ip,
+                'port_name': port_name
+            })
+        except Exception as e:
+            logging.warning(f"Failed to read printer info: {e}")
+            continue
+
+    return printers
+
+
+def get_printer_ip_map():
+    ip_map = {}
+    for printer in collect_printers():
+        if printer.get('name') and printer.get('ip_address'):
+            ip_map[printer['name']] = printer['ip_address']
+    return ip_map
+
+
+def send_printer_sync(api_base, token, printers):
+    if not printers:
+        return
+
+    if not api_base.endswith('/'):
+        api_base += '/'
+
+    url = f"{api_base}devices/sync_printers/"
+    headers = {
+        'Authorization': f'Token {token}',
+        'Content-Type': 'application/json'
+    }
+    payload = {'printers': printers}
+
+    try:
+        response = requests.post(url, json=payload, headers=headers, timeout=10)
+        if response.status_code != 200:
+            logging.error(f"Failed printer sync: {response.status_code} {response.text}")
+        else:
+            logging.info(f"Printer sync ok: {response.text}")
+    except Exception as e:
+        logging.error(f"Connection error (printer sync): {e}")
+
+
 def check_print_logs(api_base, token, serial):
     """Читает журнал Windows и отправляет новые задания"""
     server = 'localhost'
     log_type = 'Microsoft-Windows-PrintService/Operational'
+
+    printer_ip_map = get_printer_ip_map()
     
     last_record_id = get_last_processed_record_id()
     new_last_record_id = last_record_id
@@ -153,7 +247,8 @@ def check_print_logs(api_base, token, serial):
                                 'user': data[2],
                                 'printer': data[4],
                                 'pages': int(data[7]),
-                                'record_id': event.RecordNumber
+                                'record_id': event.RecordNumber,
+                                'printer_ip': printer_ip_map.get(data[4])
                             }
                             new_jobs.append(job)
                     except Exception as parse_err:
@@ -169,9 +264,13 @@ def check_print_logs(api_base, token, serial):
         # Отправляем события (разворачиваем, чтобы старые ушли первыми)
         if new_jobs:
             for job in reversed(new_jobs):
+                payload_printer = {
+                    'name': job['printer'],
+                    'ip_address': job.get('printer_ip')
+                }
                 success = send_print_job(
-                    api_base, token, serial, 
-                    job['user'], job['doc'], job['pages'], job['printer']
+                    api_base, token, serial,
+                    job['user'], job['doc'], job['pages'], payload_printer
                 )
                 # Если отправилось успешно - обновляем "курсор"
                 if success:
@@ -206,6 +305,7 @@ def main():
         TOKEN = config['DEFAULT']['Token']
         CONFIG_SERIAL = config['DEFAULT']['SerialNumber']
         INTERVAL = int(config['DEFAULT']['Interval'])
+        PRINTER_SYNC_INTERVAL = int(config['DEFAULT'].get('PrinterSyncInterval', '0'))
         
         if CONFIG_SERIAL.upper() == 'AUTO':
             SERIAL_NUMBER = get_serial_number()
@@ -217,8 +317,23 @@ def main():
         logging.error(f"Missing config key: {e}")
         return
 
+    # Первичная синхронизация списка принтеров
+    last_printer_sync = 0
+    try:
+        printers = collect_printers()
+        send_printer_sync(API_BASE, TOKEN, printers)
+        last_printer_sync = time.time()
+    except Exception as e:
+        logging.error(f"Initial printer sync failed: {e}")
+
     while True:
         try:
+            # 0. Периодическая синхронизация принтеров (если включено)
+            if PRINTER_SYNC_INTERVAL > 0 and (time.time() - last_printer_sync) >= PRINTER_SYNC_INTERVAL:
+                printers = collect_printers()
+                send_printer_sync(API_BASE, TOKEN, printers)
+                last_printer_sync = time.time()
+
             # 1. Отправка метрик (CPU, RAM, Disk)
             cpu = psutil.cpu_percent(interval=1)
             send_metric(API_BASE, TOKEN, SERIAL_NUMBER, 'cpu_load', cpu)
