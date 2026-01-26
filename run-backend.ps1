@@ -1,5 +1,6 @@
 $ErrorActionPreference = 'Stop'
 
+$env:PGCLIENTENCODING='UTF8'
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $envFile = Join-Path $root '.env.local'
 $venvActivate = Join-Path $root '.venv\Scripts\Activate.ps1'

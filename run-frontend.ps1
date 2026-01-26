@@ -1,5 +1,6 @@
 $ErrorActionPreference = 'Stop'
 
+$env:PGCLIENTENCODING='UTF8'
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $front = Join-Path $root 'techtracker_vue'
 
