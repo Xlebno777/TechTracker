@@ -209,7 +209,7 @@ def send_printer_sync(api_base, token, printers):
         logging.error(f"Connection error (printer sync): {e}")
 
 
-def check_print_logs(api_base, token, serial):
+def check_print_logs(api_base, token, serial, debug=False):
     """Читает журнал Windows и отправляет новые задания"""
     server = 'localhost'
     log_type = 'Microsoft-Windows-PrintService/Operational'
@@ -225,6 +225,16 @@ def check_print_logs(api_base, token, serial):
         flags = win32evtlog.EVENTLOG_BACKWARDS_READ | win32evtlog.EVENTLOG_SEQUENTIAL_READ
         
         events = win32evtlog.ReadEventLog(hand, flags, 0)
+        if events and events[0].RecordNumber < last_record_id:
+            logging.warning(
+                f"RecordNumber reset detected (log was cleared). "
+                f"Resetting cursor from {last_record_id} to 0."
+            )
+            last_record_id = 0
+            new_last_record_id = 0
+        if debug:
+            newest = events[0].RecordNumber if events else None
+            logging.info(f"Print log read. last_record_id={last_record_id}, newest_record={newest}")
         
         # Собираем новые события в список, чтобы отправить их в хронологическом порядке
         new_jobs = []
@@ -236,7 +246,13 @@ def check_print_logs(api_base, token, serial):
                     break
                 
                 # Event ID 307 = Document Printed
-                if event.EventID == 307:
+                event_id = event.EventID & 0xFFFF
+                if debug:
+                    logging.info(
+                        f"Event record={event.RecordNumber} event_id={event_id} raw={event.EventID} "
+                        f"inserts_len={len(event.StringInserts) if event.StringInserts else 0}"
+                    )
+                if event_id == 307:
                     try:
                         # Структура StringInserts для ID 307:
                         # [0]Id, [1]DocName, [2]User, [3]PC, [4]Printer, [5]Port, [6]Size, [7]Pages
@@ -251,6 +267,10 @@ def check_print_logs(api_base, token, serial):
                                 'printer_ip': printer_ip_map.get(data[4])
                             }
                             new_jobs.append(job)
+                        elif debug:
+                            logging.warning(
+                                f"Event 307 missing fields: record={event.RecordNumber} data={data}"
+                            )
                     except Exception as parse_err:
                         logging.error(f"Error parsing event {event.RecordNumber}: {parse_err}")
 
@@ -263,6 +283,8 @@ def check_print_logs(api_base, token, serial):
 
         # Отправляем события (разворачиваем, чтобы старые ушли первыми)
         if new_jobs:
+            if debug:
+                logging.info(f"New print jobs found: {len(new_jobs)}")
             for job in reversed(new_jobs):
                 payload_printer = {
                     'name': job['printer'],
@@ -279,6 +301,8 @@ def check_print_logs(api_base, token, serial):
             # Сохраняем последний успешный ID
             if new_last_record_id > last_record_id:
                 save_last_processed_record_id(new_last_record_id)
+        elif debug:
+            logging.info("No new print jobs found.")
 
     except Exception as e:
         # Часто бывает, что журнал отключен
@@ -306,6 +330,7 @@ def main():
         CONFIG_SERIAL = config['DEFAULT']['SerialNumber']
         INTERVAL = int(config['DEFAULT']['Interval'])
         PRINTER_SYNC_INTERVAL = int(config['DEFAULT'].get('PrinterSyncInterval', '0'))
+        PRINT_DEBUG = config['DEFAULT'].get('PrintDebug', '0').lower() in ('1', 'true', 'yes')
         
         if CONFIG_SERIAL.upper() == 'AUTO':
             SERIAL_NUMBER = get_serial_number()
@@ -345,7 +370,7 @@ def main():
             send_metric(API_BASE, TOKEN, SERIAL_NUMBER, 'disk_usage', disk)
 
             # 2. Проверка печати
-            check_print_logs(API_BASE, TOKEN, SERIAL_NUMBER)
+            check_print_logs(API_BASE, TOKEN, SERIAL_NUMBER, debug=PRINT_DEBUG)
 
             time.sleep(INTERVAL)
 
