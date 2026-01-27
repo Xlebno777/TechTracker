@@ -258,8 +258,8 @@ def _read_print_events_new_api(log_type, last_record_id, debug=False):
     """Читает события через EvtQuery (новый API) с несколькими попытками."""
     attempts = [
         # (flags, query)
-        (win32evtlog.EvtQueryChannelPath | win32evtlog.EvtQueryReverseDirection, "*[System[(RecordID=307)]]"),
-        (win32evtlog.EvtQueryChannelPath, "*[System[(RecordID=307)]]"),
+        (win32evtlog.EvtQueryChannelPath | win32evtlog.EvtQueryReverseDirection, "*[System[(EventID=307)]]"),
+        (win32evtlog.EvtQueryChannelPath, "*[System[(EventID=307)]]"),
         (win32evtlog.EvtQueryChannelPath | win32evtlog.EvtQueryReverseDirection, "*"),
         (win32evtlog.EvtQueryChannelPath, "*"),
     ]
