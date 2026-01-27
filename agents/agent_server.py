@@ -209,6 +209,73 @@ def send_printer_sync(api_base, token, printers):
         logging.error(f"Connection error (printer sync): {e}")
 
 
+def _safe_int(value, default=0):
+    try:
+        return int(value)
+    except Exception:
+        return default
+
+
+def _extract_307_from_event(event, debug=False):
+    """
+    Парсит событие 307 (Document Printed) из PrintService/Operational.
+    Ожидаемая структура данных:
+    [0]JobId, [1]DocName, [2]User, [3]Client, [4]Printer, [5]Port, [6]Size, [7]Pages
+    """
+    data = None
+    record_id = None
+
+    try:
+        # Новый API EvtQuery
+        if hasattr(event, 'Properties'):
+            record_id = getattr(event, 'RecordId', None)
+            data = [p.Value for p in event.Properties] if event.Properties else None
+        else:
+            # Старый API ReadEventLog
+            record_id = getattr(event, 'RecordNumber', None)
+            data = getattr(event, 'StringInserts', None)
+    except Exception as e:
+        if debug:
+            logging.warning(f"Failed to read event properties: {e}")
+        return None
+
+    if not data or len(data) < 8:
+        if debug:
+            logging.warning(f"Event 307 missing fields: record={record_id} data={data}")
+        return None
+
+    pages = _safe_int(data[7], 0)
+    return {
+        'doc': data[1],
+        'user': data[2],
+        'printer': data[4],
+        'pages': pages,
+        'record_id': record_id,
+    }
+
+
+def _read_print_events_new_api(log_type, last_record_id, debug=False, max_events=2000):
+    """Читает события через EvtQuery (новый API)."""
+    events = []
+    try:
+        flags = win32evtlog.EvtQueryReverseDirection
+        query = "*"  # все события
+        handle = win32evtlog.EvtQuery(log_type, flags, query)
+        batch = win32evtlog.EvtNext(handle, max_events)
+        for evt in batch:
+            record_id = getattr(evt, 'RecordId', None)
+            if record_id is None:
+                continue
+            if record_id <= last_record_id:
+                break
+            events.append(evt)
+        return events
+    except Exception as e:
+        if debug:
+            logging.warning(f"EvtQuery not available or failed: {e}")
+        return None
+
+
 def check_print_logs(api_base, token, serial, debug=False):
     """Читает журнал Windows и отправляет новые задания"""
     server = 'localhost'
@@ -220,21 +287,29 @@ def check_print_logs(api_base, token, serial, debug=False):
     new_last_record_id = last_record_id
     
     try:
-        hand = win32evtlog.OpenEventLog(server, log_type)
-        # Читаем журнал в обратном порядке (от новых к старым), чтобы быстрее найти свежие
-        flags = win32evtlog.EVENTLOG_BACKWARDS_READ | win32evtlog.EVENTLOG_SEQUENTIAL_READ
-        
-        events = win32evtlog.ReadEventLog(hand, flags, 0)
-        if events and events[0].RecordNumber < last_record_id:
-            logging.warning(
-                f"RecordNumber reset detected (log was cleared). "
-                f"Resetting cursor from {last_record_id} to 0."
-            )
-            last_record_id = 0
-            new_last_record_id = 0
-        if debug:
-            newest = events[0].RecordNumber if events else None
-            logging.info(f"Print log read. last_record_id={last_record_id}, newest_record={newest}")
+        # Попытка нового API (EvtQuery). Если не работает — fallback на старый.
+        events = _read_print_events_new_api(log_type, last_record_id, debug=debug)
+        using_new_api = events is not None
+
+        if not using_new_api:
+            hand = win32evtlog.OpenEventLog(server, log_type)
+            # Читаем журнал в обратном порядке (от новых к старым), чтобы быстрее найти свежие
+            flags = win32evtlog.EVENTLOG_BACKWARDS_READ | win32evtlog.EVENTLOG_SEQUENTIAL_READ
+            
+            events = win32evtlog.ReadEventLog(hand, flags, 0)
+            if events and events[0].RecordNumber < last_record_id:
+                logging.warning(
+                    f"RecordNumber reset detected (log was cleared). "
+                    f"Resetting cursor from {last_record_id} to 0."
+                )
+                last_record_id = 0
+                new_last_record_id = 0
+            if debug:
+                newest = events[0].RecordNumber if events else None
+                logging.info(f"Print log read (old API). last_record_id={last_record_id}, newest_record={newest}")
+        elif debug:
+            newest = events[0].RecordId if events else None
+            logging.info(f"Print log read (EvtQuery). last_record_id={last_record_id}, newest_record={newest}")
         
         # Собираем новые события в список, чтобы отправить их в хронологическом порядке
         new_jobs = []
@@ -242,44 +317,52 @@ def check_print_logs(api_base, token, serial, debug=False):
         while events:
             for event in events:
                 # Если дошли до уже обработанной записи - останавливаемся
-                if event.RecordNumber <= last_record_id:
+                record_number = getattr(event, 'RecordNumber', None)
+                if record_number is None:
+                    record_number = getattr(event, 'RecordId', None)
+                if record_number is not None and record_number <= last_record_id:
                     break
                 
                 # Event ID 307 = Document Printed
-                event_id = event.EventID & 0xFFFF
+                event_id = getattr(event, 'EventID', None)
+                if event_id is None:
+                    event_id = getattr(event, 'Id', None)
+                if event_id is None:
+                    try:
+                        event_id = event.System.EventID.Value
+                    except Exception:
+                        event_id = None
+                if isinstance(event_id, int):
+                    event_id = event_id & 0xFFFF
                 if debug:
                     logging.info(
-                        f"Event record={event.RecordNumber} event_id={event_id} raw={event.EventID} "
-                        f"inserts_len={len(event.StringInserts) if event.StringInserts else 0}"
+                        f"Event record={record_number} event_id={event_id} "
+                        f"raw_id={getattr(event, 'EventID', None)} "
+                        f"props_len={len(event.Properties) if hasattr(event, 'Properties') and event.Properties else 0} "
+                        f"inserts_len={len(event.StringInserts) if hasattr(event, 'StringInserts') and event.StringInserts else 0}"
                     )
                 if event_id == 307:
-                    try:
-                        # Структура StringInserts для ID 307:
-                        # [0]Id, [1]DocName, [2]User, [3]PC, [4]Printer, [5]Port, [6]Size, [7]Pages
-                        data = event.StringInserts
-                        if data and len(data) >= 8:
-                            job = {
-                                'doc': data[1],
-                                'user': data[2],
-                                'printer': data[4],
-                                'pages': int(data[7]),
-                                'record_id': event.RecordNumber,
-                                'printer_ip': printer_ip_map.get(data[4])
-                            }
-                            new_jobs.append(job)
-                        elif debug:
-                            logging.warning(
-                                f"Event 307 missing fields: record={event.RecordNumber} data={data}"
-                            )
-                    except Exception as parse_err:
-                        logging.error(f"Error parsing event {event.RecordNumber}: {parse_err}")
+                    parsed = _extract_307_from_event(event, debug=debug)
+                    if parsed:
+                        parsed['printer_ip'] = printer_ip_map.get(parsed['printer'])
+                        new_jobs.append(parsed)
+                    else:
+                        logging.error(f"Error parsing event {record_number}: unsupported structure")
 
-            if events and events[-1].RecordNumber <= last_record_id:
+            last_rec = getattr(events[-1], 'RecordNumber', None)
+            if last_rec is None:
+                last_rec = getattr(events[-1], 'RecordId', None)
+            if events and last_rec is not None and last_rec <= last_record_id:
                 break # Прерываем внешний цикл while
             
-            events = win32evtlog.ReadEventLog(hand, flags, 0)
+            if using_new_api:
+                # EvtQuery уже вернул пачку; повторно не читаем, чтобы не дублировать
+                break
+            else:
+                events = win32evtlog.ReadEventLog(hand, flags, 0)
 
-        win32evtlog.CloseEventLog(hand)
+        if not using_new_api:
+            win32evtlog.CloseEventLog(hand)
 
         # Отправляем события (разворачиваем, чтобы старые ушли первыми)
         if new_jobs:
