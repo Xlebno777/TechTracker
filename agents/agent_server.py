@@ -258,8 +258,10 @@ def _read_print_events_new_api(log_type, last_record_id, debug=False, max_events
     """Читает события через EvtQuery (новый API)."""
     events = []
     try:
-        flags = win32evtlog.EvtQueryReverseDirection
-        query = "*"  # все события
+        # Явно указываем, что log_type - это путь к каналу
+        flags = win32evtlog.EvtQueryChannelPath | win32evtlog.EvtQueryReverseDirection
+        # Фильтруем только 307, чтобы не читать лишнее
+        query = "*[System[(EventID=307)]]"
         handle = win32evtlog.EvtQuery(log_type, flags, query)
         batch = win32evtlog.EvtNext(handle, max_events)
         for evt in batch:
