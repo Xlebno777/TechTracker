@@ -254,28 +254,59 @@ def _extract_307_from_event(event, debug=False):
     }
 
 
-def _read_print_events_new_api(log_type, last_record_id, debug=False, max_events=2000):
-    """Читает события через EvtQuery (новый API)."""
-    events = []
-    try:
-        # Явно указываем, что log_type - это путь к каналу
-        flags = win32evtlog.EvtQueryChannelPath | win32evtlog.EvtQueryReverseDirection
-        # Фильтруем только 307, чтобы не читать лишнее
-        query = "*[System[(EventID=307)]]"
-        handle = win32evtlog.EvtQuery(log_type, flags, query)
-        batch = win32evtlog.EvtNext(handle, max_events)
-        for evt in batch:
-            record_id = getattr(evt, 'RecordId', None)
-            if record_id is None:
-                continue
-            if record_id <= last_record_id:
-                break
-            events.append(evt)
-        return events
-    except Exception as e:
-        if debug:
-            logging.warning(f"EvtQuery not available or failed: {e}")
-        return None
+def _read_print_events_new_api(log_type, last_record_id, debug=False):
+    """Читает события через EvtQuery (новый API) с несколькими попытками."""
+    attempts = [
+        # (flags, query)
+        (win32evtlog.EvtQueryChannelPath | win32evtlog.EvtQueryReverseDirection, "*[System[(RecordID=307)]]"),
+        (win32evtlog.EvtQueryChannelPath, "*[System[(RecordID=307)]]"),
+        (win32evtlog.EvtQueryChannelPath | win32evtlog.EvtQueryReverseDirection, "*"),
+        (win32evtlog.EvtQueryChannelPath, "*"),
+    ]
+
+    for flags, query in attempts:
+        try:
+            handle = win32evtlog.EvtQuery(log_type, flags, query)
+            events = []
+            while True:
+                try:
+                    batch = win32evtlog.EvtNext(handle, 16, 0)
+                except Exception as e:
+                    # 259 = no more items
+                    winerr = getattr(e, 'winerror', None)
+                    if winerr == 259:
+                        break
+                    if debug:
+                        logging.warning(f"EvtNext failed (flags={flags}, query={query}): {e}")
+                    raise
+
+                if not batch:
+                    break
+
+                for evt in batch:
+                    record_id = getattr(evt, 'RecordId', None)
+                    if record_id is None:
+                        continue
+                    if record_id <= last_record_id:
+                        return events
+                    # Если запрос не фильтрует по 307, фильтруем здесь
+                    if query == "*":
+                        try:
+                            event_id = evt.System.EventID.Value
+                        except Exception:
+                            event_id = None
+                        if event_id != 307:
+                            continue
+                    events.append(evt)
+            return events
+        except Exception as e:
+            if debug:
+                logging.warning(f"EvtQuery attempt failed (flags={flags}, query={query}): {e}")
+            continue
+
+    if debug:
+        logging.warning("EvtQuery not available or failed after all attempts")
+    return None
 
 
 def check_print_logs(api_base, token, serial, debug=False):
