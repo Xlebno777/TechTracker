@@ -28,6 +28,9 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 
+# Управляется через config.ini (PrintDebugDumpXml)
+PRINT_DEBUG_DUMP_XML = False
+
 # --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
 
 def get_serial_number():
@@ -249,14 +252,39 @@ def _parse_event_xml(xml_text, debug=False):
 
     data_map = {}
     data_list = []
+
+    # 1) EventData/Data
     for data_elem in root.iter():
         if not data_elem.tag.endswith('Data'):
             continue
         name = data_elem.attrib.get('Name')
         value = data_elem.text or ''
         data_list.append(value)
-        if name:
+        if name and name not in data_map:
             data_map[name] = value
+
+    # 2) UserData (часто содержит Param1..Param8)
+    for user_data in root.iter():
+        if not user_data.tag.endswith('UserData'):
+            continue
+        for child in user_data.iter():
+            if child is user_data:
+                continue
+            if list(child):
+                continue
+            tag_name = child.tag.split('}')[-1]
+            value = child.text or ''
+            if tag_name and tag_name not in data_map:
+                data_map[tag_name] = value
+
+    # Если есть Param1..ParamN, используем их как список данных
+    param_list = []
+    for i in range(1, 20):
+        key = f"Param{i}"
+        if key in data_map:
+            param_list.append(data_map[key])
+    if param_list:
+        data_list = param_list
 
     return {
         'event_id': event_id,
@@ -299,6 +327,8 @@ def _extract_print_from_xml(xml_text, debug=False):
     if not doc or not user or not printer:
         if debug:
             logging.warning(f"XML print event missing fields: record={record_id} data={data_map or data_list}")
+            if PRINT_DEBUG_DUMP_XML:
+                _dump_event_xml(record_id, xml_text)
         return None
 
     return {
@@ -471,6 +501,8 @@ def main():
         INTERVAL = int(config['DEFAULT']['Interval'])
         PRINTER_SYNC_INTERVAL = int(config['DEFAULT'].get('PrinterSyncInterval', '0'))
         PRINT_DEBUG = config['DEFAULT'].get('PrintDebug', '0').lower() in ('1', 'true', 'yes')
+        global PRINT_DEBUG_DUMP_XML
+        PRINT_DEBUG_DUMP_XML = config['DEFAULT'].get('PrintDebugDumpXml', '0').lower() in ('1', 'true', 'yes')
         
         if CONFIG_SERIAL.upper() == 'AUTO':
             SERIAL_NUMBER = get_serial_number()
@@ -520,3 +552,12 @@ def main():
 
 if __name__ == "__main__":
     main()
+def _dump_event_xml(record_id, xml_text):
+    try:
+        sample_path = os.path.join(application_path, 'print_event_samples.xml')
+        with open(sample_path, 'a', encoding='utf-8') as f:
+            f.write(f"\n<!-- record_id={record_id} -->\n")
+            f.write(xml_text)
+            f.write("\n")
+    except Exception as e:
+        logging.warning(f"Failed to dump event XML: {e}")
