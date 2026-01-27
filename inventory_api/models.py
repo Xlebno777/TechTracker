@@ -269,7 +269,7 @@ class PrintJob(models.Model):
     document_name = models.CharField(max_length=255)
     pages = models.PositiveIntegerField()
     printer_name = models.CharField(max_length=255)
-    timestamp = models.DateTimeField(auto_now_add=True)
+    timestamp = models.DateTimeField(default=timezone.now)
     # file = models.FileField(upload_to='print_archives/', null=True, blank=True) # На будущее
 
     def __str__(self):

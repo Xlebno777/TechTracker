@@ -1,6 +1,10 @@
 from rest_framework.permissions import BasePermission, SAFE_METHODS
 
 
+def _is_admin(user):
+    return user.is_staff or user.groups.filter(name='Admins').exists()
+
+
 class PrintJobPermission(BasePermission):
     """
     Read: any authenticated user.
@@ -16,9 +20,9 @@ class PrintJobPermission(BasePermission):
             return True
 
         if request.method == 'POST':
-            return user.is_staff or user.groups.filter(name='Agent').exists()
+            return _is_admin(user) or user.groups.filter(name='Agent').exists()
 
-        return user.is_staff
+        return _is_admin(user)
 
 
 class PrinterAgentPermission(BasePermission):
@@ -29,4 +33,4 @@ class PrinterAgentPermission(BasePermission):
         user = request.user
         if not user or not user.is_authenticated:
             return False
-        return user.is_staff or user.groups.filter(name='Agent').exists()
+        return _is_admin(user) or user.groups.filter(name='Agent').exists()

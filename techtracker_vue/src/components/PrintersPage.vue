@@ -52,6 +52,11 @@
           {{ new Date(data.timestamp).toLocaleDateString('ru-RU', {day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit'}) }}
         </template>
       </Column>
+      <Column v-if="auth.isAdmin" header="Действия" style="width: 110px">
+        <template #body="{ data }">
+          <Button icon="pi pi-trash" text rounded severity="danger" @click="deleteJob(data)" />
+        </template>
+      </Column>
     </DataTable>
   </div>
 </template>
@@ -59,6 +64,7 @@
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue';
 import apiClient from '@/api';
+import { useAuthStore } from '@/stores/auth';
 
 import DataTable from 'primevue/datatable';
 import Column from 'primevue/column';
@@ -70,6 +76,7 @@ const selectedPrinterId = ref(null);
 const printJobs = ref([]);
 const loadingPrinters = ref(false);
 const loadingJobs = ref(false);
+const auth = useAuthStore();
 
 const selectedPrinter = computed(() =>
   favoritePrinters.value.find(p => p.id === selectedPrinterId.value)
@@ -110,6 +117,14 @@ const fetchPrintJobs = async (deviceId) => {
   } finally {
     loadingJobs.value = false;
   }
+};
+
+const deleteJob = async (job) => {
+  if (!job?.id) return;
+  const ok = window.confirm('Удалить запись о печати?');
+  if (!ok) return;
+  await apiClient.delete(`printjob/${job.id}/`);
+  printJobs.value = printJobs.value.filter(j => j.id !== job.id);
 };
 
 watch(selectedPrinterId, (val) => {
