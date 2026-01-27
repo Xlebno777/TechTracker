@@ -10,6 +10,7 @@ import win32evtlog # Требует pip install pywin32
 import win32print
 import win32com.client
 import re
+import xml.etree.ElementTree as ET
 
 # Настройка путей
 if getattr(sys, 'frozen', False):
@@ -216,41 +217,97 @@ def _safe_int(value, default=0):
         return default
 
 
-def _extract_307_from_event(event, debug=False):
+def _parse_event_xml(xml_text, debug=False):
     """
-    Парсит событие 307 (Document Printed) из PrintService/Operational.
-    Ожидаемая структура данных:
-    [0]JobId, [1]DocName, [2]User, [3]Client, [4]Printer, [5]Port, [6]Size, [7]Pages
+    Парсит XML события (EvtRenderEventXml) и возвращает dict:
+    {event_id, record_id, data_map, data_list}
     """
-    data = None
-    record_id = None
-
     try:
-        # Новый API EvtQuery
-        if hasattr(event, 'Properties'):
-            record_id = getattr(event, 'RecordId', None)
-            data = [p.Value for p in event.Properties] if event.Properties else None
-        else:
-            # Старый API ReadEventLog
-            record_id = getattr(event, 'RecordNumber', None)
-            data = getattr(event, 'StringInserts', None)
+        root = ET.fromstring(xml_text)
     except Exception as e:
         if debug:
-            logging.warning(f"Failed to read event properties: {e}")
+            logging.warning(f"Failed to parse event XML: {e}")
         return None
 
-    if not data or len(data) < 8:
-        if debug:
-            logging.warning(f"Event 307 missing fields: record={record_id} data={data}")
+    # Namespaces are usually present; ignore them via tag ending
+    def _find_first(tag_endswith):
+        for elem in root.iter():
+            if elem.tag.endswith(tag_endswith):
+                return elem
         return None
 
-    pages = _safe_int(data[7], 0)
+    event_id = None
+    record_id = None
+
+    event_id_elem = _find_first('EventID')
+    if event_id_elem is not None and event_id_elem.text:
+        event_id = _safe_int(event_id_elem.text, None)
+
+    record_id_elem = _find_first('EventRecordID')
+    if record_id_elem is not None and record_id_elem.text:
+        record_id = _safe_int(record_id_elem.text, None)
+
+    data_map = {}
+    data_list = []
+    for data_elem in root.iter():
+        if not data_elem.tag.endswith('Data'):
+            continue
+        name = data_elem.attrib.get('Name')
+        value = data_elem.text or ''
+        data_list.append(value)
+        if name:
+            data_map[name] = value
+
     return {
-        'doc': data[1],
-        'user': data[2],
-        'printer': data[4],
-        'pages': pages,
+        'event_id': event_id,
         'record_id': record_id,
+        'data_map': data_map,
+        'data_list': data_list,
+    }
+
+
+def _extract_print_from_xml(xml_text, debug=False):
+    """
+    Парсит событие печати из XML (EvtQuery).
+    Пытается по именованным полям, иначе по позициям.
+    """
+    parsed = _parse_event_xml(xml_text, debug=debug)
+    if not parsed:
+        return None
+
+    event_id = parsed['event_id']
+    record_id = parsed['record_id']
+    data_map = parsed['data_map']
+    data_list = parsed['data_list']
+
+    # Именованные поля (если есть)
+    doc = data_map.get('DocumentName') or data_map.get('Param2')
+    user = data_map.get('UserName') or data_map.get('Param3')
+    printer = data_map.get('PrinterName') or data_map.get('Param5')
+    pages = data_map.get('Pages') or data_map.get('Param8')
+
+    # Фоллбек по позициям
+    if not doc and len(data_list) > 1:
+        doc = data_list[1]
+    if not user and len(data_list) > 2:
+        user = data_list[2]
+    if not printer and len(data_list) > 4:
+        printer = data_list[4]
+    if not pages and len(data_list) > 7:
+        pages = data_list[7]
+
+    if not doc or not user or not printer:
+        if debug:
+            logging.warning(f"XML print event missing fields: record={record_id} data={data_map or data_list}")
+        return None
+
+    return {
+        'event_id': event_id,
+        'record_id': record_id,
+        'doc': doc,
+        'user': user,
+        'printer': printer,
+        'pages': _safe_int(pages, 0),
     }
 
 
@@ -258,8 +315,8 @@ def _read_print_events_new_api(log_type, last_record_id, debug=False):
     """Читает события через EvtQuery (новый API) с несколькими попытками."""
     attempts = [
         # (flags, query)
-        (win32evtlog.EvtQueryChannelPath | win32evtlog.EvtQueryReverseDirection, "*[System[(EventID=307)]]"),
-        (win32evtlog.EvtQueryChannelPath, "*[System[(EventID=307)]]"),
+        (win32evtlog.EvtQueryChannelPath | win32evtlog.EvtQueryReverseDirection, "*[System[(EventID=307 or EventID=10010)]]"),
+        (win32evtlog.EvtQueryChannelPath, "*[System[(EventID=307 or EventID=10010)]]"),
         (win32evtlog.EvtQueryChannelPath | win32evtlog.EvtQueryReverseDirection, "*"),
         (win32evtlog.EvtQueryChannelPath, "*"),
     ]
@@ -283,21 +340,29 @@ def _read_print_events_new_api(log_type, last_record_id, debug=False):
                 if not batch:
                     break
 
-                for evt in batch:
-                    record_id = getattr(evt, 'RecordId', None)
+                for evt_handle in batch:
+                    try:
+                        xml_text = win32evtlog.EvtRender(evt_handle, win32evtlog.EvtRenderEventXml)
+                    finally:
+                        try:
+                            win32evtlog.EvtClose(evt_handle)
+                        except Exception:
+                            pass
+
+                    parsed = _extract_print_from_xml(xml_text, debug=debug)
+                    if not parsed:
+                        continue
+
+                    record_id = parsed.get('record_id')
                     if record_id is None:
                         continue
                     if record_id <= last_record_id:
                         return events
+
                     # Если запрос не фильтрует по 307, фильтруем здесь
-                    if query == "*":
-                        try:
-                            event_id = evt.System.EventID.Value
-                        except Exception:
-                            event_id = None
-                        if event_id != 307:
-                            continue
-                    events.append(evt)
+                    if query == "*" and parsed.get('event_id') not in (307, 10010):
+                        continue
+                    events.append(parsed)
             return events
         except Exception as e:
             if debug:
@@ -311,7 +376,6 @@ def _read_print_events_new_api(log_type, last_record_id, debug=False):
 
 def check_print_logs(api_base, token, serial, debug=False):
     """Читает журнал Windows и отправляет новые задания"""
-    server = 'localhost'
     log_type = 'Microsoft-Windows-PrintService/Operational'
 
     printer_ip_map = get_printer_ip_map()
@@ -320,28 +384,15 @@ def check_print_logs(api_base, token, serial, debug=False):
     new_last_record_id = last_record_id
     
     try:
-        # Попытка нового API (EvtQuery). Если не работает — fallback на старый.
+        # Новый API (EvtQuery + EvtRender XML)
         events = _read_print_events_new_api(log_type, last_record_id, debug=debug)
         using_new_api = events is not None
 
         if not using_new_api:
-            hand = win32evtlog.OpenEventLog(server, log_type)
-            # Читаем журнал в обратном порядке (от новых к старым), чтобы быстрее найти свежие
-            flags = win32evtlog.EVENTLOG_BACKWARDS_READ | win32evtlog.EVENTLOG_SEQUENTIAL_READ
-            
-            events = win32evtlog.ReadEventLog(hand, flags, 0)
-            if events and events[0].RecordNumber < last_record_id:
-                logging.warning(
-                    f"RecordNumber reset detected (log was cleared). "
-                    f"Resetting cursor from {last_record_id} to 0."
-                )
-                last_record_id = 0
-                new_last_record_id = 0
-            if debug:
-                newest = events[0].RecordNumber if events else None
-                logging.info(f"Print log read (old API). last_record_id={last_record_id}, newest_record={newest}")
-        elif debug:
-            newest = events[0].RecordId if events else None
+            logging.warning("EvtQuery not available or failed after all attempts")
+            return
+        if debug:
+            newest = events[0].get('record_id') if events else None
             logging.info(f"Print log read (EvtQuery). last_record_id={last_record_id}, newest_record={newest}")
         
         # Собираем новые события в список, чтобы отправить их в хронологическом порядке
@@ -349,53 +400,26 @@ def check_print_logs(api_base, token, serial, debug=False):
 
         while events:
             for event in events:
-                # Если дошли до уже обработанной записи - останавливаемся
-                record_number = getattr(event, 'RecordNumber', None)
-                if record_number is None:
-                    record_number = getattr(event, 'RecordId', None)
+                record_number = event.get('record_id')
+                event_id = event.get('event_id')
                 if record_number is not None and record_number <= last_record_id:
                     break
-                
-                # Event ID 307 = Document Printed
-                event_id = getattr(event, 'EventID', None)
-                if event_id is None:
-                    event_id = getattr(event, 'Id', None)
-                if event_id is None:
-                    try:
-                        event_id = event.System.EventID.Value
-                    except Exception:
-                        event_id = None
-                if isinstance(event_id, int):
-                    event_id = event_id & 0xFFFF
                 if debug:
                     logging.info(
                         f"Event record={record_number} event_id={event_id} "
-                        f"raw_id={getattr(event, 'EventID', None)} "
-                        f"props_len={len(event.Properties) if hasattr(event, 'Properties') and event.Properties else 0} "
-                        f"inserts_len={len(event.StringInserts) if hasattr(event, 'StringInserts') and event.StringInserts else 0}"
+                        f"doc={event.get('doc')} user={event.get('user')} printer={event.get('printer')}"
                     )
-                if event_id == 307:
-                    parsed = _extract_307_from_event(event, debug=debug)
-                    if parsed:
-                        parsed['printer_ip'] = printer_ip_map.get(parsed['printer'])
-                        new_jobs.append(parsed)
-                    else:
-                        logging.error(f"Error parsing event {record_number}: unsupported structure")
+                if event_id in (307, 10010):
+                    event['printer_ip'] = printer_ip_map.get(event['printer'])
+                    new_jobs.append(event)
 
-            last_rec = getattr(events[-1], 'RecordNumber', None)
-            if last_rec is None:
-                last_rec = getattr(events[-1], 'RecordId', None)
+            last_rec = events[-1].get('record_id') if events else None
             if events and last_rec is not None and last_rec <= last_record_id:
                 break # Прерываем внешний цикл while
             
             if using_new_api:
                 # EvtQuery уже вернул пачку; повторно не читаем, чтобы не дублировать
                 break
-            else:
-                events = win32evtlog.ReadEventLog(hand, flags, 0)
-
-        if not using_new_api:
-            win32evtlog.CloseEventLog(hand)
 
         # Отправляем события (разворачиваем, чтобы старые ушли первыми)
         if new_jobs:
