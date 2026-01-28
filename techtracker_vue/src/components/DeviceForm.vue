@@ -1,5 +1,5 @@
 <template>
-  <div class="device-form p-fluid p-p-3">
+  <div class="device-form p-fluid p-p-3 page-shell">
     <h2 class="mb-4" style="font-size: 1.5rem; font-weight: 600; color: #2c3e50;">
       {{ isEditing ? 'Редактировать' : 'Добавить' }} устройство
     </h2>
@@ -447,9 +447,9 @@ export default {
 
 <style scoped>
 .device-form {
-  max-width: 800px;
-  margin: 2rem auto;
-  padding: 2rem 2.5rem;
+  width: 100%;
+  margin: 0;
+  padding: 2rem;
   background-color: #ffffff;
   border-radius: 1rem;
   box-shadow: 0 6px 24px rgba(0, 0, 0, 0.05);

@@ -1,9 +1,9 @@
 <template>
-  <div class="device-table p-4">
+  <div class="device-table p-4 page-shell">
     <div class="flex justify-content-between align-items-center mb-4">
       <h2 class="text-2xl font-bold m-0 text-900">Таблица устройств</h2>
       <Button
-        v-if="canCreateDevice"
+        v-if="canCreateDevice && !auth.isUser"
         label="Добавить устройство"
         icon="pi pi-plus"
         severity="success"
@@ -44,7 +44,7 @@
     </div>
 
     <!-- Таблица -->
-    <DataTable :value="filteredDevices" :loading="loading" paginator :rows="10" stripedRows responsiveLayout="scroll" class="shadow-2 border-round">
+    <DataTable :value="filteredDevices" :loading="loading" paginator :rows="10" stripedRows responsiveLayout="scroll" class="tech-table shadow-2 border-round">
       <template #empty><div class="p-3 text-center">Устройства не найдены.</div></template>
 
       <!-- Избранное -->
@@ -87,7 +87,7 @@
       <Column field="ip_address" header="IP" />
 
       <!-- Действия -->
-      <Column header="Действия" style="width: 120px">
+      <Column v-if="!auth.isUser" header="Действия" style="width: 120px">
         <template #body="{ data }">
           <SplitButton
             label="Действия"

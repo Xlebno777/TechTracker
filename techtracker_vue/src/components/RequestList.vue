@@ -1,5 +1,5 @@
 <template>
-  <div class="p-4 request-list-container">
+  <div class="p-4 request-list-container page-shell">
     <div class="flex justify-content-between align-items-center mb-4">
       <h2 class="text-2xl font-bold m-0 text-900">Список заявок</h2>
       <Button icon="pi pi-refresh" rounded text @click="fetchData" :loading="loading" />
@@ -37,42 +37,44 @@
     </div>
 
     <!-- Таблица -->
-    <DataTable :value="filteredRequests" :loading="loading" paginator :rows="10" stripedRows responsiveLayout="scroll" class="shadow-2 border-round">
+    <DataTable :value="filteredRequests" :loading="loading" paginator :rows="10" stripedRows responsiveLayout="scroll" class="tech-table shadow-2 border-round">
       <template #empty><div class="p-3 text-center">Заявок нет.</div></template>
 
-      <Column field="message" header="Сообщение" style="min-width: 300px" sortable />
-      
       <Column field="device.name" header="Устройство" sortable />
+      <Column field="message" header="Сообщение" style="min-width: 300px" sortable />
 
-      <!-- Приоритет -->
       <Column field="priority" header="Приоритет" sortable>
         <template #body="{ data }">
-          <Tag :value="getPriorityLabel(data.priority)" :severity="getPrioritySeverity(data.priority)" />
+          <span :class="['priority-text', `priority-${data.priority || 'medium'}`]">
+            {{ getPriorityLabel(data.priority) }}
+          </span>
         </template>
       </Column>
 
-      <!-- Статус -->
-      <Column field="status" header="Статус" sortable>
+      <Column field="created_by.username" header="Кто отправил" sortable>
         <template #body="{ data }">
-          <Tag :value="getStatusLabel(data.status)" :severity="getStatusSeverity(data.status)" />
+          {{ data.created_by?.username || '—' }}
         </template>
       </Column>
 
-      <Column field="created_by.username" header="Автор" sortable>
-        <template #body="{ data }">
-           {{ data.created_by?.username || '—' }}
-        </template>
-      </Column>
-
-      <Column header="Дата" field="timestamp" sortable>
+      <Column header="Когда создана" field="timestamp" sortable>
         <template #body="{ data }">
           {{ new Date(data.timestamp).toLocaleDateString('ru-RU', {day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit'}) }}
         </template>
       </Column>
 
-      <Column v-if="auth.isAdmin" header="Действия" style="width: 100px">
+      <Column header="Выполнено" style="width: 140px">
         <template #body="{ data }">
-          <Button icon="pi pi-pencil" text rounded severity="info" @click="openStatusDialog(data)" />
+          <Checkbox :binary="true" :modelValue="isCompleted(data)" @update:modelValue="(val) => toggleCompleted(data, val)" />
+        </template>
+      </Column>
+
+      <Column header="Действия" style="width: 120px">
+        <template #body="{ data }">
+          <div class="action-stack">
+            <Button icon="pi pi-pencil" text rounded severity="info" @click="openStatusDialog(data)" />
+            <Button icon="pi pi-trash" text rounded severity="danger" @click="deleteRequest(data)" />
+          </div>
         </template>
       </Column>
     </DataTable>
@@ -106,7 +108,7 @@ import Dropdown from 'primevue/dropdown';
 import InputText from 'primevue/inputtext';
 import Button from 'primevue/button';
 import Dialog from 'primevue/dialog';
-import Tag from 'primevue/tag';
+import Checkbox from 'primevue/checkbox';
 import Toast from 'primevue/toast';
 
 const auth = useAuthStore();
@@ -154,27 +156,7 @@ const getStatusLabel = (val) => {
     return statusOptions.find(o => o.value === val)?.label || val;
 };
 
-const getPrioritySeverity = (val) => {
-  if (!val) return 'secondary'; // Если нет приоритета - серый
-  switch (val) {
-    case 'critical': return 'danger';  // Красный
-    case 'high': return 'warning';     // Оранжевый/Желтый
-    case 'low': return 'success';      // Зеленый
-    case 'medium': return 'info';      // Синий
-    default: return 'info';            // Fallback
-  }
-};
-
-const getStatusSeverity = (val) => {
-  if (!val) return 'secondary';
-  switch (val) {
-    case 'closed': return 'success';
-    case 'cancelled': return 'danger';
-    case 'in_progress': return 'info';
-    case 'open': return 'warning';
-    default: return 'secondary';
-  }
-};
+const isCompleted = (req) => req.status === 'closed';
 
 // --- Computed ---
 const filteredRequests = computed(() => {
@@ -229,6 +211,28 @@ const updateStatus = async () => {
   }
 };
 
+const toggleCompleted = async (req, value) => {
+  const newStatus = value ? 'closed' : 'open';
+  try {
+    await apiClient.patch(`logs/${req.id}/`, { status: newStatus });
+    const idx = requests.value.findIndex(r => r.id === req.id);
+    if (idx !== -1) requests.value[idx].status = newStatus;
+  } catch (e) {
+    toast.add({ severity: 'error', summary: 'Ошибка', detail: 'Не удалось обновить статус' });
+  }
+};
+
+const deleteRequest = async (req) => {
+  const ok = window.confirm('Удалить заявку?');
+  if (!ok) return;
+  try {
+    await apiClient.delete(`logs/${req.id}/`);
+    requests.value = requests.value.filter(r => r.id !== req.id);
+  } catch (e) {
+    toast.add({ severity: 'error', summary: 'Ошибка', detail: 'Не удалось удалить заявку' });
+  }
+};
+
 const resetFilters = () => {
     filters.value = { device: null, priority: null, status: null, user: null, message: '' };
 };
@@ -240,10 +244,22 @@ onMounted(() => {
 
 <style scoped>
 .w-full { width: 100%; }
-.request-list-container { max-width: 1400px; margin: 0 auto; }
+.request-list-container { width: 100%; }
 .grid { display: flex; flex-wrap: wrap; margin: -0.5rem; }
 .col-12 { flex: 0 0 100%; padding: 0.5rem; }
 @media (min-width: 768px) {
   .md\:col-3 { flex: 0 0 25%; max-width: 25%; }
+}
+.priority-text {
+  font-weight: 600;
+}
+.priority-low { color: #22c55e; }
+.priority-medium { color: #0ea5e9; }
+.priority-high { color: #f59e0b; }
+.priority-critical { color: #ef4444; }
+.action-stack {
+  display: flex;
+  gap: 0.25rem;
+  justify-content: center;
 }
 </style>

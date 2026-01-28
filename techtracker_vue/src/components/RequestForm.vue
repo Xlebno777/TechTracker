@@ -1,6 +1,6 @@
 <template>
-  <div class="form-container">
-    <div class="card p-5 shadow-2 border-round bg-white">
+  <div class="form-container page-shell">
+    <div class="card p-5 shadow-2 border-round bg-white form-card">
       <h2 class="text-center mb-5 text-800">Создание заявки</h2>
       
       <form @submit.prevent="submitRequest" class="p-fluid">
@@ -141,8 +141,11 @@ onMounted(() => {
 
 <style scoped>
 .form-container {
-    max-width: 600px;
-    margin: 2rem auto;
-    padding: 0 1rem;
+    width: 100%;
+    margin: 0;
+    padding: 0;
+}
+.form-card {
+    width: 100%;
 }
 </style>

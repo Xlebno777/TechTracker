@@ -24,7 +24,7 @@ const routes = [
     path: '/device/create',
     name: 'DeviceCreate',
     component: DeviceForm,
-    meta: { requiresAuth: true }
+    meta: { requiresAuth: true, forbidUsers: true }
     // props: { deviceId: null } // Явно передаем null для deviceId
   },
   {
@@ -44,7 +44,7 @@ const routes = [
     path: '/requests', // <-- Новый маршрут
     name: 'RequestList',
     component: RequestList,
-    meta: { requiresAuth: true }
+    meta: { requiresAuth: true, requiresAdmin: true }
   },
   {
     path: '/login', // <-- Путь для страницы входа
@@ -55,7 +55,13 @@ const routes = [
     path: '/dashboard',
     name: 'Dashboard', // Теперь главная - это дашборд
     component: Dashboard,
-    meta: { requiresAuth: true }
+    meta: { requiresAuth: true, forbidUsers: true }
+  },
+  {
+    path: '/admin/requests',
+    name: 'AdminRequests',
+    component: RequestList,
+    meta: { requiresAuth: true, requiresAdmin: true }
   },
   {
     path: '/printers',
@@ -75,10 +81,21 @@ const router = createRouter({ // <-- router создаётся ЗДЕСЬ
 router.beforeEach((to, from, next) => {
   const hasToken = localStorage.getItem('auth_token') !== null;
 
-  if (to.name === 'DeviceTable' || to.name === 'DeviceCreate' || to.name === 'DeviceEdit' || to.name === 'RequestForm' || to.name === 'RequestList' || to.name === 'Printers') {
+  if (to.name === 'DeviceTable' || to.name === 'DeviceCreate' || to.name === 'DeviceEdit' || to.name === 'RequestForm' || to.name === 'RequestList' || to.name === 'Printers' || to.name === 'Dashboard' || to.name === 'AdminRequests') {
     if (!hasToken) {
       next({ name: 'AuthPage' });
     } else {
+      const user = JSON.parse(localStorage.getItem('current_user') || 'null');
+      const isAdmin = user?.groups?.some(g => g.name === 'Admins');
+      const isUser = user?.groups?.some(g => g.name === 'Users');
+      if (to.meta?.requiresAdmin && !isAdmin) {
+        next({ name: 'DeviceTable' });
+        return;
+      }
+      if (to.meta?.forbidUsers && isUser) {
+        next({ name: 'DeviceTable' });
+        return;
+      }
       next();
     }
   } else if (to.name === 'AuthPage') {

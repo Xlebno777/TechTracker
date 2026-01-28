@@ -1,5 +1,5 @@
 <template>
-  <div class="p-4 printers-page">
+  <div class="p-4 printers-page page-shell">
     <div class="flex justify-content-between align-items-center mb-4">
       <h2 class="text-2xl font-bold m-0 text-900">Принтеры</h2>
       <Button icon="pi pi-refresh" rounded text @click="fetchFavoritePrinters" :loading="loadingPrinters" />
@@ -34,7 +34,7 @@
       :rows="10"
       stripedRows
       responsiveLayout="scroll"
-      class="shadow-2 border-round"
+      class="tech-table shadow-2 border-round"
     >
       <template #empty>
         <div class="p-3 text-center">

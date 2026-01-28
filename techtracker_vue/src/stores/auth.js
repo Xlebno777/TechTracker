@@ -11,6 +11,7 @@ export const useAuthStore = defineStore('auth', {
   getters: {
     isAuthenticated: (state) => !!state.token && !!state.user,
     isAdmin: (state) => state.user?.groups?.some(g => g.name === 'Admins'),
+    isUser: (state) => state.user?.groups?.some(g => g.name === 'Users'),
     // Пример: computed свойство для полного имени
     userFullName: (state) => state.user ? `${state.user.first_name} ${state.user.last_name}`.trim() || state.user.username : '',
   },
