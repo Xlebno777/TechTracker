@@ -98,7 +98,6 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue';
 import apiClient from '@/api';
-import { useAuthStore } from '@/stores/auth';
 import { useToast } from 'primevue/usetoast';
 
 // UI Components
@@ -111,7 +110,6 @@ import Dialog from 'primevue/dialog';
 import Checkbox from 'primevue/checkbox';
 import Toast from 'primevue/toast';
 
-const auth = useAuthStore();
 const toast = useToast();
 
 const requests = ref([]);
@@ -149,11 +147,6 @@ const statusOptions = [
 const getPriorityLabel = (val) => {
     if (!val) return '—';
     return priorityOptions.find(o => o.value === val)?.label || val;
-};
-
-const getStatusLabel = (val) => {
-    if (!val) return '—';
-    return statusOptions.find(o => o.value === val)?.label || val;
 };
 
 const isCompleted = (req) => req.status === 'closed';
