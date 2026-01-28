@@ -30,6 +30,17 @@ logging.basicConfig(
 )
 
 IP_RE = re.compile(r'(?:\d{1,3}\.){3}\d{1,3}')
+DOCUMENT_PREFIXES = [
+    "Microsoft Word - ",
+    "Microsoft Excel - ",
+    "Microsoft PowerPoint - ",
+    "Microsoft Outlook - ",
+    "Adobe Acrobat - ",
+    "Foxit Reader - ",
+    "Google Chrome - ",
+    "Microsoft Edge - ",
+    "Mozilla Firefox - ",
+]
 
 
 def load_config():
@@ -57,6 +68,16 @@ def _extract_ip(value):
         return None
     match = IP_RE.search(value)
     return match.group(0) if match else None
+
+
+def normalize_document_name(value):
+    if not value:
+        return value
+    lowered = value.lower()
+    for prefix in DOCUMENT_PREFIXES:
+        if lowered.startswith(prefix.lower()):
+            return value[len(prefix):].lstrip()
+    return value
 
 
 def _get_tcpip_ports():
@@ -96,6 +117,38 @@ def get_printer_ip_map():
             continue
 
     return printers
+
+
+def _get_job_id(job):
+    job_id = getattr(job, 'JobId', None)
+    if job_id is not None:
+        return job_id
+    if getattr(job, 'Name', None):
+        parts = job.Name.split(',')
+        if len(parts) > 1 and parts[1].strip().isdigit():
+            return int(parts[1].strip())
+    return None
+
+
+def _wait_for_pages(c, job_id, max_wait_sec=3, interval_sec=0.2):
+    if job_id is None:
+        return 0
+    deadline = time.time() + max_wait_sec
+    while time.time() < deadline:
+        try:
+            jobs = c.Win32_PrintJob(JobId=job_id)
+            if jobs:
+                job = jobs[0]
+                total = getattr(job, 'TotalPages', None) or 0
+                printed = getattr(job, 'PagesPrinted', None) or 0
+                if total and int(total) > 0:
+                    return int(total)
+                if printed and int(printed) > 0:
+                    return int(printed)
+        except Exception:
+            pass
+        time.sleep(interval_sec)
+    return 0
 
 
 def parse_wmi_datetime(value):
@@ -168,13 +221,16 @@ def monitor_print_jobs(api_base, token, serial, refresh_sec, send_serial):
 
                 refresh_map_if_needed()
 
-                document = job.Document or "Unknown"
+                document = normalize_document_name(job.Document or "Unknown")
                 if 'ipp' in document.lower() or 'http' in document.lower():
                     continue
 
                 printer_name = job.Name.split(',')[0].strip() if job.Name else "Unknown"
                 user_name = getattr(job, 'Owner', None) or "Unknown"
                 pages = getattr(job, 'TotalPages', None) or 0
+                if not pages or int(pages) == 0:
+                    job_id = _get_job_id(job)
+                    pages = _wait_for_pages(c, job_id)
                 timestamp = parse_wmi_datetime(getattr(job, 'TimeSubmitted', None))
 
                 payload = {
