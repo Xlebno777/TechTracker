@@ -40,6 +40,7 @@ Name: "autostart"; Description: "Добавить в автозапуск (сл�
 
 [Run]
 Filename: "powershell.exe"; Parameters: "-ExecutionPolicy Bypass -File ""{app}\install_task.ps1"" -InstallDir ""{app}"""; Flags: runhidden
+Filename: "{app}\{#AppExeName}"; Description: "Запустить Print Client"; Flags: postinstall nowait skipifsilent
 
 [UninstallRun]
 Filename: "powershell.exe"; Parameters: "-ExecutionPolicy Bypass -File ""{app}\uninstall_task.ps1"""; Flags: runhidden
@@ -85,7 +86,7 @@ procedure CurStepChanged(CurStep: TSetupStep);
 var
   IniPath: string;
 begin
-  if CurStep = ssInstall then
+  if CurStep = ssPostInstall then
   begin
     IniPath := ExpandConstant('{app}\print_client.ini');
     if FileExists(IniPath) then

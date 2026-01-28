@@ -1,11 +1,11 @@
 [DEFAULT]
 # Пример: http://server:8000/api/
-ApiUrl = {#ApiUrl}
-Token = {#Token}
+ApiUrl = http://127.0.0.1:8000/api/
+Token = CHANGE_ME
 
 # Отправлять serial_number клиента (обычно не требуется)
-SendSerial = {#SendSerial}
-SerialNumber = {#SerialNumber}
+SendSerial = 0
+SerialNumber = AUTO
 
 # Как часто обновлять карту принтеров -> IP (сек)
-PrinterMapRefreshSec = {#PrinterMapRefreshSec}
+PrinterMapRefreshSec = 300
