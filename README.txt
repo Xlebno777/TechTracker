@@ -42,9 +42,13 @@ npm install
 npm run serve
 3) Агент (опционально)
 
+Папка агента теперь разделена:
+- agents\\ServerAgent (серверный агент метрик/Hyper-V)
+- agents\\PrintAgent (клиент печати)
+
 Проверь config.ini или config.ini (где он лежит в твоей сборке), чтобы ApiUrl был вида http://<server>:8000/api/ и Token валиден.
 Запуск:
-cd C:\Users\mkv\Documents\Projects\TechTracker\agents
+cd C:\Users\mkv\Documents\Projects\TechTracker\agents\ServerAgent
 python agent_server.py
 Если хочешь, могу сделать скрипты run-backend.ps1 и run-frontend.ps1, чтобы запуск был одной командой.
 
@@ -59,3 +63,7 @@ SMART (Windows):
 
 Очистка сырых метрик (сервер):
 python manage.py purge_raw_metrics --default-days 365
+
+ServerAgent installer:
+- Папка: agents\\ServerAgent\\installer
+- Скрипт удаления на ПК: {app}\\remove_agent.ps1 (удаляет задачу автозапуска и папку)

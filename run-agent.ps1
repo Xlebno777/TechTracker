@@ -2,14 +2,14 @@ $ErrorActionPreference = 'Stop'
 
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $venvActivate = Join-Path $root '.venv\Scripts\Activate.ps1'
-$agentDir = Join-Path $root 'agents'
+$agentDir = Join-Path $root 'agents\ServerAgent'
 $agentPy = Join-Path $agentDir 'agent_server.py'
 
 if (!(Test-Path $venvActivate)) {
   Write-Error "Missing .venv. Create it with: python -m venv .venv"
 }
 if (!(Test-Path $agentPy)) {
-  Write-Error "Missing agents/agent_server.py"
+  Write-Error "Missing agents/ServerAgent/agent_server.py"
 }
 
 . $venvActivate

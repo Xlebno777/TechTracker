@@ -2,7 +2,7 @@
 echo Installing TechTracker Agent...
 
 :: 1. Настройка путей
-set INSTALL_DIR="C:\Program Files\TechTrackerAgent"
+set INSTALL_DIR="C:\Program Files\TechTracker\ServerAgent"
 set EXE_SOURCE="TechTrackerAgent.exe"
 set CONFIG_SOURCE="config.ini"
 set EXE_DEST="%INSTALL_DIR%\TechTrackerAgent.exe"
@@ -25,10 +25,10 @@ copy /Y %EXE_SOURCE% %INSTALL_DIR%
 copy /Y %CONFIG_SOURCE% %INSTALL_DIR%
 
 :: 5. Создание задачи в планировщике (Запуск при старте системы, скрыто, от имени SYSTEM)
-schtasks /create /tn "TechTrackerAgent" /tr "'%INSTALL_DIR%\TechTrackerAgent.exe'" /sc onstart /ru System /f
+schtasks /create /tn "TechTracker Server Agent" /tr "'%INSTALL_DIR%\TechTrackerAgent.exe'" /sc onstart /ru System /f
 
 :: 6. Запуск задачи прямо сейчас
-schtasks /run /tn "TechTrackerAgent"
+schtasks /run /tn "TechTracker Server Agent"
 
 echo.
 echo Installation Complete! Agent is running.

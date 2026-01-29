@@ -1,0 +1,13 @@
+[DEFAULT]
+ApiUrl = http://127.0.0.1:8000/api/
+Token =
+SerialNumber = AUTO
+LoopInterval = 5
+MetricsBatchInterval = 60
+PrinterSyncInterval = 300
+VmSyncInterval = 60
+RetentionDays = 365
+PingTarget =
+SmartctlPath =
+MetricsQueueMax = 5000
+MetricsDebug = 0

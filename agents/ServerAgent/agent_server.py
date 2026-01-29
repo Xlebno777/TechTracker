@@ -87,6 +87,7 @@ def send_metrics_batch(api_base, token, serial, metrics, retention_days=None):
     if retention_days:
         payload['retention_days'] = retention_days
     try:
+        logging.debug(f"Sending metrics batch: count={len(metrics)} retention={retention_days}")
         response = requests.post(url, json=payload, headers=headers, timeout=10)
         if response.status_code != 201:
             logging.error(f"Failed metrics ingest: {response.status_code} {response.text}")
@@ -550,6 +551,7 @@ def main():
         PING_TARGET = config['DEFAULT'].get('PingTarget', '').strip() or None
         SMARTCTL_PATH = _detect_smartctl(config['DEFAULT'].get('SmartctlPath', '').strip())
         METRICS_QUEUE_MAX = int(config['DEFAULT'].get('MetricsQueueMax', '5000'))
+        METRICS_DEBUG = config['DEFAULT'].get('MetricsDebug', '0').strip().lower() in ('1', 'true', 'yes', 'on')
 
         if CONFIG_SERIAL.upper() == 'AUTO':
             SERIAL_NUMBER = get_serial_number()
@@ -559,6 +561,10 @@ def main():
     except KeyError as e:
         logging.error(f"Missing config key: {e}")
         return
+
+    if METRICS_DEBUG:
+        logging.getLogger().setLevel(logging.DEBUG)
+        logging.debug("Metrics debug logging enabled.")
 
     collector = MetricCollector(ping_target=PING_TARGET, smartctl_path=SMARTCTL_PATH)
 
@@ -610,7 +616,11 @@ def main():
                 if (now - last_run[name]) >= interval:
                     try:
                         metrics = func() or []
-                        metrics_queue.extend([m for m in metrics if m])
+                        valid = [m for m in metrics if m]
+                        if METRICS_DEBUG and valid:
+                            codes = [m.get('code') for m in valid]
+                            logging.debug(f"Collected {len(valid)} metrics from {name}: {codes}")
+                        metrics_queue.extend(valid)
                     except Exception as e:
                         logging.warning(f"Metric task '{name}' failed: {e}")
                     last_run[name] = now
