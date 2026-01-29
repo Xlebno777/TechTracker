@@ -39,11 +39,11 @@ Source: "uninstall_task.ps1"; DestDir: "{app}"; Flags: ignoreversion
 Name: "autostart"; Description: "Добавить в автозапуск (служба SYSTEM)"; Flags: checkedonce
 
 [Run]
-Filename: "powershell.exe"; Parameters: "-ExecutionPolicy Bypass -File ""{app}\install_task.ps1"" -InstallDir ""{app}"""; Flags: runhidden
+Filename: "powershell.exe"; Parameters: "-ExecutionPolicy Bypass -File '{app}\install_task.ps1' -InstallDir '{app}'"; Flags: runhidden
 Filename: "{app}\{#AppExeName}"; Description: "Запустить Print Client"; Flags: postinstall nowait skipifsilent
 
 [UninstallRun]
-Filename: "powershell.exe"; Parameters: "-ExecutionPolicy Bypass -File ""{app}\uninstall_task.ps1"""; Flags: runhidden
+Filename: "powershell.exe"; Parameters: "-ExecutionPolicy Bypass -File '{app}\uninstall_task.ps1'"; Flags: runhidden
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}"

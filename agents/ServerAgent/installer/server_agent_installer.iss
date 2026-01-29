@@ -44,11 +44,11 @@ Source: "uninstall_task.ps1"; DestDir: "{app}"; Flags: ignoreversion
 Source: "remove_agent.ps1"; DestDir: "{app}"; Flags: ignoreversion
 
 [Run]
-Filename: "powershell.exe"; Parameters: "-ExecutionPolicy Bypass -File \"{app}\install_task.ps1\" -InstallDir \"{app}\""; Flags: runhidden
+Filename: "powershell.exe"; Parameters: "-ExecutionPolicy Bypass -File '{app}\install_task.ps1' -InstallDir '{app}'"; Flags: runhidden
 Filename: "powershell.exe"; Parameters: "-ExecutionPolicy Bypass -Command \"Start-ScheduledTask -TaskName 'TechTracker Server Agent'\""; Description: "Запустить Server Agent (от имени администратора)"; Flags: postinstall runhidden nowait skipifsilent
 
 [UninstallRun]
-Filename: "powershell.exe"; Parameters: "-ExecutionPolicy Bypass -File \"{app}\uninstall_task.ps1\""; Flags: runhidden
+Filename: "powershell.exe"; Parameters: "-ExecutionPolicy Bypass -File '{app}\uninstall_task.ps1'"; Flags: runhidden
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}"
