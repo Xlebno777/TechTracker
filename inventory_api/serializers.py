@@ -1,5 +1,10 @@
 from rest_framework import serializers
-from .models import Device, DeviceType, Location, UserProfile, ComputerSpecs, PrinterScannerSpecs, NetworkDeviceSpecs, Cartridge, CartridgeLog, Log, Metric, PrintJob
+from .models import (
+    Device, DeviceType, Location, UserProfile, ComputerSpecs,
+    PrinterScannerSpecs, NetworkDeviceSpecs, Cartridge, CartridgeLog,
+    Log, Metric, PrintJob, MonitoringSetting, RawMetric, TrackedVM
+)
+from django.utils import timezone
 from django.contrib.auth.models import User, Group
 
 # --- Serializers для справочников ---
@@ -318,3 +323,50 @@ class PrintJobSerializer(serializers.ModelSerializer):
         # device.printer_scanner_specs.current_cartridge.save()
         
         return PrintJob.objects.create(device=device, **validated_data)
+
+
+class RawMetricSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = RawMetric
+        fields = ['id', 'device', 'code', 'value', 'unit', 'timestamp', 'labels', 'created_at']
+        read_only_fields = ('id', 'created_at')
+
+
+class RawMetricItemSerializer(serializers.Serializer):
+    code = serializers.CharField(max_length=100)
+    value = serializers.FloatField()
+    unit = serializers.CharField(max_length=20, required=False, allow_blank=True, default='')
+    timestamp = serializers.DateTimeField(required=False)
+    labels = serializers.JSONField(required=False, default=dict)
+
+    def validate_timestamp(self, value):
+        return value or timezone.now()
+
+
+class RawMetricIngestSerializer(serializers.Serializer):
+    serial_number = serializers.CharField()
+    retention_days = serializers.IntegerField(required=False, min_value=1)
+    metrics = RawMetricItemSerializer(many=True)
+
+
+class TrackedVMSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = TrackedVM
+        fields = [
+            'id', 'name', 'host_device', 'status', 'cpu_usage',
+            'memory_usage', 'uptime_seconds', 'last_seen', 'is_enabled'
+        ]
+        read_only_fields = ('last_seen',)
+
+
+class TrackedVMSyncItemSerializer(serializers.Serializer):
+    name = serializers.CharField(max_length=200)
+    status = serializers.CharField(required=False, allow_blank=True, default='unknown')
+    cpu_usage = serializers.FloatField(required=False, allow_null=True)
+    memory_usage = serializers.FloatField(required=False, allow_null=True)
+    uptime_seconds = serializers.IntegerField(required=False, allow_null=True)
+
+
+class TrackedVMSyncSerializer(serializers.Serializer):
+    serial_number = serializers.CharField()
+    vms = TrackedVMSyncItemSerializer(many=True)

@@ -34,3 +34,25 @@ class PrinterAgentPermission(BasePermission):
         if not user or not user.is_authenticated:
             return False
         return _is_admin(user) or user.groups.filter(name='Agent').exists()
+
+
+class MetricsAgentPermission(BasePermission):
+    """
+    Allow raw metrics ingest for staff or users in Agent group.
+    """
+    def has_permission(self, request, view):
+        user = request.user
+        if not user or not user.is_authenticated:
+            return False
+        return _is_admin(user) or user.groups.filter(name='Agent').exists()
+
+
+class VMStatusAgentPermission(BasePermission):
+    """
+    Allow VM status sync for staff or users in Agent group.
+    """
+    def has_permission(self, request, view):
+        user = request.user
+        if not user or not user.is_authenticated:
+            return False
+        return _is_admin(user) or user.groups.filter(name='Agent').exists()

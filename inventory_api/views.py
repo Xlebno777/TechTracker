@@ -20,16 +20,20 @@ from django_filters.rest_framework import DjangoFilterBackend
 from .models import (
     Device, DeviceType, Location, UserProfile,
     ComputerSpecs, PrinterScannerSpecs, NetworkDeviceSpecs,
-    Cartridge, CartridgeLog, Log, Metric, PrintJob
+    Cartridge, CartridgeLog, Log, Metric, PrintJob,
+    MonitoringSetting, RawMetric, TrackedVM
 )
 from .serializers import (
     DeviceSerializer, DeviceCreateUpdateSerializer,
     DeviceTypeSerializer, LocationSerializer,
     UserProfileSerializer, ComputerSpecsSerializer,
     PrinterScannerSpecsSerializer, NetworkDeviceSpecsSerializer,
-    CartridgeSerializer, CartridgeLogSerializer, LogSerializer, UserSerializer, MetricSerializer, PrintJobSerializer
+    CartridgeSerializer, CartridgeLogSerializer, LogSerializer, UserSerializer,
+    MetricSerializer, PrintJobSerializer, RawMetricSerializer, RawMetricIngestSerializer,
+    TrackedVMSerializer, TrackedVMSyncSerializer
 )
-from .permissions import PrintJobPermission, PrinterAgentPermission
+from .permissions import PrintJobPermission, PrinterAgentPermission, MetricsAgentPermission, VMStatusAgentPermission
+from django.utils import timezone
 
 
 def _normalize_ip(value):
@@ -424,6 +428,115 @@ class MetricViewSet(viewsets.ModelViewSet):
     # Оптимизация: если фронт запрашивает график, ему нужно много точек.
     # Можно настроить пагинацию отдельно, если глобальная слишком мала,
     # но пока оставим стандартную.
+
+
+class RawMetricViewSet(viewsets.ReadOnlyModelViewSet):
+    queryset = RawMetric.objects.all()
+    serializer_class = RawMetricSerializer
+    permission_classes = [IsAuthenticated, DjangoModelPermissions]
+
+    filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
+    filterset_fields = ['device', 'code']
+    ordering_fields = ['timestamp', 'value']
+    ordering = ['-timestamp']
+
+    @action(detail=False, methods=['post'], permission_classes=[MetricsAgentPermission])
+    def ingest(self, request):
+        serializer = RawMetricIngestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        serial = serializer.validated_data['serial_number']
+        retention_days = serializer.validated_data.get('retention_days')
+        metrics = serializer.validated_data['metrics']
+
+        device = Device.objects.filter(serial_number=serial).first()
+        if not device:
+            return Response(
+                {"detail": f"Device with serial number '{serial}' not found."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        setting, _ = MonitoringSetting.objects.get_or_create(device=device)
+        if retention_days and setting.retention_days != retention_days:
+            setting.retention_days = retention_days
+            setting.save(update_fields=['retention_days', 'updated_at'])
+
+        now = timezone.now()
+        objects = []
+        for item in metrics:
+            ts = item.get('timestamp') or now
+            objects.append(RawMetric(
+                device=device,
+                code=item['code'],
+                value=item['value'],
+                unit=item.get('unit', ''),
+                timestamp=ts,
+                labels=item.get('labels', {})
+            ))
+
+        if objects:
+            RawMetric.objects.bulk_create(objects, batch_size=1000)
+
+        return Response({"created": len(objects)}, status=status.HTTP_201_CREATED)
+
+
+def _normalize_vm_status(value):
+    raw = (value or '').strip().lower()
+    if raw in ('running', 'on', 'started'):
+        return 'running'
+    if raw in ('off', 'stopped', 'poweroff', 'poweredoff'):
+        return 'off'
+    if 'pause' in raw:
+        return 'paused'
+    if 'saved' in raw:
+        return 'saved'
+    return 'unknown'
+
+
+class TrackedVMViewSet(viewsets.ModelViewSet):
+    queryset = TrackedVM.objects.all()
+    serializer_class = TrackedVMSerializer
+    permission_classes = [IsAuthenticated, DjangoModelPermissions]
+
+    filter_backends = [DjangoFilterBackend, filters.OrderingFilter, filters.SearchFilter]
+    filterset_fields = ['status', 'is_enabled', 'host_device']
+    search_fields = ['name']
+    ordering_fields = ['name', 'status', 'cpu_usage', 'memory_usage', 'uptime_seconds', 'last_seen']
+    ordering = ['name']
+
+    @action(detail=False, methods=['post'], permission_classes=[VMStatusAgentPermission])
+    def sync_status(self, request):
+        serializer = TrackedVMSyncSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        serial = serializer.validated_data['serial_number']
+        vms = serializer.validated_data['vms']
+        host_device = Device.objects.filter(serial_number=serial).first()
+        now = timezone.now()
+
+        updated = 0
+        skipped = 0
+
+        for vm_data in vms:
+            vm = TrackedVM.objects.filter(name=vm_data['name']).first()
+            if not vm:
+                skipped += 1
+                continue
+            if not vm.is_enabled:
+                skipped += 1
+                continue
+
+            vm.status = _normalize_vm_status(vm_data.get('status'))
+            vm.cpu_usage = vm_data.get('cpu_usage')
+            vm.memory_usage = vm_data.get('memory_usage')
+            vm.uptime_seconds = vm_data.get('uptime_seconds')
+            vm.last_seen = now
+            if host_device:
+                vm.host_device = host_device
+            vm.save()
+            updated += 1
+
+        return Response({"updated": updated, "skipped": skipped}, status=status.HTTP_200_OK)
 
 class PrintJobViewSet(viewsets.ModelViewSet):
     queryset = PrintJob.objects.all()

@@ -2,7 +2,11 @@ from django.contrib import admin
 from import_export import resources, fields
 from import_export.widgets import ForeignKeyWidget
 from import_export.admin import ImportExportModelAdmin
-from .models import Device, DeviceType, Location, UserProfile, ComputerSpecs, PrinterScannerSpecs, NetworkDeviceSpecs, Cartridge, CartridgeLog, Log, Metric
+from .models import (
+    Device, DeviceType, Location, UserProfile, ComputerSpecs, PrinterScannerSpecs,
+    NetworkDeviceSpecs, Cartridge, CartridgeLog, Log, Metric,
+    MonitoringSetting, RawMetric, TrackedVM
+)
 
 @admin.register(DeviceType)
 class DeviceTypeAdmin(admin.ModelAdmin):
@@ -135,3 +139,24 @@ class MetricAdmin(ImportExportModelAdmin):
     list_filter = ('metric_type', 'timestamp', 'device')
     # Для больших таблиц полезно убрать ссылку на полное редактирование, если записей миллионы
     # Но для начала подойдет стандартный вид.
+
+
+@admin.register(MonitoringSetting)
+class MonitoringSettingAdmin(admin.ModelAdmin):
+    list_display = ('device', 'retention_days', 'updated_at')
+    search_fields = ('device__name', 'device__serial_number')
+
+
+@admin.register(TrackedVM)
+class TrackedVMAdmin(admin.ModelAdmin):
+    list_display = ('name', 'status', 'cpu_usage', 'memory_usage', 'uptime_seconds', 'last_seen', 'host_device', 'is_enabled')
+    list_filter = ('status', 'is_enabled', 'host_device')
+    search_fields = ('name',)
+
+
+@admin.register(RawMetric)
+class RawMetricAdmin(admin.ModelAdmin):
+    list_display = ('device', 'code', 'value', 'unit', 'timestamp')
+    list_filter = ('code', 'device')
+    search_fields = ('device__name', 'code')
+    readonly_fields = ('created_at',)

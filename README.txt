@@ -47,3 +47,15 @@ npm run serve
 cd C:\Users\mkv\Documents\Projects\TechTracker\agents
 python agent_server.py
 Если хочешь, могу сделать скрипты run-backend.ps1 и run-frontend.ps1, чтобы запуск был одной командой.
+
+Новые параметры агента:
+- RetentionDays (по умолчанию 365) — срок хранения сырых метрик
+- VmSyncInterval — частота обновления статуса Hyper-V ВМ
+- SmartctlPath — путь до smartctl.exe (если нужен SMART)
+
+SMART (Windows):
+1) Установи smartmontools
+2) Добавь путь к smartctl.exe в PATH или пропиши SmartctlPath в config.ini
+
+Очистка сырых метрик (сервер):
+python manage.py purge_raw_metrics --default-days 365

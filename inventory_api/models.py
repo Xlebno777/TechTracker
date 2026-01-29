@@ -275,6 +275,68 @@ class PrintJob(models.Model):
     def __str__(self):
         return f"{self.document_name} ({self.pages} p.) by {self.user_name}"
 
+
+class MonitoringSetting(models.Model):
+    device = models.OneToOneField(Device, on_delete=models.CASCADE, related_name='monitoring_settings')
+    retention_days = models.PositiveIntegerField(default=365)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Настройки мониторинга"
+        verbose_name_plural = "Настройки мониторинга"
+
+    def __str__(self):
+        return f"{self.device.name}: retention {self.retention_days} days"
+
+
+class RawMetric(models.Model):
+    device = models.ForeignKey(Device, on_delete=models.CASCADE, related_name='metrics_raw')
+    code = models.CharField(max_length=100)
+    value = models.FloatField()
+    unit = models.CharField(max_length=20, blank=True)
+    timestamp = models.DateTimeField()
+    labels = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Сырая метрика"
+        verbose_name_plural = "Сырые метрики"
+        ordering = ['-timestamp']
+        indexes = [
+            models.Index(fields=['device', 'code', '-timestamp']),
+            models.Index(fields=['timestamp']),
+        ]
+
+    def __str__(self):
+        return f"{self.device.name} - {self.code}: {self.value} ({self.timestamp})"
+
+
+class TrackedVM(models.Model):
+    STATUS_CHOICES = [
+        ('running', 'Включена'),
+        ('off', 'Выключена'),
+        ('paused', 'Пауза'),
+        ('saved', 'Сохранена'),
+        ('unknown', 'Неизвестно'),
+    ]
+
+    name = models.CharField(max_length=200, unique=True)
+    host_device = models.ForeignKey(Device, on_delete=models.SET_NULL, null=True, blank=True, related_name='tracked_vms')
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='unknown')
+    cpu_usage = models.FloatField(null=True, blank=True)
+    memory_usage = models.FloatField(null=True, blank=True)
+    uptime_seconds = models.BigIntegerField(null=True, blank=True)
+    last_seen = models.DateTimeField(null=True, blank=True)
+    is_enabled = models.BooleanField(default=True)
+
+    class Meta:
+        verbose_name = "Отслеживаемая ВМ"
+        verbose_name_plural = "Отслеживаемые ВМ"
+        ordering = ['name']
+
+    def __str__(self):
+        return f"{self.name} ({self.status})"
+
   
 
 # ... другие модели (например, Request для заявок)
