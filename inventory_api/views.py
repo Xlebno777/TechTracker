@@ -354,8 +354,6 @@ class DeviceViewSet(viewsets.ModelViewSet):
 
         device_type = _get_printer_device_type()
         created = 0
-        created = 0
-        created = 0
         updated = 0
         skipped = 0
 
@@ -602,6 +600,7 @@ class TrackedVMViewSet(viewsets.ModelViewSet):
         host_device = Device.objects.filter(serial_number=serial).first()
         now = timezone.now()
 
+        created = 0
         updated = 0
         skipped = 0
 

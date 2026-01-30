@@ -45,6 +45,17 @@ def _run_cmd(cmd):
     return subprocess.check_output(cmd, **kwargs)
 
 
+def _decode_cmd_output(raw):
+    if os.name == 'nt':
+        for enc in ('cp866', 'utf-8', 'cp1251'):
+            try:
+                return raw.decode(enc)
+            except Exception:
+                continue
+        return raw.decode(errors='ignore')
+    return raw.decode(errors='ignore')
+
+
 def get_serial_number():
     """Автоматически получает серийный номер из Windows."""
     try:
@@ -91,7 +102,7 @@ def _check_ping_target(target):
 
 def _ping_latency_ms(target):
     try:
-        output = _run_cmd(["ping", "-n", "1", "-w", "1000", target]).decode(errors='ignore')
+        output = _decode_cmd_output(_run_cmd(["ping", "-n", "1", "-w", "1000", target]))
         if logging.getLogger().isEnabledFor(logging.DEBUG):
             logging.debug(f"Ping output for {target}: {output.strip()}")
         match = re.search(r'Average = (\d+)ms', output)
@@ -110,6 +121,8 @@ def _ping_latency_ms(target):
             if value == '<1':
                 return 0
             return int(value)
+        if 'TTL=' in output.upper():
+            return 0
     except Exception:
         return None
     return None
