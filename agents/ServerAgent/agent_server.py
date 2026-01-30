@@ -86,7 +86,53 @@ def _detect_smartctl(config_value):
         return None
 
 
-def _log_smartctl_info(smartctl_path):
+def _parse_megaraid_slots(raw):
+    if not raw:
+        return []
+    raw = raw.strip()
+    if not raw:
+        return []
+    slots = []
+    for part in raw.split(','):
+        part = part.strip()
+        if not part:
+            continue
+        if '-' in part:
+            start, end = part.split('-', 1)
+            try:
+                s = int(start)
+                e = int(end)
+            except ValueError:
+                continue
+            if e < s:
+                s, e = e, s
+            slots.extend(range(s, e + 1))
+        else:
+            try:
+                slots.append(int(part))
+            except ValueError:
+                continue
+    return sorted(set(slots))
+
+
+def _build_driver_candidates(dtype, megaraid_slots):
+    candidates = []
+    if dtype:
+        candidates.append(dtype)
+    candidates.extend(['sat', 'scsi', 'nvme', 'ata'])
+    for slot in megaraid_slots:
+        candidates.append(f"megaraid,{slot}")
+    seen = set()
+    deduped = []
+    for item in candidates:
+        if item in seen:
+            continue
+        seen.add(item)
+        deduped.append(item)
+    return deduped
+
+
+def _log_smartctl_info(smartctl_path, megaraid_slots=None):
     if not smartctl_path:
         logging.info("Smartctl not found; SMART metrics disabled.")
         return
@@ -100,6 +146,9 @@ def _log_smartctl_info(smartctl_path):
             logging.warning("Smartctl appears to be a Linux/WSL build.")
     except Exception as e:
         logging.warning(f"Smartctl version read failed: {e}")
+
+    if megaraid_slots:
+        logging.info(f"SMART megaraid slots: {megaraid_slots}")
 
     devices = _smartctl_scan(smartctl_path)
     if devices:
@@ -293,7 +342,7 @@ def _metric(code, value, unit, labels=None, timestamp=None):
 
 
 class MetricCollector:
-    def __init__(self, ping_target=None, smartctl_path=None):
+    def __init__(self, ping_target=None, smartctl_path=None, megaraid_slots=None):
         self.last_cpu_times = None
         self.last_cpu_time_ts = None
         self.last_interrupts = None
@@ -306,6 +355,7 @@ class MetricCollector:
         self.last_ping_ts = None
         self.ping_target = ping_target
         self.smartctl_path = smartctl_path
+        self.megaraid_slots = megaraid_slots or []
         self._last_smart = None
         self._last_smart_ts = None
         psutil.cpu_percent(interval=None)
@@ -468,15 +518,17 @@ class MetricCollector:
         for item in devices:
             device = item.get('device')
             dtype = item.get('dtype')
-            attrs = _smartctl_attributes(self.smartctl_path, device, dtype)
-            if not attrs and not dtype:
-                for fallback in ('sat', 'scsi', 'nvme', 'ata'):
-                    attrs = _smartctl_attributes(self.smartctl_path, device, fallback)
-                    if attrs:
-                        logging.debug(f"SMART fallback driver {fallback} works for {device}")
-                        break
+            attrs = None
+            tried = []
+            for candidate in _build_driver_candidates(dtype, self.megaraid_slots):
+                tried.append(candidate)
+                attrs = _smartctl_attributes(self.smartctl_path, device, candidate)
+                if attrs:
+                    if logging.getLogger().isEnabledFor(logging.DEBUG):
+                        logging.debug(f"SMART driver {candidate} works for {device}")
+                    break
             if not attrs:
-                logging.warning(f"SMART blocked by controller or unsupported device: {device}")
+                logging.warning(f"SMART blocked or unsupported for {device}. Tried: {tried}")
                 continue
             if logging.getLogger().isEnabledFor(logging.DEBUG):
                 logging.debug(
@@ -702,6 +754,7 @@ def main():
         RETENTION_DAYS = int(config['DEFAULT'].get('RetentionDays', '365'))
         PING_TARGET = config['DEFAULT'].get('PingTarget', '').strip() or None
         SMARTCTL_PATH = _detect_smartctl(config['DEFAULT'].get('SmartctlPath', '').strip())
+        MEGARAID_SLOTS = _parse_megaraid_slots(config['DEFAULT'].get('SmartctlMegaraidSlots', '').strip())
         METRICS_QUEUE_MAX = int(config['DEFAULT'].get('MetricsQueueMax', '5000'))
         METRICS_DEBUG = config['DEFAULT'].get('MetricsDebug', '0').strip().lower() in ('1', 'true', 'yes', 'on')
 
@@ -718,11 +771,11 @@ def main():
         logging.getLogger().setLevel(logging.DEBUG)
         logging.debug("Metrics debug logging enabled.")
 
-    _log_smartctl_info(SMARTCTL_PATH)
+    _log_smartctl_info(SMARTCTL_PATH, MEGARAID_SLOTS)
 
     _check_ping_target(PING_TARGET)
 
-    collector = MetricCollector(ping_target=PING_TARGET, smartctl_path=SMARTCTL_PATH)
+    collector = MetricCollector(ping_target=PING_TARGET, smartctl_path=SMARTCTL_PATH, megaraid_slots=MEGARAID_SLOTS)
 
     # План сборов
     tasks = [

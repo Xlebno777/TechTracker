@@ -8,5 +8,6 @@ VmSyncInterval = 60
 RetentionDays = 365
 PingTarget =
 SmartctlPath =
+SmartctlMegaraidSlots = 0-15
 MetricsQueueMax = 5000
 MetricsDebug = 0
