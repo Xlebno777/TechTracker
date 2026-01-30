@@ -57,7 +57,10 @@ Type: filesandordirs; Name: "{app}"
 var
   ApiUrlPage: TInputQueryWizardPage;
   TokenPage: TInputQueryWizardPage;
-  OptionsPage: TInputQueryWizardPage;
+  IdentityPage: TInputQueryWizardPage;
+  TimingPage: TInputQueryWizardPage;
+  MonitoringPage: TInputQueryWizardPage;
+  SyncPage: TInputQueryWizardPage;
 
 procedure InitializeWizard();
 begin
@@ -75,30 +78,45 @@ begin
   TokenPage.Add('Token:', True);
   TokenPage.Values[0] := ExpandConstant('{#Token}');
 
-  OptionsPage := CreateInputQueryPage(TokenPage.ID,
-    'Параметры агента',
-    'Дополнительные параметры',
-    'Настройте частоты и сбор метрик.');
-  OptionsPage.Add('SerialNumber (AUTO or value):', False);
-  OptionsPage.Values[0] := ExpandConstant('{#SerialNumber}');
-  OptionsPage.Add('LoopInterval (sec):', False);
-  OptionsPage.Values[1] := ExpandConstant('{#LoopInterval}');
-  OptionsPage.Add('MetricsBatchInterval (sec):', False);
-  OptionsPage.Values[2] := ExpandConstant('{#MetricsBatchInterval}');
-  OptionsPage.Add('RetentionDays:', False);
-  OptionsPage.Values[3] := ExpandConstant('{#RetentionDays}');
-  OptionsPage.Add('PingTarget:', False);
-  OptionsPage.Values[4] := ExpandConstant('{#PingTarget}');
-  OptionsPage.Add('SmartctlPath:', False);
-  OptionsPage.Values[5] := ExpandConstant('{#SmartctlPath}');
-  OptionsPage.Add('PrinterSyncInterval (sec):', False);
-  OptionsPage.Values[6] := ExpandConstant('{#PrinterSyncInterval}');
-  OptionsPage.Add('VmSyncInterval (sec):', False);
-  OptionsPage.Values[7] := ExpandConstant('{#VmSyncInterval}');
-  OptionsPage.Add('MetricsQueueMax:', False);
-  OptionsPage.Values[8] := ExpandConstant('{#MetricsQueueMax}');
-  OptionsPage.Add('MetricsDebug (0/1):', False);
-  OptionsPage.Values[9] := ExpandConstant('{#MetricsDebug}');
+  IdentityPage := CreateInputQueryPage(TokenPage.ID,
+    'Идентификация агента',
+    'Серийный номер сервера',
+    'Обычно AUTO — агент сам определит серийник.');
+  IdentityPage.Add('SerialNumber (AUTO or value):', False);
+  IdentityPage.Values[0] := ExpandConstant('{#SerialNumber}');
+
+  TimingPage := CreateInputQueryPage(IdentityPage.ID,
+    'Частота сбора',
+    'Настройте периодичность',
+    'Интервалы в секундах.');
+  TimingPage.Add('LoopInterval (sec):', False);
+  TimingPage.Values[0] := ExpandConstant('{#LoopInterval}');
+  TimingPage.Add('MetricsBatchInterval (sec):', False);
+  TimingPage.Values[1] := ExpandConstant('{#MetricsBatchInterval}');
+  TimingPage.Add('MetricsQueueMax:', False);
+  TimingPage.Values[2] := ExpandConstant('{#MetricsQueueMax}');
+
+  MonitoringPage := CreateInputQueryPage(TimingPage.ID,
+    'Мониторинг',
+    'Параметры мониторинга',
+    'SMART и хранение метрик.');
+  MonitoringPage.Add('RetentionDays:', False);
+  MonitoringPage.Values[0] := ExpandConstant('{#RetentionDays}');
+  MonitoringPage.Add('PingTarget:', False);
+  MonitoringPage.Values[1] := ExpandConstant('{#PingTarget}');
+  MonitoringPage.Add('SmartctlPath:', False);
+  MonitoringPage.Values[2] := ExpandConstant('{#SmartctlPath}');
+
+  SyncPage := CreateInputQueryPage(MonitoringPage.ID,
+    'Синхронизация',
+    'Интервалы синхронизации',
+    'Принтеры, Hyper-V и Debug.');
+  SyncPage.Add('PrinterSyncInterval (sec):', False);
+  SyncPage.Values[0] := ExpandConstant('{#PrinterSyncInterval}');
+  SyncPage.Add('VmSyncInterval (sec):', False);
+  SyncPage.Values[1] := ExpandConstant('{#VmSyncInterval}');
+  SyncPage.Add('MetricsDebug (0/1):', False);
+  SyncPage.Values[2] := ExpandConstant('{#MetricsDebug}');
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
@@ -112,16 +130,16 @@ begin
     begin
       SetIniString('DEFAULT', 'ApiUrl', ApiUrlPage.Values[0], IniPath);
       SetIniString('DEFAULT', 'Token', TokenPage.Values[0], IniPath);
-      SetIniString('DEFAULT', 'SerialNumber', OptionsPage.Values[0], IniPath);
-      SetIniString('DEFAULT', 'LoopInterval', OptionsPage.Values[1], IniPath);
-      SetIniString('DEFAULT', 'MetricsBatchInterval', OptionsPage.Values[2], IniPath);
-      SetIniString('DEFAULT', 'RetentionDays', OptionsPage.Values[3], IniPath);
-      SetIniString('DEFAULT', 'PingTarget', OptionsPage.Values[4], IniPath);
-      SetIniString('DEFAULT', 'SmartctlPath', OptionsPage.Values[5], IniPath);
-      SetIniString('DEFAULT', 'PrinterSyncInterval', OptionsPage.Values[6], IniPath);
-      SetIniString('DEFAULT', 'VmSyncInterval', OptionsPage.Values[7], IniPath);
-      SetIniString('DEFAULT', 'MetricsQueueMax', OptionsPage.Values[8], IniPath);
-      SetIniString('DEFAULT', 'MetricsDebug', OptionsPage.Values[9], IniPath);
+      SetIniString('DEFAULT', 'SerialNumber', IdentityPage.Values[0], IniPath);
+      SetIniString('DEFAULT', 'LoopInterval', TimingPage.Values[0], IniPath);
+      SetIniString('DEFAULT', 'MetricsBatchInterval', TimingPage.Values[1], IniPath);
+      SetIniString('DEFAULT', 'MetricsQueueMax', TimingPage.Values[2], IniPath);
+      SetIniString('DEFAULT', 'RetentionDays', MonitoringPage.Values[0], IniPath);
+      SetIniString('DEFAULT', 'PingTarget', MonitoringPage.Values[1], IniPath);
+      SetIniString('DEFAULT', 'SmartctlPath', MonitoringPage.Values[2], IniPath);
+      SetIniString('DEFAULT', 'PrinterSyncInterval', SyncPage.Values[0], IniPath);
+      SetIniString('DEFAULT', 'VmSyncInterval', SyncPage.Values[1], IniPath);
+      SetIniString('DEFAULT', 'MetricsDebug', SyncPage.Values[2], IniPath);
     end;
   end;
 end;
