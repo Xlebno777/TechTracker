@@ -21,7 +21,6 @@ else:
 
 config_path = os.path.join(application_path, 'config.ini')
 log_path = os.path.join(application_path, 'agent.log')
-
 logging.basicConfig(
     filename=log_path,
     level=logging.INFO,
@@ -92,7 +91,7 @@ def _check_ping_target(target):
 
 def _ping_latency_ms(target):
     try:
-        output = _run_cmd(["ping", "-n", "1", target]).decode(errors='ignore')
+        output = _run_cmd(["ping", "-n", "1", "-w", "1000", target]).decode(errors='ignore')
         match = re.search(r'Average = (\d+)ms', output)
         if not match:
             match = re.search(r'Среднее = (\d+)мс', output)

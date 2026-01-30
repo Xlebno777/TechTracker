@@ -354,6 +354,7 @@ class DeviceViewSet(viewsets.ModelViewSet):
 
         device_type = _get_printer_device_type()
         created = 0
+        created = 0
         updated = 0
         skipped = 0
 
@@ -605,9 +606,23 @@ class TrackedVMViewSet(viewsets.ModelViewSet):
 
         try:
             for vm_data in vms:
-                vm = TrackedVM.objects.filter(name=vm_data['name']).first()
-                if not vm:
+                name = vm_data.get('name')
+                if not name:
                     skipped += 1
+                    continue
+                vm = TrackedVM.objects.filter(name=name).first()
+                if not vm:
+                    vm = TrackedVM.objects.create(
+                        name=name,
+                        status=_normalize_vm_status(vm_data.get('status')),
+                        cpu_usage=vm_data.get('cpu_usage'),
+                        memory_usage=vm_data.get('memory_usage'),
+                        uptime_seconds=vm_data.get('uptime_seconds'),
+                        last_seen=now,
+                        host_device=host_device,
+                        is_enabled=True,
+                    )
+                    created += 1
                     continue
                 if not vm.is_enabled:
                     skipped += 1
@@ -628,7 +643,7 @@ class TrackedVMViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_503_SERVICE_UNAVAILABLE
             )
 
-        return Response({"updated": updated, "skipped": skipped}, status=status.HTTP_200_OK)
+        return Response({"created": created, "updated": updated, "skipped": skipped}, status=status.HTTP_200_OK)
 
 class PrintJobViewSet(viewsets.ModelViewSet):
     queryset = PrintJob.objects.all()
