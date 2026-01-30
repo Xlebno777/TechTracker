@@ -15,7 +15,6 @@
 #define RetentionDays "365"
 #define PingTarget ""
 #define SmartctlPath ""
-#define PrinterSyncInterval "300"
 #define VmSyncInterval "60"
 #define MetricsQueueMax "5000"
 #define MetricsDebug "0"
@@ -110,13 +109,11 @@ begin
   SyncPage := CreateInputQueryPage(MonitoringPage.ID,
     'Синхронизация',
     'Интервалы синхронизации',
-    'Принтеры, Hyper-V и Debug.');
-  SyncPage.Add('PrinterSyncInterval (sec):', False);
-  SyncPage.Values[0] := ExpandConstant('{#PrinterSyncInterval}');
+    'Hyper-V и Debug.');
   SyncPage.Add('VmSyncInterval (sec):', False);
-  SyncPage.Values[1] := ExpandConstant('{#VmSyncInterval}');
+  SyncPage.Values[0] := ExpandConstant('{#VmSyncInterval}');
   SyncPage.Add('MetricsDebug (0/1):', False);
-  SyncPage.Values[2] := ExpandConstant('{#MetricsDebug}');
+  SyncPage.Values[1] := ExpandConstant('{#MetricsDebug}');
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
@@ -137,9 +134,8 @@ begin
       SetIniString('DEFAULT', 'RetentionDays', MonitoringPage.Values[0], IniPath);
       SetIniString('DEFAULT', 'PingTarget', MonitoringPage.Values[1], IniPath);
       SetIniString('DEFAULT', 'SmartctlPath', MonitoringPage.Values[2], IniPath);
-      SetIniString('DEFAULT', 'PrinterSyncInterval', SyncPage.Values[0], IniPath);
-      SetIniString('DEFAULT', 'VmSyncInterval', SyncPage.Values[1], IniPath);
-      SetIniString('DEFAULT', 'MetricsDebug', SyncPage.Values[2], IniPath);
+      SetIniString('DEFAULT', 'VmSyncInterval', SyncPage.Values[0], IniPath);
+      SetIniString('DEFAULT', 'MetricsDebug', SyncPage.Values[1], IniPath);
     end;
   end;
 end;

@@ -14,6 +14,8 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated, DjangoModelPermissions
 from django.contrib.auth.models import User
 from django.db import models
+from django.db import IntegrityError
+from django.db.utils import ProgrammingError
 from django.db.models import Q
 from django_filters.rest_framework import DjangoFilterBackend
 
@@ -71,6 +73,82 @@ def _get_printer_device_type():
         return device_type
     device_type, _ = DeviceType.objects.get_or_create(name='Принтер')
     return device_type
+
+
+def _get_pc_device_type():
+    device_type = DeviceType.objects.filter(name__iexact='ПК').first()
+    if device_type:
+        return device_type
+    device_type, _ = DeviceType.objects.get_or_create(name='ПК')
+    return device_type
+
+
+def _coerce_status(value):
+    if not value:
+        return 'active'
+    raw = str(value).strip().lower()
+    if raw in ('active', 'in_repair', 'retired', 'in_stock', 'reserved'):
+        return raw
+    return 'active'
+
+
+def _create_device_from_info(info):
+    if not info:
+        return None
+
+    name = (info.get('name') or '').strip()
+    serial = (info.get('serial_number') or '').strip()
+    if not serial:
+        return None
+
+    if Device.objects.filter(serial_number=serial).exists():
+        return Device.objects.filter(serial_number=serial).first()
+
+    asset_number = (info.get('asset_number') or '').strip() or None
+    if asset_number == '-' and Device.objects.filter(asset_number=asset_number).exists():
+        asset_number = None
+
+    device_type = _get_pc_device_type()
+    status = _coerce_status(info.get('status'))
+    ip_address = _normalize_ip(info.get('ip_address') or '')
+    mac_address = (info.get('mac_address') or '').strip() or None
+
+    owner_username = (info.get('owner_username') or '').strip()
+    owner = None
+    if owner_username:
+        owner = User.objects.filter(username=owner_username).first()
+    if owner is None:
+        owner = User.objects.filter(is_superuser=True).first()
+
+    try:
+        device = Device.objects.create(
+            name=name or serial,
+            serial_number=serial,
+            asset_number=asset_number,
+            device_type=device_type,
+            status=status,
+            ip_address=ip_address,
+            mac_address=mac_address,
+            owner=owner,
+        )
+    except IntegrityError:
+        device = Device.objects.filter(serial_number=serial).first()
+
+    if device:
+        cpu = (info.get('cpu') or '').strip()
+        ram_gb = info.get('ram_gb')
+        if cpu or ram_gb:
+            specs, _ = ComputerSpecs.objects.get_or_create(device=device)
+            if cpu:
+                specs.cpu = cpu
+            if ram_gb:
+                try:
+                    specs.ram_gb = int(ram_gb)
+                except Exception:
+                    pass
+            specs.save()
+
+    return device
 
 # --- ViewSet для справочников ---
 class DeviceTypeViewSet(viewsets.ModelViewSet):
@@ -285,8 +363,13 @@ class DeviceViewSet(viewsets.ModelViewSet):
                 continue
 
             name = (item.get('name') or item.get('printer_name') or item.get('display_name') or '').strip()
+            lower_name = name.lower()
             ip_raw = (item.get('ip_address') or item.get('ip') or '').strip()
             ip = _normalize_ip(ip_raw)
+
+            if name and any(key in lower_name for key in EXCLUDED_PRINTER_KEYWORDS):
+                skipped += 1
+                continue
 
             if not name and not ip:
                 skipped += 1
@@ -448,8 +531,11 @@ class RawMetricViewSet(viewsets.ReadOnlyModelViewSet):
         serial = serializer.validated_data['serial_number']
         retention_days = serializer.validated_data.get('retention_days')
         metrics = serializer.validated_data['metrics']
+        device_info = serializer.validated_data.get('device_info')
 
         device = Device.objects.filter(serial_number=serial).first()
+        if not device and isinstance(device_info, dict):
+            device = _create_device_from_info(device_info)
         if not device:
             return Response(
                 {"detail": f"Device with serial number '{serial}' not found."},
@@ -517,24 +603,30 @@ class TrackedVMViewSet(viewsets.ModelViewSet):
         updated = 0
         skipped = 0
 
-        for vm_data in vms:
-            vm = TrackedVM.objects.filter(name=vm_data['name']).first()
-            if not vm:
-                skipped += 1
-                continue
-            if not vm.is_enabled:
-                skipped += 1
-                continue
+        try:
+            for vm_data in vms:
+                vm = TrackedVM.objects.filter(name=vm_data['name']).first()
+                if not vm:
+                    skipped += 1
+                    continue
+                if not vm.is_enabled:
+                    skipped += 1
+                    continue
 
-            vm.status = _normalize_vm_status(vm_data.get('status'))
-            vm.cpu_usage = vm_data.get('cpu_usage')
-            vm.memory_usage = vm_data.get('memory_usage')
-            vm.uptime_seconds = vm_data.get('uptime_seconds')
-            vm.last_seen = now
-            if host_device:
-                vm.host_device = host_device
-            vm.save()
-            updated += 1
+                vm.status = _normalize_vm_status(vm_data.get('status'))
+                vm.cpu_usage = vm_data.get('cpu_usage')
+                vm.memory_usage = vm_data.get('memory_usage')
+                vm.uptime_seconds = vm_data.get('uptime_seconds')
+                vm.last_seen = now
+                if host_device:
+                    vm.host_device = host_device
+                vm.save()
+                updated += 1
+        except ProgrammingError:
+            return Response(
+                {"detail": "TrackedVM table is missing. Run migrations (python manage.py migrate)."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE
+            )
 
         return Response({"updated": updated, "skipped": skipped}, status=status.HTTP_200_OK)
 
@@ -552,3 +644,8 @@ class PrintJobViewSet(viewsets.ModelViewSet):
     # Поля для сортировки
     ordering_fields = ['id', 'device__serial_number', 'device', 'user_name', 'document_name', 'pages', 'printer_name', 'timestamp']
     ordering = ['-id']
+EXCLUDED_PRINTER_KEYWORDS = [
+    'adobe pdf',
+    'microsoft print to pdf',
+    'microsoft xps document writer',
+]

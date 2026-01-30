@@ -347,6 +347,7 @@ class RawMetricIngestSerializer(serializers.Serializer):
     serial_number = serializers.CharField()
     retention_days = serializers.IntegerField(required=False, min_value=1)
     metrics = RawMetricItemSerializer(many=True)
+    device_info = serializers.JSONField(required=False)
 
 
 class TrackedVMSerializer(serializers.ModelSerializer):

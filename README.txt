@@ -45,11 +45,19 @@ npm run serve
 Папка агента теперь разделена:
 - agents\\ServerAgent (серверный агент метрик/Hyper-V)
 - agents\\PrintAgent (клиент печати)
+- agents\\ServerPrinterAgent (синхронизация принтеров)
 
 Проверь config.ini или config.ini (где он лежит в твоей сборке), чтобы ApiUrl был вида http://<server>:8000/api/ и Token валиден.
 Запуск:
 cd C:\Users\mkv\Documents\Projects\TechTracker\agents\ServerAgent
 python agent_server.py
+
+Синхронизация принтеров (отдельный агент):
+cd C:\Users\mkv\Documents\Projects\TechTracker\agents\ServerPrinterAgent
+python printer_agent.py
+Installer:
+- Папка: agents\\ServerPrinterAgent\\installer
+- Файл: server_printer_agent_installer.iss
 Если хочешь, могу сделать скрипты run-backend.ps1 и run-frontend.ps1, чтобы запуск был одной командой.
 
 Новые параметры агента:

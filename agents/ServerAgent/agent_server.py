@@ -2,16 +2,15 @@ import configparser
 import json
 import logging
 import os
-import re
 import subprocess
 import sys
+import socket
 import time
 from datetime import datetime, timezone
 
 import psutil
 import requests
 import win32com.client
-import win32print
 
 # Настройка путей
 if getattr(sys, 'frozen', False):
@@ -28,9 +27,6 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s',
     encoding='utf-8'
 )
-
-IP_RE = re.compile(r'(?:\d{1,3}\.){3}\d{1,3}')
-
 
 def _now_iso():
     return datetime.now(timezone.utc).isoformat()
@@ -66,13 +62,30 @@ def _detect_smartctl(config_value):
         return None
 
 
+def _check_ping_target(target):
+    if not target:
+        logging.info("PingTarget not set; skipping ping check.")
+        return
+    try:
+        output = subprocess.check_output(
+            ["ping", "-n", "1", target],
+            stderr=subprocess.STDOUT
+        ).decode(errors='ignore')
+        if "TTL=" in output or "TTL=" in output.upper():
+            logging.info(f"PingTarget reachable: {target}")
+        else:
+            logging.warning(f"PingTarget unreachable: {target}")
+    except Exception as e:
+        logging.warning(f"PingTarget check failed ({target}): {e}")
+
+
 def _api_url(base, path):
     if not base.endswith('/'):
         base += '/'
     return f"{base}{path}"
 
 
-def send_metrics_batch(api_base, token, serial, metrics, retention_days=None):
+def send_metrics_batch(api_base, token, serial, metrics, retention_days=None, device_info=None):
     if not metrics:
         return True
     url = _api_url(api_base, 'metrics-raw/ingest/')
@@ -84,6 +97,8 @@ def send_metrics_batch(api_base, token, serial, metrics, retention_days=None):
         'serial_number': serial,
         'metrics': metrics,
     }
+    if device_info:
+        payload['device_info'] = device_info
     if retention_days:
         payload['retention_days'] = retention_days
     try:
@@ -121,76 +136,73 @@ def send_vm_status(api_base, token, serial, vms):
         return False
 
 
-def _extract_ip(value):
-    if not value:
-        return None
-    match = IP_RE.search(value)
-    return match.group(0) if match else None
-
-
-def _get_tcpip_ports():
+def _get_cpu_name():
     try:
         locator = win32com.client.Dispatch("WbemScripting.SWbemLocator")
         service = locator.ConnectServer(".", "root\\cimv2")
-        ports = service.ExecQuery("SELECT Name, HostAddress FROM Win32_TCPIPPrinterPort")
-        return {p.Name: p.HostAddress for p in ports if p.Name}
-    except Exception as e:
-        logging.warning(f"Failed to read TCP/IP ports: {e}")
-        return {}
+        cpus = service.ExecQuery("SELECT Name FROM Win32_Processor")
+        for cpu in cpus:
+            name = getattr(cpu, 'Name', None)
+            if name:
+                return name.strip()
+    except Exception:
+        return None
+    return None
 
 
-def collect_printers():
-    printers = []
-    ports = _get_tcpip_ports()
-    flags = win32print.PRINTER_ENUM_LOCAL | win32print.PRINTER_ENUM_CONNECTIONS
-
+def _get_primary_ip_mac():
+    ip_address = None
+    mac_address = None
     try:
-        items = win32print.EnumPrinters(flags)
-    except Exception as e:
-        logging.error(f"EnumPrinters error: {e}")
-        return printers
-
-    for item in items:
-        try:
-            name = item[2]
-            handle = win32print.OpenPrinter(name)
-            info = win32print.GetPrinter(handle, 2)
-            win32print.ClosePrinter(handle)
-
-            port_name = info.get('pPortName', '') if isinstance(info, dict) else ''
-            ip = ports.get(port_name) or _extract_ip(port_name) or _extract_ip(name)
-
-            printers.append({
-                'name': name,
-                'ip_address': ip,
-                'port_name': port_name
-            })
-        except Exception as e:
-            logging.warning(f"Failed to read printer info: {e}")
-            continue
-
-    return printers
+        import socket
+        for iface, addrs in psutil.net_if_addrs().items():
+            stats = psutil.net_if_stats().get(iface)
+            if stats and not stats.isup:
+                continue
+            ipv4 = None
+            mac = None
+            for addr in addrs:
+                if getattr(addr, 'family', None) == socket.AF_INET:
+                    if addr.address and not addr.address.startswith('127.'):
+                        ipv4 = addr.address
+                if getattr(psutil, 'AF_LINK', None) and addr.family == psutil.AF_LINK:
+                    mac = addr.address
+            if ipv4:
+                ip_address = ipv4
+                mac_address = mac
+                break
+    except Exception:
+        pass
+    return ip_address, mac_address
 
 
-def send_printer_sync(api_base, token, printers):
-    if not printers:
-        return
+_DEVICE_INFO_CACHE = None
 
-    url = _api_url(api_base, 'devices/sync_printers/')
-    headers = {
-        'Authorization': f'Token {token}',
-        'Content-Type': 'application/json'
+
+def get_device_info():
+    global _DEVICE_INFO_CACHE
+    if _DEVICE_INFO_CACHE:
+        return _DEVICE_INFO_CACHE
+
+    name = os.environ.get('COMPUTERNAME') or os.environ.get('HOSTNAME') or socket.gethostname()
+    serial = get_serial_number()
+    ip_address, mac_address = _get_primary_ip_mac()
+    cpu_name = _get_cpu_name()
+    ram_gb = int(round(psutil.virtual_memory().total / (1024 ** 3)))
+
+    _DEVICE_INFO_CACHE = {
+        'name': name or serial,
+        'serial_number': serial,
+        'asset_number': '-',
+        'device_type': 'ПК',
+        'status': 'active',
+        'owner_username': 'techtracker_admin',
+        'ip_address': ip_address,
+        'mac_address': mac_address,
+        'cpu': cpu_name,
+        'ram_gb': ram_gb,
     }
-    payload = {'printers': printers}
-
-    try:
-        response = requests.post(url, json=payload, headers=headers, timeout=10)
-        if response.status_code != 200:
-            logging.error(f"Failed printer sync: {response.status_code} {response.text}")
-        else:
-            logging.info(f"Printer sync ok: {response.text}")
-    except Exception as e:
-        logging.error(f"Connection error (printer sync): {e}")
+    return _DEVICE_INFO_CACHE
 
 
 def _metric(code, value, unit, labels=None, timestamp=None):
@@ -545,7 +557,6 @@ def main():
         CONFIG_SERIAL = config['DEFAULT']['SerialNumber']
         LOOP_INTERVAL = int(config['DEFAULT'].get('LoopInterval', '5'))
         METRICS_BATCH_INTERVAL = int(config['DEFAULT'].get('MetricsBatchInterval', '60'))
-        PRINTER_SYNC_INTERVAL = int(config['DEFAULT'].get('PrinterSyncInterval', '0'))
         VM_SYNC_INTERVAL = int(config['DEFAULT'].get('VmSyncInterval', '60'))
         RETENTION_DAYS = int(config['DEFAULT'].get('RetentionDays', '365'))
         PING_TARGET = config['DEFAULT'].get('PingTarget', '').strip() or None
@@ -565,6 +576,13 @@ def main():
     if METRICS_DEBUG:
         logging.getLogger().setLevel(logging.DEBUG)
         logging.debug("Metrics debug logging enabled.")
+
+    if SMARTCTL_PATH:
+        logging.info(f"Smartctl detected: {SMARTCTL_PATH}")
+    else:
+        logging.info("Smartctl not found; SMART metrics disabled.")
+
+    _check_ping_target(PING_TARGET)
 
     collector = MetricCollector(ping_target=PING_TARGET, smartctl_path=SMARTCTL_PATH)
 
@@ -591,26 +609,10 @@ def main():
     last_metrics_flush = 0
     last_retention_sync = 0
     last_vm_sync = 0
-    last_printer_sync = 0
-
-    # Первичная синхронизация принтеров
-    if PRINTER_SYNC_INTERVAL > 0:
-        try:
-            printers = collect_printers()
-            send_printer_sync(API_BASE, TOKEN, printers)
-            last_printer_sync = time.time()
-        except Exception as e:
-            logging.error(f"Initial printer sync failed: {e}")
 
     while True:
         now = time.time()
         try:
-            # Периодическая синхронизация принтеров
-            if PRINTER_SYNC_INTERVAL > 0 and (now - last_printer_sync) >= PRINTER_SYNC_INTERVAL:
-                printers = collect_printers()
-                send_printer_sync(API_BASE, TOKEN, printers)
-                last_printer_sync = now
-
             # Сбор метрик по расписанию
             for name, interval, func in tasks:
                 if (now - last_run[name]) >= interval:
@@ -630,7 +632,8 @@ def main():
                 retention = None
                 if (now - last_retention_sync) >= 86400:
                     retention = RETENTION_DAYS
-                if send_metrics_batch(API_BASE, TOKEN, SERIAL_NUMBER, metrics_queue, retention):
+                device_info = get_device_info()
+                if send_metrics_batch(API_BASE, TOKEN, SERIAL_NUMBER, metrics_queue, retention, device_info=device_info):
                     metrics_queue = []
                     last_metrics_flush = now
                     if retention is not None:

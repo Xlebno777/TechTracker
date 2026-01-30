@@ -4,7 +4,6 @@ Token =
 SerialNumber = AUTO
 LoopInterval = 5
 MetricsBatchInterval = 60
-PrinterSyncInterval = 300
 VmSyncInterval = 60
 RetentionDays = 365
 PingTarget =
