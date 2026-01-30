@@ -78,16 +78,29 @@ def _detect_smartctl(config_value):
 
 def _check_ping_target(target):
     if not target:
-        logging.info("PingTarget not set; skipping ping check.")
+        logging.info("PingTarget не задан - метрика выключена.")
         return
     try:
-        output = _run_cmd(["ping", "-n", "1", target]).decode(errors='ignore')
-        if "TTL=" in output or "TTL=" in output.upper():
-            logging.info(f"PingTarget reachable: {target}")
+        latency = _ping_latency_ms(target)
+        if latency is not None:
+            logging.debug(f"PingTarget ok: {target} latency={latency}ms")
         else:
             logging.warning(f"PingTarget unreachable: {target}")
     except Exception as e:
         logging.warning(f"PingTarget check failed ({target}): {e}")
+
+
+def _ping_latency_ms(target):
+    try:
+        output = _run_cmd(["ping", "-n", "1", target]).decode(errors='ignore')
+        match = re.search(r'Average = (\d+)ms', output)
+        if not match:
+            match = re.search(r'Среднее = (\d+)мс', output)
+        if match:
+            return int(match.group(1))
+    except Exception:
+        return None
+    return None
 
 
 def _api_url(base, path):
@@ -238,6 +251,8 @@ class MetricCollector:
         self.last_disk_io_ts = None
         self.last_net_io = None
         self.last_net_io_ts = None
+        self.last_ping_latency = None
+        self.last_ping_ts = None
         self.ping_target = ping_target
         self.smartctl_path = smartctl_path
         self._last_smart = None
@@ -346,12 +361,14 @@ class MetricCollector:
         if not self.ping_target:
             return []
         try:
-            output = _run_cmd(["ping", "-n", "1", self.ping_target]).decode(errors='ignore')
-            match = re.search(r'Average = (\d+)ms', output)
-            if not match:
-                match = re.search(r'Среднее = (\d+)мс', output)
-            if match:
-                return [_metric('ping_latency_gateway', int(match.group(1)), 'ms')]
+            now = time.time()
+            if self.last_ping_ts and (now - self.last_ping_ts) < 30 and self.last_ping_latency is not None:
+                return [_metric('ping_latency_gateway', self.last_ping_latency, 'ms')]
+            latency = _ping_latency_ms(self.ping_target)
+            if latency is not None:
+                self.last_ping_latency = latency
+                self.last_ping_ts = now
+                return [_metric('ping_latency_gateway', latency, 'ms')]
         except Exception as e:
             logging.warning(f"Ping failed: {e}")
         return []
@@ -375,10 +392,16 @@ class MetricCollector:
                     continue
                 temps.append((value / 10.0) - 273.15)
         except Exception:
-            return []
+            temps = []
+        if temps:
+            return [_metric('system_temperature', max(temps), 'C')]
+
+        temps = _read_hw_monitor_temps("root\\OpenHardwareMonitor")
         if not temps:
-            return []
-        return [_metric('system_temperature', max(temps), 'C')]
+            temps = _read_hw_monitor_temps("root\\LibreHardwareMonitor")
+        if temps:
+            return [_metric('system_temperature', max(temps), 'C')]
+        return []
 
     def _collect_smart_all(self):
         if not self.smartctl_path:
@@ -389,8 +412,15 @@ class MetricCollector:
 
         devices = _smartctl_scan(self.smartctl_path)
         metrics = []
-        for device in devices:
-            attrs = _smartctl_attributes(self.smartctl_path, device)
+        for item in devices:
+            device = item.get('device')
+            dtype = item.get('dtype')
+            attrs = _smartctl_attributes(self.smartctl_path, device, dtype)
+            if not attrs and not dtype:
+                for fallback in ('sat', 'scsi', 'nvme', 'ata'):
+                    attrs = _smartctl_attributes(self.smartctl_path, device, fallback)
+                    if attrs:
+                        break
             if not attrs:
                 continue
             if attrs.get('reallocated') is not None:
@@ -422,7 +452,10 @@ class MetricCollector:
 
 def _smartctl_scan(smartctl_path):
     try:
-        output = _run_cmd([smartctl_path, "--scan"])
+        try:
+            output = _run_cmd([smartctl_path, "--scan-open"])
+        except Exception:
+            output = _run_cmd([smartctl_path, "--scan"])
         lines = output.decode(errors='ignore').splitlines()
     except Exception as e:
         logging.warning(f"smartctl scan failed: {e}")
@@ -432,14 +465,25 @@ def _smartctl_scan(smartctl_path):
         if not line or line.startswith('#'):
             continue
         parts = line.split()
-        if parts:
-            devices.append(parts[0])
+        if not parts:
+            continue
+        device = parts[0]
+        dtype = None
+        if "-d" in parts:
+            idx = parts.index("-d")
+            if idx + 1 < len(parts):
+                dtype = parts[idx + 1]
+        devices.append({'device': device, 'dtype': dtype})
     return devices
 
 
-def _smartctl_attributes(smartctl_path, device):
+def _smartctl_attributes(smartctl_path, device, dtype=None):
     try:
-        output = _run_cmd([smartctl_path, "-A", "-j", device])
+        cmd = [smartctl_path, "-A", "-j"]
+        if dtype:
+            cmd += ["-d", dtype]
+        cmd.append(device)
+        output = _run_cmd(cmd)
         data = json.loads(output.decode(errors='ignore'))
         table = data.get('ata_smart_attributes', {}).get('table', [])
         reallocated = None
@@ -451,14 +495,27 @@ def _smartctl_attributes(smartctl_path, device):
                 reallocated = raw
             if name in ('temperature_celsius', 'temperature_internal', 'airflow_temperature_cel'):
                 temperature = raw
+        nvme = data.get('nvme_smart_health_information_log', {})
+        if reallocated is None and isinstance(nvme, dict):
+            media_errors = nvme.get('media_errors')
+            if media_errors is not None:
+                reallocated = media_errors
+        if temperature is None and isinstance(nvme, dict):
+            temp = nvme.get('temperature')
+            if temp is not None:
+                temperature = temp
         return {'reallocated': reallocated, 'temperature': temperature}
     except Exception:
-        return _smartctl_attributes_text(smartctl_path, device)
+        return _smartctl_attributes_text(smartctl_path, device, dtype)
 
 
-def _smartctl_attributes_text(smartctl_path, device):
+def _smartctl_attributes_text(smartctl_path, device, dtype=None):
     try:
-        output = _run_cmd([smartctl_path, "-A", device])
+        cmd = [smartctl_path, "-A"]
+        if dtype:
+            cmd += ["-d", dtype]
+        cmd.append(device)
+        output = _run_cmd(cmd)
         lines = output.decode(errors='ignore').splitlines()
     except Exception as e:
         logging.warning(f"smartctl read failed: {e}")
@@ -485,6 +542,25 @@ def _smartctl_attributes_text(smartctl_path, device):
                 except ValueError:
                     pass
     return {'reallocated': reallocated, 'temperature': temperature}
+
+
+def _read_hw_monitor_temps(namespace):
+    temps = []
+    try:
+        locator = win32com.client.Dispatch("WbemScripting.SWbemLocator")
+        service = locator.ConnectServer(".", namespace)
+        items = service.ExecQuery("SELECT Name, Value, SensorType FROM Sensor")
+        for item in items:
+            sensor_type = str(getattr(item, 'SensorType', '')).lower()
+            if sensor_type != 'temperature':
+                continue
+            value = getattr(item, 'Value', None)
+            if value is None:
+                continue
+            temps.append(float(value))
+    except Exception:
+        return []
+    return temps
 
 
 def _parse_timespan(value):
@@ -614,10 +690,15 @@ def main():
     last_metrics_flush = 0
     last_retention_sync = 0
     last_vm_sync = 0
+    last_ping_check = 0
 
     while True:
         now = time.time()
         try:
+            if (now - last_ping_check) >= 60:
+                _check_ping_target(PING_TARGET)
+                last_ping_check = now
+
             # Сбор метрик по расписанию
             for name, interval, func in tasks:
                 if (now - last_run[name]) >= interval:
