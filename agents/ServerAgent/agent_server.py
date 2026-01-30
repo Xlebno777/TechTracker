@@ -92,11 +92,24 @@ def _check_ping_target(target):
 def _ping_latency_ms(target):
     try:
         output = _run_cmd(["ping", "-n", "1", "-w", "1000", target]).decode(errors='ignore')
+        if logging.getLogger().isEnabledFor(logging.DEBUG):
+            logging.debug(f"Ping output for {target}: {output.strip()}")
         match = re.search(r'Average = (\d+)ms', output)
         if not match:
+            match = re.search(r'Average = (<1)ms', output)
+        if not match:
             match = re.search(r'Среднее = (\d+)мс', output)
+        if not match:
+            match = re.search(r'Среднее = (<1)мс', output)
+        if not match:
+            match = re.search(r'time[=<] ?(\d+|<1)ms', output, re.IGNORECASE)
+        if not match:
+            match = re.search(r'время[=<] ?(\d+|<1)мс', output, re.IGNORECASE)
         if match:
-            return int(match.group(1))
+            value = match.group(1)
+            if value == '<1':
+                return 0
+            return int(value)
     except Exception:
         return None
     return None
