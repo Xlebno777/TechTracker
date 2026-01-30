@@ -86,6 +86,28 @@ def _detect_smartctl(config_value):
         return None
 
 
+def _log_smartctl_info(smartctl_path):
+    if not smartctl_path:
+        logging.info("Smartctl not found; SMART metrics disabled.")
+        return
+
+    logging.info(f"Smartctl detected: {smartctl_path}")
+    try:
+        version_text = _decode_cmd_output(_run_cmd([smartctl_path, "-V"]))
+        first_line = version_text.splitlines()[0] if version_text else ""
+        logging.info(f"Smartctl version: {first_line}")
+        if "/dev/" in version_text:
+            logging.warning("Smartctl appears to be a Linux/WSL build.")
+    except Exception as e:
+        logging.warning(f"Smartctl version read failed: {e}")
+
+    devices = _smartctl_scan(smartctl_path)
+    if devices:
+        logging.info(f"SMART devices detected: {devices}")
+    else:
+        logging.warning("SMART scan returned no devices. Controller may hide SMART.")
+
+
 def _check_ping_target(target):
     if not target:
         logging.info("PingTarget не задан - метрика выключена.")
@@ -93,7 +115,7 @@ def _check_ping_target(target):
     try:
         latency = _ping_latency_ms(target)
         if latency is not None:
-            logging.debug(f"PingTarget ok: {target} latency={latency}ms")
+            logging.info(f"PingTarget ok: {target} latency={latency}ms")
         else:
             logging.warning(f"PingTarget unreachable: {target}")
     except Exception as e:
@@ -103,8 +125,6 @@ def _check_ping_target(target):
 def _ping_latency_ms(target):
     try:
         output = _decode_cmd_output(_run_cmd(["ping", "-n", "1", "-w", "1000", target]))
-        if logging.getLogger().isEnabledFor(logging.DEBUG):
-            logging.debug(f"Ping output for {target}: {output.strip()}")
         match = re.search(r'Average = (\d+)ms', output)
         if not match:
             match = re.search(r'Average = (<1)ms', output)
@@ -436,6 +456,8 @@ class MetricCollector:
             return self._last_smart
 
         devices = _smartctl_scan(self.smartctl_path)
+        if logging.getLogger().isEnabledFor(logging.DEBUG):
+            logging.debug(f"SMART scan devices: {devices}")
         metrics = []
         for item in devices:
             device = item.get('device')
@@ -445,8 +467,10 @@ class MetricCollector:
                 for fallback in ('sat', 'scsi', 'nvme', 'ata'):
                     attrs = _smartctl_attributes(self.smartctl_path, device, fallback)
                     if attrs:
+                        logging.debug(f"SMART fallback driver {fallback} works for {device}")
                         break
             if not attrs:
+                logging.warning(f"SMART blocked by controller or unsupported device: {device}")
                 continue
             if attrs.get('reallocated') is not None:
                 metrics.append(_metric(
@@ -481,7 +505,7 @@ def _smartctl_scan(smartctl_path):
             output = _run_cmd([smartctl_path, "--scan-open"])
         except Exception:
             output = _run_cmd([smartctl_path, "--scan"])
-        lines = output.decode(errors='ignore').splitlines()
+        lines = _decode_cmd_output(output).splitlines()
     except Exception as e:
         logging.warning(f"smartctl scan failed: {e}")
         return []
@@ -509,7 +533,7 @@ def _smartctl_attributes(smartctl_path, device, dtype=None):
             cmd += ["-d", dtype]
         cmd.append(device)
         output = _run_cmd(cmd)
-        data = json.loads(output.decode(errors='ignore'))
+        data = json.loads(_decode_cmd_output(output))
         table = data.get('ata_smart_attributes', {}).get('table', [])
         reallocated = None
         temperature = None
@@ -541,7 +565,7 @@ def _smartctl_attributes_text(smartctl_path, device, dtype=None):
             cmd += ["-d", dtype]
         cmd.append(device)
         output = _run_cmd(cmd)
-        lines = output.decode(errors='ignore').splitlines()
+        lines = _decode_cmd_output(output).splitlines()
     except Exception as e:
         logging.warning(f"smartctl read failed: {e}")
         return None
@@ -683,10 +707,7 @@ def main():
         logging.getLogger().setLevel(logging.DEBUG)
         logging.debug("Metrics debug logging enabled.")
 
-    if SMARTCTL_PATH:
-        logging.info(f"Smartctl detected: {SMARTCTL_PATH}")
-    else:
-        logging.info("Smartctl not found; SMART metrics disabled.")
+    _log_smartctl_info(SMARTCTL_PATH)
 
     _check_ping_target(PING_TARGET)
 
