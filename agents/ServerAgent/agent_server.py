@@ -104,6 +104,12 @@ def _log_smartctl_info(smartctl_path):
     devices = _smartctl_scan(smartctl_path)
     if devices:
         logging.info(f"SMART devices detected: {devices}")
+        if os.name == 'nt' and any(d.get('device', '').startswith('/dev/') for d in devices):
+            logging.info("SMART scan returned /dev/* paths on Windows. Это нормально для smartmontools.")
+        for item in devices:
+            device = item.get('device')
+            dtype = item.get('dtype') or 'auto'
+            logging.info(f"SMART device: {device} driver={dtype}")
     else:
         logging.warning("SMART scan returned no devices. Controller may hide SMART.")
 
@@ -472,6 +478,11 @@ class MetricCollector:
             if not attrs:
                 logging.warning(f"SMART blocked by controller or unsupported device: {device}")
                 continue
+            if logging.getLogger().isEnabledFor(logging.DEBUG):
+                logging.debug(
+                    f"SMART attrs for {device} (driver={dtype or 'auto'}): "
+                    f"reallocated={attrs.get('reallocated')} temperature={attrs.get('temperature')}"
+                )
             if attrs.get('reallocated') is not None:
                 metrics.append(_metric(
                     'smart_reallocated_sectors',
