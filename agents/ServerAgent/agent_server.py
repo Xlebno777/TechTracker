@@ -2,6 +2,7 @@ import configparser
 import json
 import logging
 import os
+import re
 import subprocess
 import sys
 import socket
@@ -32,10 +33,23 @@ def _now_iso():
     return datetime.now(timezone.utc).isoformat()
 
 
+def _run_cmd(cmd):
+    kwargs = {
+        'stderr': subprocess.STDOUT
+    }
+    if os.name == 'nt':
+        kwargs['creationflags'] = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        startupinfo.wShowWindow = 0
+        kwargs['startupinfo'] = startupinfo
+    return subprocess.check_output(cmd, **kwargs)
+
+
 def get_serial_number():
     """Автоматически получает серийный номер из Windows."""
     try:
-        result = subprocess.check_output("wmic bios get serialnumber", shell=True).decode(errors='ignore')
+        result = _run_cmd(["wmic", "bios", "get", "serialnumber"]).decode(errors='ignore')
         serial = result.split('\n')[1].strip()
         return serial
     except Exception as e:
@@ -56,7 +70,7 @@ def _detect_smartctl(config_value):
     if config_value:
         return config_value
     try:
-        subprocess.check_output(["where", "smartctl"], stderr=subprocess.STDOUT)
+        _run_cmd(["where", "smartctl"])
         return "smartctl"
     except Exception:
         return None
@@ -67,10 +81,7 @@ def _check_ping_target(target):
         logging.info("PingTarget not set; skipping ping check.")
         return
     try:
-        output = subprocess.check_output(
-            ["ping", "-n", "1", target],
-            stderr=subprocess.STDOUT
-        ).decode(errors='ignore')
+        output = _run_cmd(["ping", "-n", "1", target]).decode(errors='ignore')
         if "TTL=" in output or "TTL=" in output.upper():
             logging.info(f"PingTarget reachable: {target}")
         else:
@@ -335,10 +346,7 @@ class MetricCollector:
         if not self.ping_target:
             return []
         try:
-            output = subprocess.check_output(
-                ["ping", "-n", "1", self.ping_target],
-                stderr=subprocess.STDOUT
-            ).decode(errors='ignore')
+            output = _run_cmd(["ping", "-n", "1", self.ping_target]).decode(errors='ignore')
             match = re.search(r'Average = (\d+)ms', output)
             if not match:
                 match = re.search(r'Среднее = (\d+)мс', output)
@@ -414,7 +422,7 @@ class MetricCollector:
 
 def _smartctl_scan(smartctl_path):
     try:
-        output = subprocess.check_output([smartctl_path, "--scan"], stderr=subprocess.STDOUT)
+        output = _run_cmd([smartctl_path, "--scan"])
         lines = output.decode(errors='ignore').splitlines()
     except Exception as e:
         logging.warning(f"smartctl scan failed: {e}")
@@ -431,7 +439,7 @@ def _smartctl_scan(smartctl_path):
 
 def _smartctl_attributes(smartctl_path, device):
     try:
-        output = subprocess.check_output([smartctl_path, "-A", "-j", device], stderr=subprocess.STDOUT)
+        output = _run_cmd([smartctl_path, "-A", "-j", device])
         data = json.loads(output.decode(errors='ignore'))
         table = data.get('ata_smart_attributes', {}).get('table', [])
         reallocated = None
@@ -450,7 +458,7 @@ def _smartctl_attributes(smartctl_path, device):
 
 def _smartctl_attributes_text(smartctl_path, device):
     try:
-        output = subprocess.check_output([smartctl_path, "-A", device], stderr=subprocess.STDOUT)
+        output = _run_cmd([smartctl_path, "-A", device])
         lines = output.decode(errors='ignore').splitlines()
     except Exception as e:
         logging.warning(f"smartctl read failed: {e}")
@@ -506,10 +514,7 @@ def collect_hyperv_vm_status():
         "ConvertTo-Json -Compress"
     )
     try:
-        output = subprocess.check_output(
-            ["powershell", "-NoProfile", "-Command", command],
-            stderr=subprocess.STDOUT
-        ).decode(errors='ignore')
+        output = _run_cmd(["powershell", "-NoProfile", "-Command", command]).decode(errors='ignore')
         if not output.strip():
             return []
         data = json.loads(output)
