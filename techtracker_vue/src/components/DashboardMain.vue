@@ -1,342 +1,515 @@
 <template>
   <div class="dashboard p-4 page-shell">
-    <div class="flex justify-content-between align-items-center mb-4">
+    <div class="flex flex-wrap justify-content-between align-items-start gap-3 mb-4">
       <div>
-        <h2 class="text-2xl font-bold m-0 text-900">Дашборд мониторинга</h2>
-        <p class="text-500 m-0">Обзор состояния инфраструктуры в реальном времени</p>
+        <h2 class="text-2xl font-bold m-0 text-900">Дашборд вычисляемых метрик</h2>
+        <p class="text-500 m-0">Агрегации уровня 2, пересчёт по расписанию (раз в час)</p>
       </div>
-      <div class="flex gap-2">
+      <div class="flex flex-column align-items-end gap-2">
+        <span class="text-500 text-sm">Обновлено: {{ lastMetricLabel }}</span>
         <Button icon="pi pi-refresh" label="Обновить" rounded text @click="refreshData" :loading="loading" />
       </div>
     </div>
 
-    <!-- Карточки статистики (Stat Cards) -->
+    <div v-if="!hasData && !loading" class="card p-4 border-round empty-state">
+      <div class="text-900 text-lg font-semibold mb-2">Нет вычисленных метрик</div>
+      <div class="text-500">Запусти команду на сервере: <b>python manage.py compute_derived_metrics</b></div>
+    </div>
+
+    <!-- Сводные карточки -->
     <div class="grid mb-4">
-      <div class="col-12 md:col-6 lg:col-3">
-        <div class="stat-card surface-card shadow-1 p-3 border-round">
-          <div class="flex justify-content-between mb-3">
+      <div class="col-12 md:col-6 lg:col-3" v-for="card in summaryCards" :key="card.key">
+        <div class="metric-card surface-card border-round shadow-1 p-3">
+          <div class="flex justify-content-between align-items-start">
             <div>
-              <span class="block text-500 font-medium mb-3">Всего устройств</span>
-              <div class="text-900 font-medium text-xl">{{ stats.totalDevices }}</div>
+              <span class="text-500 text-sm font-medium">{{ card.title }}</span>
+              <div class="metric-value text-900 mt-2">{{ card.value }}</div>
             </div>
-            <div class="flex align-items-center justify-content-center bg-blue-100 border-round" style="width:2.5rem;height:2.5rem">
-              <i class="pi pi-desktop text-blue-500 text-xl"></i>
-            </div>
+            <span class="metric-pill" :class="card.toneClass">{{ card.badge }}</span>
           </div>
-          <span class="text-green-500 font-medium">{{ stats.activeDevices }} </span>
-          <span class="text-500"> активны в сети</span>
-        </div>
-      </div>
-
-      <div class="col-12 md:col-6 lg:col-3">
-        <div class="stat-card surface-card shadow-1 p-3 border-round">
-          <div class="flex justify-content-between mb-3">
-            <div>
-              <span class="block text-500 font-medium mb-3">Заявки</span>
-              <div class="text-900 font-medium text-xl">{{ stats.openRequests }}</div>
-            </div>
-            <div class="flex align-items-center justify-content-center bg-orange-100 border-round" style="width:2.5rem;height:2.5rem">
-              <i class="pi pi-inbox text-orange-500 text-xl"></i>
-            </div>
-          </div>
-          <span class="text-500">Открытых обращений</span>
-        </div>
-      </div>
-
-      <div class="col-12 md:col-6 lg:col-3">
-        <div class="stat-card surface-card shadow-1 p-3 border-round">
-          <div class="flex justify-content-between mb-3">
-            <div>
-              <span class="block text-500 font-medium mb-3">Критические ошибки</span>
-              <div class="text-900 font-medium text-xl">{{ stats.criticalErrors }}</div>
-            </div>
-            <div class="flex align-items-center justify-content-center bg-red-100 border-round" style="width:2.5rem;height:2.5rem">
-              <i class="pi pi-exclamation-triangle text-red-500 text-xl"></i>
-            </div>
-          </div>
-          <span class="text-500">За последние 24 часа</span>
-        </div>
-      </div>
-
-      <div class="col-12 md:col-6 lg:col-3">
-        <div class="stat-card surface-card shadow-1 p-3 border-round">
-          <div class="flex justify-content-between mb-3">
-            <div>
-              <span class="block text-500 font-medium mb-3">Загрузка сети</span>
-              <div class="text-900 font-medium text-xl">{{ stats.avgNetworkLoad }}%</div>
-            </div>
-            <div class="flex align-items-center justify-content-center bg-purple-100 border-round" style="width:2.5rem;height:2.5rem">
-              <i class="pi pi-chart-line text-purple-500 text-xl"></i>
-            </div>
-          </div>
-          <span class="text-500">Средняя нагрузка</span>
+          <div class="text-500 text-sm mt-3">{{ card.subtitle }}</div>
         </div>
       </div>
     </div>
 
-    <!-- Графики -->
     <div class="grid">
-      <!-- Линейный график: Загрузка CPU/RAM -->
-      <div class="col-12 lg:col-8">
-        <div class="card shadow-1 border-round p-4 bg-white h-full">
-          <div class="flex justify-content-between align-items-center mb-4">
-             <h3 class="text-xl font-semibold m-0">Нагрузка серверов (Live)</h3>
-             <!-- Можно добавить выпадающий список для выбора конкретного сервера -->
+      <!-- Тренды -->
+      <div class="col-12 lg:col-6">
+        <div class="card p-4 border-round shadow-1 h-full">
+          <div class="flex justify-content-between align-items-center mb-3">
+            <h3 class="text-xl font-semibold m-0">Тренды</h3>
+            <span class="text-500 text-sm">окно 24ч / 7д</span>
           </div>
-          <Chart type="line" :data="lineChartData" :options="lineChartOptions" class="h-30rem" />
+          <div class="metric-list">
+            <div v-for="item in trendItems" :key="item.key" class="metric-row">
+              <div>
+                <div class="text-900 font-medium">{{ item.label }}</div>
+                <div class="text-500 text-sm">{{ item.hint }}</div>
+              </div>
+              <div class="metric-row-value" :class="item.toneClass">{{ item.value }}</div>
+            </div>
+          </div>
         </div>
       </div>
 
-      <!-- Круговая диаграмма: Статусы устройств -->
-      <div class="col-12 lg:col-4">
-        <div class="card shadow-1 border-round p-4 bg-white h-full">
-          <h3 class="text-xl font-semibold mb-4">Состояние парка техники</h3>
-          <div class="flex justify-content-center">
-             <Chart type="doughnut" :data="doughnutChartData" :options="doughnutChartOptions" class="w-full md:w-20rem" />
+      <!-- Стабильность -->
+      <div class="col-12 lg:col-6">
+        <div class="card p-4 border-round shadow-1 h-full">
+          <div class="flex justify-content-between align-items-center mb-3">
+            <h3 class="text-xl font-semibold m-0">Стабильность</h3>
+            <span class="text-500 text-sm">пики и вариативность</span>
           </div>
-          <div class="mt-4">
-             <ul class="list-none p-0 m-0">
-                <li class="flex justify-content-between mb-2 p-2 border-bottom-1 surface-border">
-                   <span>В работе</span>
-                   <span class="font-bold text-green-500">{{ stats.statusCounts.active }}</span>
-                </li>
-                <li class="flex justify-content-between mb-2 p-2 border-bottom-1 surface-border">
-                   <span>В ремонте</span>
-                   <span class="font-bold text-orange-500">{{ stats.statusCounts.in_repair }}</span>
-                </li>
-                <li class="flex justify-content-between p-2">
-                   <span>Списано/Склад</span>
-                   <span class="font-bold text-gray-500">{{ stats.statusCounts.other }}</span>
-                </li>
-             </ul>
+          <div class="metric-list">
+            <div v-for="item in stabilityItems" :key="item.key" class="metric-row">
+              <div>
+                <div class="text-900 font-medium">{{ item.label }}</div>
+                <div class="text-500 text-sm">{{ item.hint }}</div>
+              </div>
+              <div class="metric-row-value" :class="item.toneClass">{{ item.value }}</div>
+            </div>
           </div>
         </div>
       </div>
-      
-      <!-- Гистограмма: Печать (опционально) -->
-      <div class="col-12 mt-4">
-         <div class="card shadow-1 border-round p-4 bg-white">
-            <h3 class="text-xl font-semibold mb-4">Расход печати (Топ принтеров)</h3>
-            <Chart type="bar" :data="barChartData" :options="barChartOptions" class="h-20rem" />
-         </div>
+
+      <!-- RAID / Диски -->
+      <div class="col-12 mt-3">
+        <div class="card p-4 border-round shadow-1">
+          <div class="flex justify-content-between align-items-center mb-3">
+            <div>
+              <h3 class="text-xl font-semibold m-0">StorCLI: состояние дисков</h3>
+              <p class="text-500 m-0">Предиктивные отказы, перегревы и ошибки за 24 часа</p>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table class="metric-table">
+              <thead>
+                <tr>
+                  <th>Диск</th>
+                  <th>Модель</th>
+                  <th>Серийный</th>
+                  <th>Ошибки 24ч</th>
+                  <th>Pred Fail 24ч</th>
+                  <th>Перегрев 24ч</th>
+                  <th>SMART Alert</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="row in diskRows" :key="row.drive">
+                  <td>{{ row.drive }}</td>
+                  <td>{{ row.model || '—' }}</td>
+                  <td>{{ row.serial || '—' }}</td>
+                  <td :class="row.errorDelta > 0 ? 'text-red-500' : 'text-500'">{{ formatCount(row.errorDelta) }}</td>
+                  <td :class="row.predFailDelta > 0 ? 'text-red-500' : 'text-500'">{{ formatCount(row.predFailDelta) }}</td>
+                  <td :class="row.overheatRatio > 0 ? 'text-orange-500' : 'text-500'">{{ formatPercent(row.overheatRatio) }}</td>
+                  <td :class="row.smartAlert > 0 ? 'text-red-500' : 'text-500'">{{ row.smartAlert > 0 ? 'ALERT' : 'OK' }}</td>
+                </tr>
+                <tr v-if="diskRows.length === 0">
+                  <td colspan="7" class="text-500">Нет данных по дискам.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- Виртуальные машины -->
+      <div class="col-12 mt-3">
+        <div class="card p-4 border-round shadow-1">
+          <div class="flex justify-content-between align-items-center mb-3">
+            <div>
+              <h3 class="text-xl font-semibold m-0">Hyper-V: доступность ВМ</h3>
+              <p class="text-500 m-0">Доля времени в работе + пиковые нагрузки за 24ч</p>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table class="metric-table">
+              <thead>
+                <tr>
+                  <th>ВМ</th>
+                  <th>Доступность 24ч</th>
+                  <th>CPU peak 24ч</th>
+                  <th>RAM peak 24ч</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="row in vmRows" :key="row.vm">
+                  <td>{{ row.vm }}</td>
+                  <td :class="row.availability < 0.95 ? 'text-red-500' : 'text-green-500'">{{ formatPercent(row.availability) }}</td>
+                  <td>{{ formatNumber(row.cpuPeak, '%') }}</td>
+                  <td>{{ formatNumber(row.memPeak, '%') }}</td>
+                </tr>
+                <tr v-if="vmRows.length === 0">
+                  <td colspan="4" class="text-500">Нет данных по ВМ.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
       </div>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted, onBeforeUnmount } from 'vue';
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue';
 import apiClient from '@/api';
-import Chart from 'primevue/chart';
 import Button from 'primevue/button';
 
-// --- State ---
 const loading = ref(false);
+const metrics = ref([]);
+const lastUpdated = ref(null);
 const pollingInterval = ref(null);
 
-const stats = ref({
-  totalDevices: 0,
-  activeDevices: 0,
-  openRequests: 0,
-  criticalErrors: 0,
-  avgNetworkLoad: 0,
-  statusCounts: { active: 0, in_repair: 0, other: 0 }
+const AUTO_REFRESH_MS = 60 * 60 * 1000;
+
+const lastMetricLabel = computed(() => {
+  if (!lastUpdated.value) return '—';
+  return new Intl.DateTimeFormat('ru-RU', {
+    dateStyle: 'short',
+    timeStyle: 'short'
+  }).format(lastUpdated.value);
 });
 
-// Данные для графиков
-const lineChartData = ref(null);
-const lineChartOptions = ref(null);
-const doughnutChartData = ref(null);
-const doughnutChartOptions = ref(null);
-const barChartData = ref(null);
-const barChartOptions = ref(null);
+const hasData = computed(() => metrics.value.length > 0);
 
-// --- Logic ---
-
-// Генерация демо-данных (если API пустое)
-const generateMockLineData = () => {
-    const labels = ['00:00', '04:00', '08:00', '12:00', '16:00', '20:00', '23:59'];
-    return {
-        labels,
-        datasets: [
-            {
-                label: 'Server-Main CPU',
-                data: [15, 20, 45, 80, 65, 30, 20],
-                fill: true,
-                borderColor: '#4F46E5',
-                backgroundColor: 'rgba(79, 70, 229, 0.1)',
-                tension: 0.4
-            },
-            {
-                label: 'Network Switch Load',
-                data: [28, 35, 40, 50, 45, 35, 30],
-                fill: false,
-                borderColor: '#10B981',
-                tension: 0.4
-            }
-        ]
-    };
+const normalizeLabelKey = (labels) => {
+  if (!labels) return '';
+  return Object.keys(labels)
+    .sort()
+    .map((key) => `${key}:${labels[key]}`)
+    .join('|');
 };
 
-// Инициализация настроек графиков (цвета, сетка)
-const initChartOptions = () => {
-    const documentStyle = getComputedStyle(document.documentElement);
-    const textColor = documentStyle.getPropertyValue('--text-color');
-    const textColorSecondary = documentStyle.getPropertyValue('--text-color-secondary');
-    const surfaceBorder = documentStyle.getPropertyValue('--surface-border');
+const metricsSorted = computed(() => {
+  const copy = [...metrics.value];
+  copy.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+  return copy;
+});
 
-    // Line Chart Options
-    lineChartOptions.value = {
-        maintainAspectRatio: false,
-        plugins: {
-            legend: { labels: { color: textColor } }
-        },
-        scales: {
-            x: {
-                ticks: { color: textColorSecondary },
-                grid: { color: surfaceBorder }
-            },
-            y: {
-                ticks: { color: textColorSecondary },
-                grid: { color: surfaceBorder }
-            }
-        }
-    };
-
-    // Doughnut Chart Options
-    doughnutChartOptions.value = {
-        cutout: '60%',
-        plugins: {
-            legend: { labels: { color: textColor } }
-        }
-    };
-    
-    // Bar Chart Options
-    barChartOptions.value = {
-        maintainAspectRatio: false,
-        plugins: { legend: { labels: { color: textColor } } },
-        scales: {
-            x: { ticks: { color: textColorSecondary }, grid: { color: surfaceBorder, drawBorder: false } },
-            y: { ticks: { color: textColorSecondary }, grid: { color: surfaceBorder, drawBorder: false } }
-        }
-    };
-};
-
-// Загрузка данных с API
-const loadDashboardData = async () => {
-    loading.value = true;
-    try {
-        // 1. Получаем устройства для статистики
-        const devicesRes = await apiClient.get('devices/');
-        const devices = devicesRes.data;
-        
-        // 2. Получаем метрики (если есть)
-        // В будущем: const metricsRes = await apiClient.get('metrics/');
-        
-        // Расчет статистики
-        stats.value.totalDevices = devices.length;
-        stats.value.activeDevices = devices.filter(d => d.status === 'active').length;
-        stats.value.statusCounts = {
-            active: devices.filter(d => d.status === 'active').length,
-            in_repair: devices.filter(d => d.status === 'in_repair').length,
-            other: devices.filter(d => !['active', 'in_repair'].includes(d.status)).length
-        };
-        
-        // Заглушки для данных, которых пока нет в БД
-        stats.value.openRequests = Math.floor(Math.random() * 10); 
-        stats.value.criticalErrors = Math.floor(Math.random() * 3);
-        stats.value.avgNetworkLoad = Math.floor(Math.random() * 40) + 20;
-
-        // Наполняем Круговую диаграмму реальными данными о статусах
-        doughnutChartData.value = {
-            labels: ['В работе', 'В ремонте', 'Прочее'],
-            datasets: [
-                {
-                    data: [stats.value.statusCounts.active, stats.value.statusCounts.in_repair, stats.value.statusCounts.other],
-                    backgroundColor: ['#22C55E', '#F97316', '#64748B'],
-                    hoverBackgroundColor: ['#16A34A', '#EA580C', '#475569']
-                }
-            ]
-        };
-
-        // Наполняем линейный график (Пока Демо, потом заменить на реальные метрики)
-        lineChartData.value = generateMockLineData();
-        
-        // Наполняем Bar Chart (Принтеры)
-        barChartData.value = {
-            labels: ['HP LaserJet P1', 'Canon MF3010', 'Kyocera EcoSys'],
-            datasets: [
-                {
-                    label: 'Страниц за сегодня',
-                    backgroundColor: '#3B82F6',
-                    data: [65, 59, 80]
-                }
-            ]
-        };
-
-    } catch (e) {
-        console.error("Ошибка обновления дашборда", e);
-    } finally {
-        loading.value = false;
+const latestMetricsMap = computed(() => {
+  const map = new Map();
+  for (const item of metricsSorted.value) {
+    const key = `${item.code}|${item.window || ''}|${normalizeLabelKey(item.labels)}`;
+    if (!map.has(key)) {
+      map.set(key, item);
     }
+  }
+  return map;
+});
+
+const listByCode = (code, window = null) => {
+  return Array.from(latestMetricsMap.value.values()).filter((item) => {
+    if (item.code !== code) return false;
+    if (window && item.window !== window) return false;
+    return true;
+  });
 };
 
-// Обновление данных
+const getSingleValue = (code, window = null) => {
+  const item = listByCode(code, window)[0];
+  return item ? Number(item.value) : null;
+};
+
+const formatSigned = (value, unit = '') => {
+  if (value === null || value === undefined || Number.isNaN(value)) return '—';
+  const sign = value > 0 ? '+' : '';
+  return `${sign}${value.toFixed(2)}${unit ? ` ${unit}` : ''}`;
+};
+
+const formatNumber = (value, unit = '') => {
+  if (value === null || value === undefined || Number.isNaN(value)) return '—';
+  return `${value.toFixed(1)}${unit ? ` ${unit}` : ''}`;
+};
+
+const formatCount = (value) => {
+  if (value === null || value === undefined || Number.isNaN(value)) return '—';
+  return Math.round(value).toString();
+};
+
+const formatPercent = (value) => {
+  if (value === null || value === undefined || Number.isNaN(value)) return '—';
+  return `${(value * 100).toFixed(1)}%`;
+};
+
+const summaryCards = computed(() => {
+  const cpuTrend = getSingleValue('cpu_trend_24h', '24h');
+  const memTrend = getSingleValue('mem_trend_24h', '24h');
+  const diskRates = listByCode('disk_fill_rate_7d', '7d').map((m) => Number(m.value));
+  const diskMax = diskRates.length ? Math.max(...diskRates) : null;
+  const resets = getSingleValue('uptime_reset_count_7d', '7d');
+
+  return [
+    {
+      key: 'cpu',
+      title: 'CPU тренд (24ч)',
+      value: formatSigned(cpuTrend, '%/h'),
+      badge: cpuTrend && cpuTrend > 0 ? 'рост' : 'стабильный',
+      toneClass: cpuTrend && cpuTrend > 0 ? 'pill-warn' : 'pill-ok',
+      subtitle: 'Наклон нагрузки процессора'
+    },
+    {
+      key: 'mem',
+      title: 'RAM тренд (24ч)',
+      value: formatSigned(memTrend, '%/h'),
+      badge: memTrend && memTrend > 0 ? 'рост' : 'стабильный',
+      toneClass: memTrend && memTrend > 0 ? 'pill-warn' : 'pill-ok',
+      subtitle: 'Рост потребления памяти'
+    },
+    {
+      key: 'disk',
+      title: 'Заполнение дисков',
+      value: formatSigned(diskMax, '%/day'),
+      badge: diskMax && diskMax > 1 ? 'быстро' : 'норма',
+      toneClass: diskMax && diskMax > 1 ? 'pill-warn' : 'pill-ok',
+      subtitle: 'Макс. скорость заполнения'
+    },
+    {
+      key: 'uptime',
+      title: 'Перезагрузки (7д)',
+      value: formatCount(resets),
+      badge: resets && resets > 0 ? 'нестабильно' : 'ok',
+      toneClass: resets && resets > 0 ? 'pill-danger' : 'pill-ok',
+      subtitle: 'Число падений uptime'
+    }
+  ];
+});
+
+const trendItems = computed(() => {
+  const netTrend = getSingleValue('net_traffic_trend_24h', '24h');
+  const diskRates = listByCode('disk_fill_rate_7d', '7d').map((m) => Number(m.value));
+  const diskAvg = diskRates.length ? (diskRates.reduce((a, b) => a + b, 0) / diskRates.length) : null;
+
+  return [
+    {
+      key: 'cpu',
+      label: 'Тренд CPU (24ч)',
+      value: formatSigned(getSingleValue('cpu_trend_24h', '24h'), '%/h'),
+      hint: 'Рост или спад нагрузки',
+      toneClass: (getSingleValue('cpu_trend_24h', '24h') || 0) > 0 ? 'text-red-500' : 'text-green-500'
+    },
+    {
+      key: 'mem',
+      label: 'Тренд RAM (24ч)',
+      value: formatSigned(getSingleValue('mem_trend_24h', '24h'), '%/h'),
+      hint: 'Подозрения на утечки',
+      toneClass: (getSingleValue('mem_trend_24h', '24h') || 0) > 0 ? 'text-orange-500' : 'text-green-500'
+    },
+    {
+      key: 'disk',
+      label: 'Заполнение дисков (avg 7д)',
+      value: formatSigned(diskAvg, '%/day'),
+      hint: 'Средняя скорость роста занятости',
+      toneClass: diskAvg && diskAvg > 1 ? 'text-red-500' : 'text-500'
+    },
+    {
+      key: 'net',
+      label: 'Тренд сети (24ч)',
+      value: formatSigned(netTrend, 'KB/s/h'),
+      hint: 'Рост/падение трафика',
+      toneClass: netTrend && netTrend > 0 ? 'text-blue-500' : 'text-500'
+    }
+  ];
+});
+
+const stabilityItems = computed(() => {
+  const memLeak = getSingleValue('mem_leak_prob', '24h');
+  return [
+    {
+      key: 'cpuSpike',
+      label: 'Пики CPU (1ч)',
+      value: formatCount(getSingleValue('cpu_spike_count_1h', '1h')),
+      hint: 'Количество всплесков > 90%',
+      toneClass: (getSingleValue('cpu_spike_count_1h', '1h') || 0) > 5 ? 'text-red-500' : 'text-500'
+    },
+    {
+      key: 'pingSpike',
+      label: 'Пики ping (1ч)',
+      value: formatCount(getSingleValue('ping_spike_count_1h', '1h')),
+      hint: 'Пики выше 95‑го перцентиля',
+      toneClass: (getSingleValue('ping_spike_count_1h', '1h') || 0) > 5 ? 'text-red-500' : 'text-500'
+    },
+    {
+      key: 'pingJitter',
+      label: 'Jitter ping (1ч)',
+      value: formatNumber(getSingleValue('ping_jitter_1h', '1h'), 'ms'),
+      hint: 'Стабильность канала',
+      toneClass: (getSingleValue('ping_jitter_1h', '1h') || 0) > 20 ? 'text-orange-500' : 'text-500'
+    },
+    {
+      key: 'tempVar',
+      label: 'Вариативность температуры (24ч)',
+      value: formatNumber(getSingleValue('temp_variance_24h', '24h'), 'C²'),
+      hint: 'Скачки температуры',
+      toneClass: (getSingleValue('temp_variance_24h', '24h') || 0) > 25 ? 'text-orange-500' : 'text-500'
+    },
+    {
+      key: 'swap',
+      label: 'Swap активен (24ч)',
+      value: formatPercent(getSingleValue('swap_active_ratio_24h', '24h')),
+      hint: 'Доля времени использования swap',
+      toneClass: (getSingleValue('swap_active_ratio_24h', '24h') || 0) > 0.1 ? 'text-red-500' : 'text-500'
+    },
+    {
+      key: 'leak',
+      label: 'Риск утечки памяти',
+      value: memLeak && memLeak > 0 ? 'Высокий' : 'Нет признаков',
+      hint: 'Корреляция uptime и RAM',
+      toneClass: memLeak && memLeak > 0 ? 'text-red-500' : 'text-green-500'
+    }
+  ];
+});
+
+const diskRows = computed(() => {
+  const rows = new Map();
+  const feed = (code, window, field) => {
+    listByCode(code, window).forEach((metric) => {
+      const drive = metric.labels?.drive || 'unknown';
+      const row = rows.get(drive) || {
+        drive,
+        model: metric.labels?.model,
+        serial: metric.labels?.serial,
+        errorDelta: 0,
+        predFailDelta: 0,
+        overheatRatio: 0,
+        smartAlert: 0
+      };
+      row[field] = Number(metric.value);
+      rows.set(drive, row);
+    });
+  };
+
+  feed('storcli_error_delta_24h', '24h', 'errorDelta');
+  feed('storcli_pred_fail_delta_24h', '24h', 'predFailDelta');
+  feed('storcli_overheat_ratio_24h', '24h', 'overheatRatio');
+  feed('storcli_smart_alert_active', '24h', 'smartAlert');
+
+  return Array.from(rows.values()).sort((a, b) => a.drive.localeCompare(b.drive));
+});
+
+const vmRows = computed(() => {
+  const rows = new Map();
+  const feed = (code, window, field) => {
+    listByCode(code, window).forEach((metric) => {
+      const name = metric.labels?.vm || 'unknown';
+      const row = rows.get(name) || { vm: name, availability: null, cpuPeak: null, memPeak: null };
+      row[field] = Number(metric.value);
+      rows.set(name, row);
+    });
+  };
+
+  feed('vm_availability_24h', '24h', 'availability');
+  feed('vm_cpu_peak_24h', '24h', 'cpuPeak');
+  feed('vm_mem_peak_24h', '24h', 'memPeak');
+
+  return Array.from(rows.values()).sort((a, b) => a.vm.localeCompare(b.vm));
+});
+
+const loadDashboardData = async () => {
+  loading.value = true;
+  try {
+    const res = await apiClient.get('metrics-computed/?ordering=-timestamp');
+    const data = Array.isArray(res.data) ? res.data : (res.data?.results || []);
+    metrics.value = data;
+    if (data.length > 0) {
+      const maxTs = data.reduce((acc, item) => {
+        const ts = new Date(item.timestamp).getTime();
+        return ts > acc ? ts : acc;
+      }, 0);
+      lastUpdated.value = maxTs ? new Date(maxTs) : new Date();
+    } else {
+      lastUpdated.value = new Date();
+    }
+  } catch (e) {
+    console.error('Ошибка обновления дашборда', e);
+  } finally {
+    loading.value = false;
+  }
+};
+
 const refreshData = () => {
-    loadDashboardData();
+  loadDashboardData();
 };
 
-// --- Lifecycle ---
 onMounted(() => {
-    initChartOptions();
+  loadDashboardData();
+  pollingInterval.value = setInterval(() => {
     loadDashboardData();
-    
-    // Автообновление каждые 60 секунд
-    pollingInterval.value = setInterval(() => {
-        loadDashboardData();
-    }, 60000);
+  }, AUTO_REFRESH_MS);
 });
 
 onBeforeUnmount(() => {
-    if (pollingInterval.value) clearInterval(pollingInterval.value);
+  if (pollingInterval.value) clearInterval(pollingInterval.value);
 });
 </script>
 
 <style scoped>
-/* PrimeFlex классы используются в template, 
-   но добавим немного локальных стилей для специфики */
-.stat-card {
-    background-color: #ffffff;
-    transition: transform 0.2s;
+.metric-card {
+  min-height: 130px;
 }
-.stat-card:hover {
-    transform: translateY(-3px);
+.metric-value {
+  font-size: 1.6rem;
+  font-weight: 600;
 }
-
-/* Цвета для иконок */
-.bg-blue-100 { background-color: #dbeafe; }
-.text-blue-500 { color: #3b82f6; }
-.bg-orange-100 { background-color: #ffedd5; }
-.text-orange-500 { color: #f97316; }
-.bg-red-100 { background-color: #fee2e2; }
-.text-red-500 { color: #ef4444; }
-.bg-purple-100 { background-color: #f3e8ff; }
-.text-purple-500 { color: #a855f7; }
-
-.grid {
-    display: flex;
-    flex-wrap: wrap;
-    margin-right: -0.5rem;
-    margin-left: -0.5rem;
+.metric-pill {
+  font-size: 0.75rem;
+  padding: 0.2rem 0.6rem;
+  border-radius: 999px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
 }
-.col-12 { box-sizing: border-box; flex: 0 0 100%; padding: 0.5rem; }
-
-@media (min-width: 768px) {
-    .md\:col-6 { flex: 0 0 50%; max-width: 50%; }
+.pill-ok {
+  background: #dcfce7;
+  color: #15803d;
 }
-@media (min-width: 992px) {
-    .lg\:col-3 { flex: 0 0 25%; max-width: 25%; }
-    .lg\:col-8 { flex: 0 0 66.6666%; max-width: 66.6666%; }
-    .lg\:col-4 { flex: 0 0 33.3333%; max-width: 33.3333%; }
+.pill-warn {
+  background: #ffedd5;
+  color: #c2410c;
+}
+.pill-danger {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+.metric-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+.metric-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid #eef1f5;
+  padding-bottom: 0.75rem;
+}
+.metric-row:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+.metric-row-value {
+  font-weight: 600;
+}
+.table-wrap {
+  overflow-x: auto;
+}
+.metric-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 720px;
+}
+.metric-table th,
+.metric-table td {
+  text-align: left;
+  padding: 0.75rem 0.5rem;
+  border-bottom: 1px solid #eef1f5;
+  font-size: 0.95rem;
+}
+.metric-table th {
+  color: #6b7280;
+  font-weight: 600;
+}
+.empty-state {
+  background: #f8fafc;
+  border: 1px dashed #cbd5f5;
 }
 </style>

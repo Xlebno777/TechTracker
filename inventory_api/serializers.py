@@ -2,7 +2,7 @@ from rest_framework import serializers
 from .models import (
     Device, DeviceType, Location, UserProfile, ComputerSpecs,
     PrinterScannerSpecs, NetworkDeviceSpecs, Cartridge, CartridgeLog,
-    Log, Metric, PrintJob, MonitoringSetting, RawMetric, TrackedVM
+    Log, Metric, PrintJob, MonitoringSetting, RawMetric, TrackedVM, ComputedMetric
 )
 from django.utils import timezone
 from django.contrib.auth.models import User, Group
@@ -329,6 +329,13 @@ class RawMetricSerializer(serializers.ModelSerializer):
     class Meta:
         model = RawMetric
         fields = ['id', 'device', 'code', 'value', 'unit', 'timestamp', 'labels', 'created_at']
+        read_only_fields = ('id', 'created_at')
+
+
+class ComputedMetricSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ComputedMetric
+        fields = ['id', 'device', 'code', 'value', 'unit', 'window', 'timestamp', 'labels', 'created_at']
         read_only_fields = ('id', 'created_at')
 
 

@@ -68,6 +68,9 @@ Installer:
 Очистка сырых метрик (сервер):
 python manage.py purge_raw_metrics --default-days 365
 
+Вычисление метрик уровня 2:
+python manage.py compute_derived_metrics
+
 ServerAgent installer:
 - Папка: agents\\ServerAgent\\installer
 - Скрипт удаления на ПК: {app}\\remove_agent.ps1 (удаляет задачу автозапуска и папку)

@@ -23,7 +23,7 @@ from .models import (
     Device, DeviceType, Location, UserProfile,
     ComputerSpecs, PrinterScannerSpecs, NetworkDeviceSpecs,
     Cartridge, CartridgeLog, Log, Metric, PrintJob,
-    MonitoringSetting, RawMetric, TrackedVM
+    MonitoringSetting, RawMetric, TrackedVM, ComputedMetric
 )
 from .serializers import (
     DeviceSerializer, DeviceCreateUpdateSerializer,
@@ -32,7 +32,7 @@ from .serializers import (
     PrinterScannerSpecsSerializer, NetworkDeviceSpecsSerializer,
     CartridgeSerializer, CartridgeLogSerializer, LogSerializer, UserSerializer,
     MetricSerializer, PrintJobSerializer, RawMetricSerializer, RawMetricIngestSerializer,
-    TrackedVMSerializer, TrackedVMSyncSerializer
+    TrackedVMSerializer, TrackedVMSyncSerializer, ComputedMetricSerializer
 )
 from .permissions import PrintJobPermission, PrinterAgentPermission, MetricsAgentPermission, VMStatusAgentPermission
 from django.utils import timezone
@@ -356,6 +356,7 @@ class DeviceViewSet(viewsets.ModelViewSet):
         created = 0
         updated = 0
         skipped = 0
+        vm_metrics = []
 
         for item in payload:
             if not isinstance(item, dict):
@@ -566,6 +567,17 @@ class RawMetricViewSet(viewsets.ReadOnlyModelViewSet):
         return Response({"created": len(objects)}, status=status.HTTP_201_CREATED)
 
 
+class ComputedMetricViewSet(viewsets.ReadOnlyModelViewSet):
+    queryset = ComputedMetric.objects.all()
+    serializer_class = ComputedMetricSerializer
+    permission_classes = [IsAuthenticated, DjangoModelPermissions]
+
+    filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
+    filterset_fields = ['device', 'code', 'window']
+    ordering_fields = ['timestamp', 'value']
+    ordering = ['-timestamp']
+
+
 def _normalize_vm_status(value):
     raw = (value or '').strip().lower()
     if raw in ('running', 'on', 'started'):
@@ -610,11 +622,13 @@ class TrackedVMViewSet(viewsets.ModelViewSet):
                 if not name:
                     skipped += 1
                     continue
+                normalized_status = _normalize_vm_status(vm_data.get('status'))
                 vm = TrackedVM.objects.filter(name=name).first()
+                is_new = False
                 if not vm:
                     vm = TrackedVM.objects.create(
                         name=name,
-                        status=_normalize_vm_status(vm_data.get('status')),
+                        status=normalized_status,
                         cpu_usage=vm_data.get('cpu_usage'),
                         memory_usage=vm_data.get('memory_usage'),
                         uptime_seconds=vm_data.get('uptime_seconds'),
@@ -623,12 +637,12 @@ class TrackedVMViewSet(viewsets.ModelViewSet):
                         is_enabled=True,
                     )
                     created += 1
-                    continue
+                    is_new = True
                 if not vm.is_enabled:
                     skipped += 1
                     continue
 
-                vm.status = _normalize_vm_status(vm_data.get('status'))
+                vm.status = normalized_status
                 vm.cpu_usage = vm_data.get('cpu_usage')
                 vm.memory_usage = vm_data.get('memory_usage')
                 vm.uptime_seconds = vm_data.get('uptime_seconds')
@@ -636,12 +650,59 @@ class TrackedVMViewSet(viewsets.ModelViewSet):
                 if host_device:
                     vm.host_device = host_device
                 vm.save()
-                updated += 1
+                if not is_new:
+                    updated += 1
+
+                if host_device:
+                    labels = {'vm': name}
+                    if vm.id:
+                        labels['vm_id'] = vm.id
+                    cpu_usage = vm_data.get('cpu_usage')
+                    mem_usage = vm_data.get('memory_usage')
+                    uptime_sec = vm_data.get('uptime_seconds')
+                    if cpu_usage is not None:
+                        vm_metrics.append(RawMetric(
+                            device=host_device,
+                            code='vm_cpu_usage',
+                            value=cpu_usage,
+                            unit='%',
+                            timestamp=now,
+                            labels=labels,
+                        ))
+                    if mem_usage is not None:
+                        vm_metrics.append(RawMetric(
+                            device=host_device,
+                            code='vm_memory_usage',
+                            value=mem_usage,
+                            unit='%',
+                            timestamp=now,
+                            labels=labels,
+                        ))
+                    if uptime_sec is not None:
+                        vm_metrics.append(RawMetric(
+                            device=host_device,
+                            code='vm_uptime_seconds',
+                            value=uptime_sec,
+                            unit='sec',
+                            timestamp=now,
+                            labels=labels,
+                        ))
+                    vm_metrics.append(RawMetric(
+                        device=host_device,
+                        code='vm_status_running',
+                        value=1.0 if normalized_status == 'running' else 0.0,
+                        unit='flag',
+                        timestamp=now,
+                        labels=labels,
+                    ))
         except ProgrammingError:
             return Response(
                 {"detail": "TrackedVM table is missing. Run migrations (python manage.py migrate)."},
                 status=status.HTTP_503_SERVICE_UNAVAILABLE
             )
+
+        if vm_metrics:
+            RawMetric.objects.bulk_create(vm_metrics, batch_size=1000)
 
         return Response({"created": created, "updated": updated, "skipped": skipped}, status=status.HTTP_200_OK)
 

@@ -339,4 +339,27 @@ class TrackedVM(models.Model):
 
   
 
+# Вычисленные (уровень 2) метрики
+class ComputedMetric(models.Model):
+    device = models.ForeignKey(Device, on_delete=models.CASCADE, related_name='metrics_computed')
+    code = models.CharField(max_length=100)
+    value = models.FloatField()
+    unit = models.CharField(max_length=20, blank=True)
+    window = models.CharField(max_length=20)
+    timestamp = models.DateTimeField()
+    labels = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Вычисленная метрика"
+        verbose_name_plural = "Вычисленные метрики"
+        ordering = ['-timestamp']
+        indexes = [
+            models.Index(fields=['device', 'code', '-timestamp']),
+            models.Index(fields=['timestamp']),
+        ]
+
+    def __str__(self):
+        return f"{self.device.name} - {self.code}: {self.value} ({self.timestamp})"
+
 # ... другие модели (например, Request для заявок)

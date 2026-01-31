@@ -5,7 +5,7 @@ from import_export.admin import ImportExportModelAdmin
 from .models import (
     Device, DeviceType, Location, UserProfile, ComputerSpecs, PrinterScannerSpecs,
     NetworkDeviceSpecs, Cartridge, CartridgeLog, Log, Metric,
-    MonitoringSetting, RawMetric, TrackedVM
+    MonitoringSetting, RawMetric, TrackedVM, ComputedMetric
 )
 
 @admin.register(DeviceType)
@@ -158,5 +158,13 @@ class TrackedVMAdmin(admin.ModelAdmin):
 class RawMetricAdmin(admin.ModelAdmin):
     list_display = ('device', 'code', 'value', 'unit', 'timestamp')
     list_filter = ('code', 'device')
+    search_fields = ('device__name', 'code')
+    readonly_fields = ('created_at',)
+
+
+@admin.register(ComputedMetric)
+class ComputedMetricAdmin(admin.ModelAdmin):
+    list_display = ('device', 'code', 'value', 'unit', 'window', 'timestamp')
+    list_filter = ('code', 'window', 'device')
     search_fields = ('device__name', 'code')
     readonly_fields = ('created_at',)
