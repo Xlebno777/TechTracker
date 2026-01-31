@@ -11,13 +11,14 @@ from django.shortcuts import render
 from rest_framework import viewsets, status, filters
 from rest_framework.response import Response
 from rest_framework.decorators import action
-from rest_framework.permissions import IsAuthenticated, DjangoModelPermissions
+from rest_framework.permissions import IsAuthenticated, DjangoModelPermissions, IsAdminUser
 from django.contrib.auth.models import User
 from django.db import models
 from django.db import IntegrityError
 from django.db.utils import ProgrammingError
 from django.db.models import Q
 from django_filters.rest_framework import DjangoFilterBackend
+from django.core.management import call_command
 
 from .models import (
     Device, DeviceType, Location, UserProfile,
@@ -576,6 +577,18 @@ class ComputedMetricViewSet(viewsets.ReadOnlyModelViewSet):
     filterset_fields = ['device', 'code', 'window']
     ordering_fields = ['timestamp', 'value']
     ordering = ['-timestamp']
+
+    @action(detail=False, methods=['post'], permission_classes=[IsAdminUser])
+    def recompute(self, request):
+        serial = request.data.get('serial')
+        try:
+            if serial:
+                call_command('compute_derived_metrics', serial=serial)
+            else:
+                call_command('compute_derived_metrics')
+            return Response({"detail": "ok"}, status=status.HTTP_200_OK)
+        except Exception as e:
+            return Response({"detail": f"compute failed: {e}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 def _normalize_vm_status(value):

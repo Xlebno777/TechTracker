@@ -1,5 +1,6 @@
 <template>
   <div class="dashboard p-4 page-shell">
+    <Toast />
     <div class="flex flex-wrap justify-content-between align-items-start gap-3 mb-4">
       <div>
         <h2 class="text-2xl font-bold m-0 text-900">Дашборд вычисляемых метрик</h2>
@@ -154,7 +155,10 @@
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue';
 import apiClient from '@/api';
 import Button from 'primevue/button';
+import Toast from 'primevue/toast';
+import { useToast } from 'primevue/usetoast';
 
+const toast = useToast();
 const loading = ref(false);
 const metrics = ref([]);
 const lastUpdated = ref(null);
@@ -404,8 +408,10 @@ const vmRows = computed(() => {
   return Array.from(rows.values()).sort((a, b) => a.vm.localeCompare(b.vm));
 });
 
-const loadDashboardData = async () => {
-  loading.value = true;
+const loadDashboardData = async (silent = false) => {
+  if (!silent) {
+    loading.value = true;
+  }
   try {
     const res = await apiClient.get('metrics-computed/?ordering=-timestamp');
     const data = Array.isArray(res.data) ? res.data : (res.data?.results || []);
@@ -422,18 +428,30 @@ const loadDashboardData = async () => {
   } catch (e) {
     console.error('Ошибка обновления дашборда', e);
   } finally {
-    loading.value = false;
+    if (!silent) {
+      loading.value = false;
+    }
   }
 };
 
-const refreshData = () => {
-  loadDashboardData();
+const refreshData = async () => {
+  loading.value = true;
+  try {
+    await apiClient.post('metrics-computed/recompute/');
+    await loadDashboardData(true);
+    toast.add({ severity: 'success', summary: 'Обновлено', detail: 'Метрики пересчитаны', life: 3000 });
+  } catch (e) {
+    const detail = e?.response?.data?.detail || 'Не удалось пересчитать метрики';
+    toast.add({ severity: 'error', summary: 'Ошибка', detail, life: 4000 });
+  } finally {
+    loading.value = false;
+  }
 };
 
 onMounted(() => {
   loadDashboardData();
   pollingInterval.value = setInterval(() => {
-    loadDashboardData();
+    loadDashboardData(true);
   }, AUTO_REFRESH_MS);
 });
 
