@@ -357,7 +357,6 @@ class DeviceViewSet(viewsets.ModelViewSet):
         created = 0
         updated = 0
         skipped = 0
-        vm_metrics = []
 
         for item in payload:
             if not isinstance(item, dict):
@@ -628,6 +627,7 @@ class TrackedVMViewSet(viewsets.ModelViewSet):
         created = 0
         updated = 0
         skipped = 0
+        vm_metrics = []
 
         try:
             for vm_data in vms:
