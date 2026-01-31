@@ -76,91 +76,73 @@ def load_config():
     return config
 
 
-def _detect_smartctl(config_value):
+def _resolve_storcli_path(config_value):
     if config_value:
-        return config_value
+        if os.path.isdir(config_value):
+            candidate = os.path.join(config_value, "storcli64.exe")
+            if os.path.exists(candidate):
+                return candidate
+        if os.path.exists(config_value):
+            return config_value
     try:
-        _run_cmd(["where", "smartctl"])
-        return "smartctl"
+        output = _decode_cmd_output(_run_cmd(["where", "storcli64"]))
+        first = output.splitlines()[0].strip()
+        return first or None
     except Exception:
         return None
 
 
-def _parse_megaraid_slots(raw):
-    if not raw:
-        return []
-    raw = raw.strip()
-    if not raw:
-        return []
-    slots = []
-    for part in raw.split(','):
-        part = part.strip()
-        if not part:
-            continue
-        if '-' in part:
-            start, end = part.split('-', 1)
-            try:
-                s = int(start)
-                e = int(end)
-            except ValueError:
-                continue
-            if e < s:
-                s, e = e, s
-            slots.extend(range(s, e + 1))
-        else:
-            try:
-                slots.append(int(part))
-            except ValueError:
-                continue
-    return sorted(set(slots))
+def _safe_int(value, default=None):
+    if value is None:
+        return default
+    try:
+        return int(str(value).strip())
+    except Exception:
+        return default
 
 
-def _build_driver_candidates(dtype, megaraid_slots):
-    candidates = []
-    if dtype:
-        candidates.append(dtype)
-    candidates.extend(['sat', 'scsi', 'nvme', 'ata'])
-    for slot in megaraid_slots:
-        candidates.append(f"megaraid,{slot}")
-    seen = set()
-    deduped = []
-    for item in candidates:
-        if item in seen:
-            continue
-        seen.add(item)
-        deduped.append(item)
-    return deduped
+def _parse_temp_c(value):
+    if not value:
+        return None
+    match = re.search(r'([-+]?\d+)\s*C', str(value))
+    if match:
+        return _safe_int(match.group(1))
+    return None
 
 
-def _log_smartctl_info(smartctl_path, megaraid_slots=None):
-    if not smartctl_path:
-        logging.info("Smartctl not found; SMART metrics disabled.")
+def _storcli_run_json(storcli_path, args):
+    if not storcli_path:
+        return None
+    output = _decode_cmd_output(_run_cmd([storcli_path] + args))
+    idx = output.find('{')
+    if idx == -1:
+        logging.warning("StorCLI output does not contain JSON.")
+        return None
+    try:
+        return json.loads(output[idx:])
+    except Exception as e:
+        logging.warning(f"Failed to parse StorCLI JSON: {e}")
+        return None
+
+
+def _log_storcli_info(storcli_path):
+    if not storcli_path:
+        logging.info("StorCLI not found; RAID metrics disabled.")
         return
 
-    logging.info(f"Smartctl detected: {smartctl_path}")
+    logging.info(f"StorCLI detected: {storcli_path}")
     try:
-        version_text = _decode_cmd_output(_run_cmd([smartctl_path, "-V"]))
+        version_text = _decode_cmd_output(_run_cmd([storcli_path, "/v"]))
         first_line = version_text.splitlines()[0] if version_text else ""
-        logging.info(f"Smartctl version: {first_line}")
-        if "/dev/" in version_text:
-            logging.warning("Smartctl appears to be a Linux/WSL build.")
+        logging.info(f"StorCLI version: {first_line}")
     except Exception as e:
-        logging.warning(f"Smartctl version read failed: {e}")
+        logging.warning(f"StorCLI version read failed: {e}")
 
-    if megaraid_slots:
-        logging.info(f"SMART megaraid slots: {megaraid_slots}")
-
-    devices = _smartctl_scan(smartctl_path)
-    if devices:
-        logging.info(f"SMART devices detected: {devices}")
-        if os.name == 'nt' and any(d.get('device', '').startswith('/dev/') for d in devices):
-            logging.info("SMART scan returned /dev/* paths on Windows. Это нормально для smartmontools.")
-        for item in devices:
-            device = item.get('device')
-            dtype = item.get('dtype') or 'auto'
-            logging.info(f"SMART device: {device} driver={dtype}")
-    else:
-        logging.warning("SMART scan returned no devices. Controller may hide SMART.")
+    data = _storcli_run_json(storcli_path, ["/cALL", "show", "J"])
+    if not data:
+        return
+    controllers = data.get("Controllers", [])
+    logging.info(f"StorCLI controllers: {len(controllers)}")
 
 
 def _check_ping_target(target):
@@ -342,7 +324,7 @@ def _metric(code, value, unit, labels=None, timestamp=None):
 
 
 class MetricCollector:
-    def __init__(self, ping_target=None, smartctl_path=None, megaraid_slots=None):
+    def __init__(self, ping_target=None, storcli_path=None):
         self.last_cpu_times = None
         self.last_cpu_time_ts = None
         self.last_interrupts = None
@@ -354,10 +336,9 @@ class MetricCollector:
         self.last_ping_latency = None
         self.last_ping_ts = None
         self.ping_target = ping_target
-        self.smartctl_path = smartctl_path
-        self.megaraid_slots = megaraid_slots or []
-        self._last_smart = None
-        self._last_smart_ts = None
+        self.storcli_path = storcli_path
+        self._last_storcli = None
+        self._last_storcli_ts = None
         psutil.cpu_percent(interval=None)
 
     def collect_cpu_total(self):
@@ -504,156 +485,103 @@ class MetricCollector:
             return [_metric('system_temperature', max(temps), 'C')]
         return []
 
-    def _collect_smart_all(self):
-        if not self.smartctl_path:
+    def _collect_storcli_all(self):
+        if not self.storcli_path:
             return []
         now = time.time()
-        if self._last_smart and self._last_smart_ts and (now - self._last_smart_ts) < 30:
-            return self._last_smart
+        if self._last_storcli and self._last_storcli_ts and (now - self._last_storcli_ts) < 30:
+            return self._last_storcli
+        metrics = _storcli_collect_physical(self.storcli_path)
+        self._last_storcli = [m for m in metrics if m]
+        self._last_storcli_ts = now
+        return self._last_storcli
 
-        devices = _smartctl_scan(self.smartctl_path)
-        if logging.getLogger().isEnabledFor(logging.DEBUG):
-            logging.debug(f"SMART scan devices: {devices}")
-        metrics = []
-        for item in devices:
-            device = item.get('device')
-            dtype = item.get('dtype')
-            attrs = None
-            tried = []
-            for candidate in _build_driver_candidates(dtype, self.megaraid_slots):
-                tried.append(candidate)
-                attrs = _smartctl_attributes(self.smartctl_path, device, candidate)
-                if attrs:
-                    if logging.getLogger().isEnabledFor(logging.DEBUG):
-                        logging.debug(f"SMART driver {candidate} works for {device}")
-                    break
-            if not attrs:
-                logging.warning(f"SMART blocked or unsupported for {device}. Tried: {tried}")
+    def collect_storcli_temperature(self):
+        metrics = self._collect_storcli_all()
+        return [m for m in metrics if m and m.get('code') == 'storcli_drive_temperature']
+
+    def collect_storcli_errors(self):
+        metrics = self._collect_storcli_all()
+        return [
+            m for m in metrics
+            if m and m.get('code') in (
+                'storcli_media_error_count',
+                'storcli_other_error_count',
+                'storcli_predictive_failure_count',
+                'storcli_smart_alert',
+            )
+        ]
+
+
+def _storcli_collect_physical(storcli_path):
+    data = _storcli_run_json(storcli_path, ["/cALL", "/eALL", "/sALL", "show", "all", "J"])
+    if not data:
+        return []
+
+    controllers = data.get("Controllers", [])
+    metrics = []
+
+    for ctrl in controllers:
+        status = ctrl.get("Command Status", {})
+        controller_id = status.get("Controller")
+        response = ctrl.get("Response Data", {})
+
+        for key, value in response.items():
+            if not key.startswith("Drive /c") or key.endswith(" - Detailed Information"):
                 continue
+            drive_key = key
+            summary = {}
+            if isinstance(value, list) and value:
+                summary = value[0]
+            elif isinstance(value, dict):
+                summary = value
+
+            detail = response.get(f"{drive_key} - Detailed Information", {})
+            state = detail.get(f"{drive_key} State", {})
+            attrs = detail.get(f"{drive_key} Device attributes", {})
+
+            labels = {"drive": drive_key.replace("Drive ", "")}
+            eid = summary.get("EID:Slt")
+            did = summary.get("DID")
+            model = summary.get("Model") or attrs.get("Model Number")
+            serial = attrs.get("SN")
+
+            if controller_id is not None:
+                labels["controller"] = str(controller_id)
+            if eid:
+                labels["eid_slt"] = str(eid)
+            if did is not None:
+                labels["did"] = str(did)
+            if model:
+                labels["model"] = str(model).strip()
+            if serial:
+                labels["serial"] = str(serial).strip()
+
+            temp_c = _parse_temp_c(state.get("Drive Temperature"))
+            media_err = _safe_int(state.get("Media Error Count"))
+            other_err = _safe_int(state.get("Other Error Count"))
+            pred_fail = _safe_int(state.get("Predictive Failure Count"))
+            smart_alert = state.get("S.M.A.R.T alert flagged by drive")
+
             if logging.getLogger().isEnabledFor(logging.DEBUG):
                 logging.debug(
-                    f"SMART attrs for {device} (driver={dtype or 'auto'}): "
-                    f"reallocated={attrs.get('reallocated')} temperature={attrs.get('temperature')}"
+                    "StorCLI drive %s temp=%s media_err=%s other_err=%s pred_fail=%s smart_alert=%s",
+                    labels.get("drive"), temp_c, media_err, other_err, pred_fail, smart_alert
                 )
-            if attrs.get('reallocated') is not None:
-                metrics.append(_metric(
-                    'smart_reallocated_sectors',
-                    attrs['reallocated'],
-                    'count',
-                    {'disk': device}
-                ))
-            if attrs.get('temperature') is not None:
-                metrics.append(_metric(
-                    'smart_temperature',
-                    attrs['temperature'],
-                    'C',
-                    {'disk': device}
-                ))
-        self._last_smart = [m for m in metrics if m]
-        self._last_smart_ts = now
-        return self._last_smart
 
-    def collect_smart_reallocated(self):
-        metrics = self._collect_smart_all()
-        return [m for m in metrics if m and m.get('code') == 'smart_reallocated_sectors']
+            if temp_c is not None:
+                metrics.append(_metric("storcli_drive_temperature", temp_c, "C", labels))
+            if media_err is not None:
+                metrics.append(_metric("storcli_media_error_count", media_err, "count", labels))
+            if other_err is not None:
+                metrics.append(_metric("storcli_other_error_count", other_err, "count", labels))
+            if pred_fail is not None:
+                metrics.append(_metric("storcli_predictive_failure_count", pred_fail, "count", labels))
+            if smart_alert is not None:
+                smart_alert_val = 0 if str(smart_alert).strip().lower() in ('no', 'false', '0') else 1
+                metrics.append(_metric("storcli_smart_alert", smart_alert_val, "flag", labels))
 
-    def collect_smart_temperature(self):
-        metrics = self._collect_smart_all()
-        return [m for m in metrics if m and m.get('code') == 'smart_temperature']
-
-
-def _smartctl_scan(smartctl_path):
-    try:
-        try:
-            output = _run_cmd([smartctl_path, "--scan-open"])
-        except Exception:
-            output = _run_cmd([smartctl_path, "--scan"])
-        lines = _decode_cmd_output(output).splitlines()
-    except Exception as e:
-        logging.warning(f"smartctl scan failed: {e}")
-        return []
-    devices = []
-    for line in lines:
-        if not line or line.startswith('#'):
-            continue
-        parts = line.split()
-        if not parts:
-            continue
-        device = parts[0]
-        dtype = None
-        if "-d" in parts:
-            idx = parts.index("-d")
-            if idx + 1 < len(parts):
-                dtype = parts[idx + 1]
-        devices.append({'device': device, 'dtype': dtype})
-    return devices
-
-
-def _smartctl_attributes(smartctl_path, device, dtype=None):
-    try:
-        cmd = [smartctl_path, "-A", "-j"]
-        if dtype:
-            cmd += ["-d", dtype]
-        cmd.append(device)
-        output = _run_cmd(cmd)
-        data = json.loads(_decode_cmd_output(output))
-        table = data.get('ata_smart_attributes', {}).get('table', [])
-        reallocated = None
-        temperature = None
-        for item in table:
-            name = (item.get('name') or '').lower()
-            raw = item.get('raw', {}).get('value')
-            if name == 'reallocated_sector_ct':
-                reallocated = raw
-            if name in ('temperature_celsius', 'temperature_internal', 'airflow_temperature_cel'):
-                temperature = raw
-        nvme = data.get('nvme_smart_health_information_log', {})
-        if reallocated is None and isinstance(nvme, dict):
-            media_errors = nvme.get('media_errors')
-            if media_errors is not None:
-                reallocated = media_errors
-        if temperature is None and isinstance(nvme, dict):
-            temp = nvme.get('temperature')
-            if temp is not None:
-                temperature = temp
-        return {'reallocated': reallocated, 'temperature': temperature}
-    except Exception:
-        return _smartctl_attributes_text(smartctl_path, device, dtype)
-
-
-def _smartctl_attributes_text(smartctl_path, device, dtype=None):
-    try:
-        cmd = [smartctl_path, "-A"]
-        if dtype:
-            cmd += ["-d", dtype]
-        cmd.append(device)
-        output = _run_cmd(cmd)
-        lines = _decode_cmd_output(output).splitlines()
-    except Exception as e:
-        logging.warning(f"smartctl read failed: {e}")
-        return None
-
-    reallocated = None
-    temperature = None
-    for line in lines:
-        parts = line.split()
-        if len(parts) < 2:
-            continue
-        if parts[0].isdigit():
-            attr_id = parts[0]
-            name = parts[1]
-            raw_value = parts[-1]
-            if attr_id == '5' or name.lower() == 'reallocated_sector_ct':
-                try:
-                    reallocated = int(raw_value)
-                except ValueError:
-                    pass
-            if attr_id in ('190', '194') or 'temperature' in name.lower():
-                try:
-                    temperature = float(raw_value)
-                except ValueError:
-                    pass
-    return {'reallocated': reallocated, 'temperature': temperature}
+    return metrics
 
 
 def _read_hw_monitor_temps(namespace):
@@ -753,8 +681,7 @@ def main():
         VM_SYNC_INTERVAL = int(config['DEFAULT'].get('VmSyncInterval', '60'))
         RETENTION_DAYS = int(config['DEFAULT'].get('RetentionDays', '365'))
         PING_TARGET = config['DEFAULT'].get('PingTarget', '').strip() or None
-        SMARTCTL_PATH = _detect_smartctl(config['DEFAULT'].get('SmartctlPath', '').strip())
-        MEGARAID_SLOTS = _parse_megaraid_slots(config['DEFAULT'].get('SmartctlMegaraidSlots', '').strip())
+        STORCLI_PATH = _resolve_storcli_path(config['DEFAULT'].get('StorcliPath', '').strip())
         METRICS_QUEUE_MAX = int(config['DEFAULT'].get('MetricsQueueMax', '5000'))
         METRICS_DEBUG = config['DEFAULT'].get('MetricsDebug', '0').strip().lower() in ('1', 'true', 'yes', 'on')
 
@@ -771,11 +698,20 @@ def main():
         logging.getLogger().setLevel(logging.DEBUG)
         logging.debug("Metrics debug logging enabled.")
 
-    _log_smartctl_info(SMARTCTL_PATH, MEGARAID_SLOTS)
+    _log_storcli_info(STORCLI_PATH)
 
     _check_ping_target(PING_TARGET)
 
-    collector = MetricCollector(ping_target=PING_TARGET, smartctl_path=SMARTCTL_PATH, megaraid_slots=MEGARAID_SLOTS)
+    collector = MetricCollector(ping_target=PING_TARGET, storcli_path=STORCLI_PATH)
+    if STORCLI_PATH and METRICS_DEBUG:
+        try:
+            preview = collector._collect_storcli_all()
+            if not preview:
+                logging.warning("StorCLI preview returned no metrics.")
+            else:
+                logging.debug(f"StorCLI preview metrics: {len(preview)}")
+        except Exception as e:
+            logging.warning(f"StorCLI preview failed: {e}")
 
     # План сборов
     tasks = [
@@ -786,8 +722,8 @@ def main():
         ('swap_usage', 300, collector.collect_swap_usage),
         ('disk_usage', 600, collector.collect_disk_usage),
         ('disk_io', 60, collector.collect_disk_io),
-        ('smart_reallocated', 3600, collector.collect_smart_reallocated),
-        ('smart_temp', 600, collector.collect_smart_temperature),
+        ('storcli_errors', 3600, collector.collect_storcli_errors),
+        ('storcli_temp', 600, collector.collect_storcli_temperature),
         ('net', 60, collector.collect_network),
         ('ping', 60, collector.collect_ping),
         ('uptime', 600, collector.collect_uptime),

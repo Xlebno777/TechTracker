@@ -14,7 +14,7 @@
 #define MetricsBatchInterval "60"
 #define RetentionDays "365"
 #define PingTarget ""
-#define SmartctlPath ""
+#define StorcliPath ""
 #define VmSyncInterval "60"
 #define MetricsQueueMax "5000"
 #define MetricsDebug "0"
@@ -98,13 +98,13 @@ begin
   MonitoringPage := CreateInputQueryPage(TimingPage.ID,
     'Мониторинг',
     'Параметры мониторинга',
-    'SMART и хранение метрик.');
+    'StorCLI и хранение метрик.');
   MonitoringPage.Add('RetentionDays:', False);
   MonitoringPage.Values[0] := ExpandConstant('{#RetentionDays}');
   MonitoringPage.Add('PingTarget:', False);
   MonitoringPage.Values[1] := ExpandConstant('{#PingTarget}');
-  MonitoringPage.Add('SmartctlPath:', False);
-  MonitoringPage.Values[2] := ExpandConstant('{#SmartctlPath}');
+  MonitoringPage.Add('StorcliPath:', False);
+  MonitoringPage.Values[2] := ExpandConstant('{#StorcliPath}');
 
   SyncPage := CreateInputQueryPage(MonitoringPage.ID,
     'Синхронизация',
@@ -133,7 +133,7 @@ begin
       SetIniString('DEFAULT', 'MetricsQueueMax', TimingPage.Values[2], IniPath);
       SetIniString('DEFAULT', 'RetentionDays', MonitoringPage.Values[0], IniPath);
       SetIniString('DEFAULT', 'PingTarget', MonitoringPage.Values[1], IniPath);
-      SetIniString('DEFAULT', 'SmartctlPath', MonitoringPage.Values[2], IniPath);
+      SetIniString('DEFAULT', 'StorcliPath', MonitoringPage.Values[2], IniPath);
       SetIniString('DEFAULT', 'VmSyncInterval', SyncPage.Values[0], IniPath);
       SetIniString('DEFAULT', 'MetricsDebug', SyncPage.Values[1], IniPath);
     end;

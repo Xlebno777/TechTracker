@@ -63,11 +63,7 @@ Installer:
 Новые параметры агента:
 - RetentionDays (по умолчанию 365) — срок хранения сырых метрик
 - VmSyncInterval — частота обновления статуса Hyper-V ВМ
-- SmartctlPath — путь до smartctl.exe (если нужен SMART)
-
-SMART (Windows):
-1) Установи smartmontools
-2) Добавь путь к smartctl.exe в PATH или пропиши SmartctlPath в config.ini
+- StorcliPath — путь до storcli64.exe или папки (например C:\Soft\storcli\Windows)
 
 Очистка сырых метрик (сервер):
 python manage.py purge_raw_metrics --default-days 365
