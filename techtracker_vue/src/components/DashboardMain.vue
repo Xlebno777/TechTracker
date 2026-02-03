@@ -3,7 +3,7 @@
     <Toast />
     <div class="flex flex-wrap justify-content-between align-items-start gap-3 mb-4">
       <div>
-        <h2 class="text-2xl font-bold m-0 text-900">Дашборд вычисляемых метрик</h2>
+        <h2 class="text-2xl font-bold m-0 text-900">Анализ мониторинга</h2>
         <p class="text-500 m-0">Агрегации уровня 2, пересчёт по расписанию (раз в час)</p>
       </div>
       <div class="flex flex-column align-items-end gap-2">
