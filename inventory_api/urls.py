@@ -29,6 +29,7 @@ router.register(r'users', views.UserViewSet) # Только эндпоинты �
 router.register(r'metrics', views.MetricViewSet)
 router.register(r'metrics-raw', views.RawMetricViewSet, basename='metrics-raw')
 router.register(r'metrics-computed', views.ComputedMetricViewSet, basename='metrics-computed')
+router.register(r'agent-status', views.AgentStatusViewSet, basename='agent-status')
 router.register(r'printjob', views.PrintJobViewSet)
 router.register(r'tracked-vms', views.TrackedVMViewSet)
 

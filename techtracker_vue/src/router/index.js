@@ -6,6 +6,8 @@ import AuthPage from '../components/AuthPage.vue'
 import RequestForm from '../components/RequestForm.vue'
 import RequestList from '../components/RequestList.vue'
 import Dashboard from '../components/DashboardMain.vue'
+import MonitoringRaw from '../components/MonitoringRaw.vue'
+import AgentDiagnostics from '../components/AgentDiagnostics.vue'
 import PrintersPage from '../components/PrintersPage.vue'
 
 
@@ -52,10 +54,22 @@ const routes = [
     component: AuthPage
   },
   {
-    path: '/dashboard',
-    name: 'Dashboard', // Теперь главная - это дашборд
+    path: '/monitoring-analysis',
+    name: 'MonitoringAnalysis',
     component: Dashboard,
     meta: { requiresAuth: true, forbidUsers: true }
+  },
+  {
+    path: '/monitoring',
+    name: 'Monitoring',
+    component: MonitoringRaw,
+    meta: { requiresAuth: true, forbidUsers: true }
+  },
+  {
+    path: '/agent-diagnostics',
+    name: 'AgentDiagnostics',
+    component: AgentDiagnostics,
+    meta: { requiresAuth: true, requiresAdmin: true }
   },
   {
     path: '/admin/requests',
@@ -81,7 +95,7 @@ const router = createRouter({ // <-- router создаётся ЗДЕСЬ
 router.beforeEach((to, from, next) => {
   const hasToken = localStorage.getItem('auth_token') !== null;
 
-  if (to.name === 'DeviceTable' || to.name === 'DeviceCreate' || to.name === 'DeviceEdit' || to.name === 'RequestForm' || to.name === 'RequestList' || to.name === 'Printers' || to.name === 'Dashboard' || to.name === 'AdminRequests') {
+  if (to.name === 'DeviceTable' || to.name === 'DeviceCreate' || to.name === 'DeviceEdit' || to.name === 'RequestForm' || to.name === 'RequestList' || to.name === 'Printers' || to.name === 'Monitoring' || to.name === 'MonitoringAnalysis' || to.name === 'AgentDiagnostics' || to.name === 'AdminRequests') {
     if (!hasToken) {
       next({ name: 'AuthPage' });
     } else {

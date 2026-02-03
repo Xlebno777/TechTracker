@@ -18,6 +18,7 @@
 #define VmSyncInterval "60"
 #define MetricsQueueMax "5000"
 #define MetricsDebug "0"
+#define ErrorPauseSeconds "300"
 
 [Setup]
 AppId={{A11D7B5E-4E2B-4C3B-9C58-0D0B0B7E9E10}
@@ -94,6 +95,8 @@ begin
   TimingPage.Values[1] := ExpandConstant('{#MetricsBatchInterval}');
   TimingPage.Add('MetricsQueueMax:', False);
   TimingPage.Values[2] := ExpandConstant('{#MetricsQueueMax}');
+  TimingPage.Add('ErrorPauseSeconds:', False);
+  TimingPage.Values[3] := ExpandConstant('{#ErrorPauseSeconds}');
 
   MonitoringPage := CreateInputQueryPage(TimingPage.ID,
     'Мониторинг',
@@ -131,6 +134,7 @@ begin
       SetIniString('DEFAULT', 'LoopInterval', TimingPage.Values[0], IniPath);
       SetIniString('DEFAULT', 'MetricsBatchInterval', TimingPage.Values[1], IniPath);
       SetIniString('DEFAULT', 'MetricsQueueMax', TimingPage.Values[2], IniPath);
+      SetIniString('DEFAULT', 'ErrorPauseSeconds', TimingPage.Values[3], IniPath);
       SetIniString('DEFAULT', 'RetentionDays', MonitoringPage.Values[0], IniPath);
       SetIniString('DEFAULT', 'PingTarget', MonitoringPage.Values[1], IniPath);
       SetIniString('DEFAULT', 'StorcliPath', MonitoringPage.Values[2], IniPath);

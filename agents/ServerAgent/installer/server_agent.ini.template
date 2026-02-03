@@ -10,3 +10,4 @@ PingTarget =
 StorcliPath =
 MetricsQueueMax = 5000
 MetricsDebug = 0
+ErrorPauseSeconds = 300

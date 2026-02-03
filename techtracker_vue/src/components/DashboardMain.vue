@@ -12,6 +12,16 @@
       </div>
     </div>
 
+    <div v-if="hasAgentError" class="card p-3 border-round warning-banner mb-3">
+      <div class="text-red-600 font-semibold mb-1">Ошибка отправки метрик</div>
+      <div class="text-600 text-sm">
+        {{ agentError?.message || 'Не удалось отправить метрики. Проверьте работу службы агента.' }}
+      </div>
+      <div class="text-500 text-xs mt-1">
+        Последнее обновление: {{ formatAgentTime(agentError?.updated_at) }}
+      </div>
+    </div>
+
     <div v-if="!hasData && !loading" class="card p-4 border-round empty-state">
       <div class="text-900 text-lg font-semibold mb-2">Нет вычисленных метрик</div>
       <div class="text-500">Запусти команду на сервере: <b>python manage.py compute_derived_metrics</b></div>
@@ -163,6 +173,7 @@ const loading = ref(false);
 const metrics = ref([]);
 const lastUpdated = ref(null);
 const pollingInterval = ref(null);
+const agentError = ref(null);
 
 const AUTO_REFRESH_MS = 60 * 60 * 1000;
 
@@ -175,6 +186,7 @@ const lastMetricLabel = computed(() => {
 });
 
 const hasData = computed(() => metrics.value.length > 0);
+const hasAgentError = computed(() => !!agentError.value);
 
 const normalizeLabelKey = (labels) => {
   if (!labels) return '';
@@ -233,6 +245,18 @@ const formatCount = (value) => {
 const formatPercent = (value) => {
   if (value === null || value === undefined || Number.isNaN(value)) return '—';
   return `${(value * 100).toFixed(1)}%`;
+};
+
+const formatAgentTime = (value) => {
+  if (!value) return '—';
+  try {
+    return new Intl.DateTimeFormat('ru-RU', {
+      dateStyle: 'short',
+      timeStyle: 'short'
+    }).format(new Date(value));
+  } catch (e) {
+    return value;
+  }
 };
 
 const summaryCards = computed(() => {
@@ -425,6 +449,9 @@ const loadDashboardData = async (silent = false) => {
     } else {
       lastUpdated.value = new Date();
     }
+    const statusRes = await apiClient.get('agent-status/?status=error&ordering=-updated_at');
+    const statusData = Array.isArray(statusRes.data) ? statusRes.data : (statusRes.data?.results || []);
+    agentError.value = statusData.length ? statusData[0] : null;
   } catch (e) {
     console.error('Ошибка обновления дашборда', e);
   } finally {
@@ -529,5 +556,9 @@ onBeforeUnmount(() => {
 .empty-state {
   background: #f8fafc;
   border: 1px dashed #cbd5f5;
+}
+.warning-banner {
+  background: #fff1f2;
+  border: 1px solid #fecdd3;
 }
 </style>

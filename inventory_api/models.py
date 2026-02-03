@@ -362,4 +362,28 @@ class ComputedMetric(models.Model):
     def __str__(self):
         return f"{self.device.name} - {self.code}: {self.value} ({self.timestamp})"
 
+
+class AgentStatus(models.Model):
+    STATUS_CHOICES = [
+        ('ok', 'OK'),
+        ('error', 'Error'),
+    ]
+
+    device = models.ForeignKey(Device, on_delete=models.CASCADE, related_name='agent_statuses')
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='ok')
+    message = models.TextField(blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Статус агента"
+        verbose_name_plural = "Статусы агентов"
+        ordering = ['-updated_at']
+        indexes = [
+            models.Index(fields=['device', 'status', '-updated_at']),
+            models.Index(fields=['status', '-updated_at']),
+        ]
+
+    def __str__(self):
+        return f"{self.device.name} - {self.status}"
+
 # ... другие модели (например, Request для заявок)

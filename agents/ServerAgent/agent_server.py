@@ -45,6 +45,22 @@ def _run_cmd(cmd):
     return subprocess.check_output(cmd, **kwargs)
 
 
+def _run_cmd_optional(cmd):
+    kwargs = {
+        'stdout': subprocess.PIPE,
+        'stderr': subprocess.STDOUT,
+        'check': False,
+        'text': False,
+    }
+    if os.name == 'nt':
+        kwargs['creationflags'] = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        startupinfo.wShowWindow = 0
+        kwargs['startupinfo'] = startupinfo
+    return subprocess.run(cmd, **kwargs)
+
+
 def _decode_cmd_output(raw):
     if os.name == 'nt':
         for enc in ('cp866', 'utf-8', 'cp1251'):
@@ -132,9 +148,16 @@ def _log_storcli_info(storcli_path):
 
     logging.info(f"StorCLI detected: {storcli_path}")
     try:
-        version_text = _decode_cmd_output(_run_cmd([storcli_path, "/v"]))
+        result = _run_cmd_optional([storcli_path, "/v"])
+        version_text = _decode_cmd_output(result.stdout or b'')
         first_line = version_text.splitlines()[0] if version_text else ""
-        logging.info(f"StorCLI version: {first_line}")
+        if result.returncode == 0 and first_line:
+            logging.info(f"StorCLI version: {first_line}")
+        else:
+            logging.warning(
+                f"StorCLI version read failed (rc={result.returncode}). "
+                f"Maybe requires admin or /v unsupported."
+            )
     except Exception as e:
         logging.warning(f"StorCLI version read failed: {e}")
 
@@ -216,6 +239,24 @@ def send_metrics_batch(api_base, token, serial, metrics, retention_days=None, de
         return True
     except Exception as e:
         logging.error(f"Connection error (metrics ingest): {e}")
+        return False
+
+
+def send_agent_status(api_base, token, serial, status_value, message=""):
+    url = _api_url(api_base, 'agent-status/report/')
+    headers = {
+        'Authorization': f'Token {token}',
+        'Content-Type': 'application/json'
+    }
+    payload = {
+        'serial_number': serial,
+        'status': status_value,
+        'message': message or ''
+    }
+    try:
+        response = requests.post(url, json=payload, headers=headers, timeout=5)
+        return response.status_code == 200
+    except Exception:
         return False
 
 
@@ -702,6 +743,8 @@ def main():
 
     _check_ping_target(PING_TARGET)
 
+    send_agent_status(API_BASE, TOKEN, SERIAL_NUMBER, 'ok', 'agent started')
+
     collector = MetricCollector(ping_target=PING_TARGET, storcli_path=STORCLI_PATH)
     if STORCLI_PATH and METRICS_DEBUG:
         try:
@@ -737,6 +780,9 @@ def main():
     last_retention_sync = 0
     last_vm_sync = 0
     last_ping_check = 0
+    metrics_paused = False
+    next_probe_at = 0
+    ERROR_PAUSE_SECONDS = int(config['DEFAULT'].get('ErrorPauseSeconds', '300'))
 
     while True:
         now = time.time()
@@ -745,19 +791,34 @@ def main():
                 _check_ping_target(PING_TARGET)
                 last_ping_check = now
 
-            # Сбор метрик по расписанию
-            for name, interval, func in tasks:
-                if (now - last_run[name]) >= interval:
-                    try:
-                        metrics = func() or []
-                        valid = [m for m in metrics if m]
-                        if METRICS_DEBUG and valid:
-                            codes = [m.get('code') for m in valid]
-                            logging.debug(f"Collected {len(valid)} metrics from {name}: {codes}")
-                        metrics_queue.extend(valid)
-                    except Exception as e:
-                        logging.warning(f"Metric task '{name}' failed: {e}")
-                    last_run[name] = now
+            # Сбор метрик по расписанию (может быть приостановлен при ошибке отправки)
+            if metrics_paused:
+                if next_probe_at and now >= next_probe_at:
+                    probe_metric = _metric('uptime_seconds', time.time() - psutil.boot_time(), 'sec')
+                    device_info = get_device_info()
+                    if send_metrics_batch(API_BASE, TOKEN, SERIAL_NUMBER, [probe_metric], None, device_info=device_info):
+                        metrics_paused = False
+                        next_probe_at = 0
+                        send_agent_status(API_BASE, TOKEN, SERIAL_NUMBER, 'ok', 'metrics resumed')
+                        last_metrics_flush = now
+                        logging.info("Metrics resumed after successful probe send.")
+                    else:
+                        send_agent_status(API_BASE, TOKEN, SERIAL_NUMBER, 'error', 'metrics ingest failed')
+                        next_probe_at = now + ERROR_PAUSE_SECONDS
+                # Пока пауза активна, не собираем метрики
+            else:
+                for name, interval, func in tasks:
+                    if (now - last_run[name]) >= interval:
+                        try:
+                            metrics = func() or []
+                            valid = [m for m in metrics if m]
+                            if METRICS_DEBUG and valid:
+                                codes = [m.get('code') for m in valid]
+                                logging.debug(f"Collected {len(valid)} metrics from {name}: {codes}")
+                            metrics_queue.extend(valid)
+                        except Exception as e:
+                            logging.warning(f"Metric task '{name}' failed: {e}")
+                        last_run[name] = now
 
             # Отправка метрик пачкой
             if metrics_queue and (now - last_metrics_flush) >= METRICS_BATCH_INTERVAL:
@@ -770,10 +831,13 @@ def main():
                     last_metrics_flush = now
                     if retention is not None:
                         last_retention_sync = now
+                    send_agent_status(API_BASE, TOKEN, SERIAL_NUMBER, 'ok', '')
                 else:
-                    if len(metrics_queue) > METRICS_QUEUE_MAX:
-                        metrics_queue = metrics_queue[-METRICS_QUEUE_MAX:]
-                        logging.warning("Metrics queue trimmed due to size limit.")
+                    send_agent_status(API_BASE, TOKEN, SERIAL_NUMBER, 'error', 'metrics ingest failed')
+                    metrics_queue = []
+                    metrics_paused = True
+                    next_probe_at = now + ERROR_PAUSE_SECONDS
+                    logging.warning(f"Metrics paused after send error. Retry in {ERROR_PAUSE_SECONDS}s.")
 
             # Отправка статуса ВМ
             if VM_SYNC_INTERVAL > 0 and (now - last_vm_sync) >= VM_SYNC_INTERVAL:

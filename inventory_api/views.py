@@ -24,7 +24,7 @@ from .models import (
     Device, DeviceType, Location, UserProfile,
     ComputerSpecs, PrinterScannerSpecs, NetworkDeviceSpecs,
     Cartridge, CartridgeLog, Log, Metric, PrintJob,
-    MonitoringSetting, RawMetric, TrackedVM, ComputedMetric
+    MonitoringSetting, RawMetric, TrackedVM, ComputedMetric, AgentStatus
 )
 from .serializers import (
     DeviceSerializer, DeviceCreateUpdateSerializer,
@@ -33,10 +33,11 @@ from .serializers import (
     PrinterScannerSpecsSerializer, NetworkDeviceSpecsSerializer,
     CartridgeSerializer, CartridgeLogSerializer, LogSerializer, UserSerializer,
     MetricSerializer, PrintJobSerializer, RawMetricSerializer, RawMetricIngestSerializer,
-    TrackedVMSerializer, TrackedVMSyncSerializer, ComputedMetricSerializer
+    TrackedVMSerializer, TrackedVMSyncSerializer, ComputedMetricSerializer, AgentStatusSerializer, AgentStatusReportSerializer
 )
 from .permissions import PrintJobPermission, PrinterAgentPermission, MetricsAgentPermission, VMStatusAgentPermission
 from django.utils import timezone
+from datetime import timedelta
 
 
 def _normalize_ip(value):
@@ -524,6 +525,26 @@ class RawMetricViewSet(viewsets.ReadOnlyModelViewSet):
     ordering_fields = ['timestamp', 'value']
     ordering = ['-timestamp']
 
+    def get_queryset(self):
+        qs = super().get_queryset()
+        since_minutes = self.request.query_params.get('since_minutes')
+        limit = self.request.query_params.get('limit')
+        if since_minutes:
+            try:
+                minutes = int(since_minutes)
+                if minutes > 0:
+                    qs = qs.filter(timestamp__gte=timezone.now() - timedelta(minutes=minutes))
+            except ValueError:
+                pass
+        if limit:
+            try:
+                limit_val = int(limit)
+                if limit_val > 0:
+                    qs = qs[:limit_val]
+            except ValueError:
+                pass
+        return qs
+
     @action(detail=False, methods=['post'], permission_classes=[MetricsAgentPermission])
     def ingest(self, request):
         serializer = RawMetricIngestSerializer(data=request.data)
@@ -590,15 +611,52 @@ class ComputedMetricViewSet(viewsets.ReadOnlyModelViewSet):
             return Response({"detail": f"compute failed: {e}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
+class AgentStatusViewSet(viewsets.ReadOnlyModelViewSet):
+    queryset = AgentStatus.objects.all()
+    serializer_class = AgentStatusSerializer
+    permission_classes = [IsAuthenticated, DjangoModelPermissions]
+
+    filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
+    filterset_fields = ['device', 'status']
+    ordering_fields = ['updated_at']
+    ordering = ['-updated_at']
+
+    @action(detail=False, methods=['post'], permission_classes=[MetricsAgentPermission])
+    def report(self, request):
+        serializer = AgentStatusReportSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        serial = serializer.validated_data['serial_number']
+        status_value = serializer.validated_data['status']
+        message = serializer.validated_data.get('message', '')
+
+        device = Device.objects.filter(serial_number=serial).first()
+        if not device:
+            return Response({"detail": "Device not found"}, status=status.HTTP_400_BAD_REQUEST)
+
+        AgentStatus.objects.update_or_create(
+            device=device,
+            defaults={
+                'status': status_value,
+                'message': message or ''
+            }
+        )
+        return Response({"detail": "ok"}, status=status.HTTP_200_OK)
+
+
 def _normalize_vm_status(value):
     raw = (value or '').strip().lower()
-    if raw in ('running', 'on', 'started'):
+    if raw in ('running', 'on', 'started', 'работает', 'включена', 'включен', 'запущена', 'запущен'):
         return 'running'
-    if raw in ('off', 'stopped', 'poweroff', 'poweredoff'):
+    if raw in ('off', 'stopped', 'poweroff', 'poweredoff', 'выключена', 'выключен', 'остановлена', 'остановлен'):
         return 'off'
     if 'pause' in raw:
         return 'paused'
+    if 'пауза' in raw:
+        return 'paused'
     if 'saved' in raw:
+        return 'saved'
+    if 'сохран' in raw:
         return 'saved'
     return 'unknown'
 

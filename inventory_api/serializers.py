@@ -2,7 +2,7 @@ from rest_framework import serializers
 from .models import (
     Device, DeviceType, Location, UserProfile, ComputerSpecs,
     PrinterScannerSpecs, NetworkDeviceSpecs, Cartridge, CartridgeLog,
-    Log, Metric, PrintJob, MonitoringSetting, RawMetric, TrackedVM, ComputedMetric
+    Log, Metric, PrintJob, MonitoringSetting, RawMetric, TrackedVM, ComputedMetric, AgentStatus
 )
 from django.utils import timezone
 from django.contrib.auth.models import User, Group
@@ -337,6 +337,21 @@ class ComputedMetricSerializer(serializers.ModelSerializer):
         model = ComputedMetric
         fields = ['id', 'device', 'code', 'value', 'unit', 'window', 'timestamp', 'labels', 'created_at']
         read_only_fields = ('id', 'created_at')
+
+
+class AgentStatusSerializer(serializers.ModelSerializer):
+    device_name = serializers.CharField(source='device.name', read_only=True)
+    device_serial = serializers.CharField(source='device.serial_number', read_only=True)
+    class Meta:
+        model = AgentStatus
+        fields = ['id', 'device', 'device_name', 'device_serial', 'status', 'message', 'updated_at']
+        read_only_fields = ('id', 'updated_at')
+
+
+class AgentStatusReportSerializer(serializers.Serializer):
+    serial_number = serializers.CharField()
+    status = serializers.ChoiceField(choices=['ok', 'error'])
+    message = serializers.CharField(required=False, allow_blank=True, default='')
 
 
 class RawMetricItemSerializer(serializers.Serializer):

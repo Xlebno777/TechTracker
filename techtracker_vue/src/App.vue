@@ -12,9 +12,14 @@
       </div>
 
       <nav class="nav-menu">
-        <router-link v-if="!auth.isUser" :to="{ name: 'Dashboard' }" class="nav-link" active-class="active">
+        <router-link v-if="!auth.isUser" :to="{ name: 'Monitoring' }" class="nav-link" active-class="active">
+          <i class="pi pi-chart-line"></i>
+          <span>Мониторинг</span>
+        </router-link>
+
+        <router-link v-if="!auth.isUser" :to="{ name: 'MonitoringAnalysis' }" class="nav-link" active-class="active">
           <i class="pi pi-chart-bar"></i>
-          <span>Дашборд</span>
+          <span>Анализ мониторинга</span>
         </router-link>
 
         <router-link :to="{ name: 'DeviceTable' }" class="nav-link" active-class="active">
@@ -40,6 +45,11 @@
         <router-link v-if="auth.isAdmin" :to="{ name: 'AdminRequests' }" class="nav-link" active-class="active">
           <i class="pi pi-list"></i>
           <span>Заявки</span>
+        </router-link>
+
+        <router-link v-if="auth.isAdmin" :to="{ name: 'AgentDiagnostics' }" class="nav-link" active-class="active">
+          <i class="pi pi-shield"></i>
+          <span>Диагностика агента</span>
         </router-link>
       </nav>
 
