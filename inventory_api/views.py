@@ -657,7 +657,20 @@ class AgentStatusViewSet(viewsets.ReadOnlyModelViewSet):
 
 
 def _normalize_vm_status(value):
-    raw = (value or '').strip().lower()
+    if value is None:
+        return 'unknown'
+    if isinstance(value, (int, float)):
+        code = int(value)
+        if code == 2:
+            return 'running'
+        if code == 3:
+            return 'off'
+        if code == 6:
+            return 'saved'
+        if code == 9:
+            return 'paused'
+        return 'unknown'
+    raw = str(value).strip().lower()
     if raw.isdigit():
         code = int(raw)
         if code == 2:
@@ -715,16 +728,38 @@ class TrackedVMViewSet(viewsets.ModelViewSet):
                 if not name:
                     skipped += 1
                     continue
-                normalized_status = _normalize_vm_status(vm_data.get('status'))
+                raw_status = vm_data.get('status')
+                normalized_status = _normalize_vm_status(raw_status)
                 vm = TrackedVM.objects.filter(name=name).first()
                 is_new = False
+                cpu_usage = vm_data.get('cpu_usage')
+                mem_usage = vm_data.get('memory_usage')
+                uptime_sec = vm_data.get('uptime_seconds')
+                try:
+                    cpu_usage = float(cpu_usage) if cpu_usage is not None else None
+                except (TypeError, ValueError):
+                    cpu_usage = None
+                try:
+                    mem_usage = float(mem_usage) if mem_usage is not None else None
+                except (TypeError, ValueError):
+                    mem_usage = None
+                try:
+                    uptime_sec = int(float(uptime_sec)) if uptime_sec is not None else None
+                except (TypeError, ValueError):
+                    uptime_sec = None
+
+                if logging.getLogger().isEnabledFor(logging.DEBUG):
+                    logging.debug(
+                        "VM sync: name=%s status_raw=%s status_norm=%s cpu=%s mem=%s uptime=%s",
+                        name, raw_status, normalized_status, cpu_usage, mem_usage, uptime_sec
+                    )
                 if not vm:
                     vm = TrackedVM.objects.create(
                         name=name,
                         status=normalized_status,
-                        cpu_usage=vm_data.get('cpu_usage'),
-                        memory_usage=vm_data.get('memory_usage'),
-                        uptime_seconds=vm_data.get('uptime_seconds'),
+                        cpu_usage=cpu_usage,
+                        memory_usage=mem_usage,
+                        uptime_seconds=uptime_sec,
                         last_seen=now,
                         host_device=host_device,
                         is_enabled=True,
@@ -736,9 +771,9 @@ class TrackedVMViewSet(viewsets.ModelViewSet):
                     continue
 
                 vm.status = normalized_status
-                vm.cpu_usage = vm_data.get('cpu_usage')
-                vm.memory_usage = vm_data.get('memory_usage')
-                vm.uptime_seconds = vm_data.get('uptime_seconds')
+                vm.cpu_usage = cpu_usage
+                vm.memory_usage = mem_usage
+                vm.uptime_seconds = uptime_sec
                 vm.last_seen = now
                 if host_device:
                     vm.host_device = host_device
@@ -750,9 +785,6 @@ class TrackedVMViewSet(viewsets.ModelViewSet):
                     labels = {'vm': name}
                     if vm.id:
                         labels['vm_id'] = vm.id
-                    cpu_usage = vm_data.get('cpu_usage')
-                    mem_usage = vm_data.get('memory_usage')
-                    uptime_sec = vm_data.get('uptime_seconds')
                     if cpu_usage is not None:
                         vm_metrics.append(RawMetric(
                             device=host_device,
