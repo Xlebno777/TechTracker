@@ -1,4 +1,5 @@
 import qrcode
+import logging
 import io
 import ipaddress
 import re
