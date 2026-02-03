@@ -645,24 +645,35 @@ def _read_hw_monitor_temps(namespace):
 
 
 def _parse_timespan(value):
-    if not value:
-        return 0
-    text = str(value)
-    # Formats: "DD.HH:MM:SS" or "HH:MM:SS"
+    if value is None:
+        return None
+
+    if isinstance(value, dict):
+        try:
+            days = int(value.get('Days', 0) or 0)
+            hours = int(value.get('Hours', 0) or 0)
+            minutes = int(value.get('Minutes', 0) or 0)
+            seconds = int(value.get('Seconds', 0) or 0)
+            return days * 86400 + hours * 3600 + minutes * 60 + seconds
+        except Exception:
+            return None
+
+    text = str(value).strip()
+    if not text:
+        return None
+
+    match = re.match(r'(?:(\d+)\.)?(\d+):(\d+):(\d+)(?:\.(\d+))?$', text)
+    if not match:
+        return None
+
     try:
-        if '.' in text:
-            days_part, time_part = text.split('.', 1)
-            days = int(days_part)
-        else:
-            days = 0
-            time_part = text
-        parts = time_part.split(':')
-        if len(parts) != 3:
-            return 0
-        hours, minutes, seconds = [int(p) for p in parts]
+        days = int(match.group(1) or 0)
+        hours = int(match.group(2) or 0)
+        minutes = int(match.group(3) or 0)
+        seconds = int(match.group(4) or 0)
         return days * 86400 + hours * 3600 + minutes * 60 + seconds
     except Exception:
-        return 0
+        return None
 
 
 def collect_hyperv_vm_status():
@@ -696,7 +707,13 @@ def collect_hyperv_vm_status():
         mem_usage = None
         if mem_assigned > 0:
             mem_usage = (mem_demand / mem_assigned) * 100.0
-        uptime = _parse_timespan(item.get('Uptime'))
+        uptime_raw = item.get('Uptime')
+        uptime = _parse_timespan(uptime_raw)
+        if logging.getLogger().isEnabledFor(logging.DEBUG):
+            logging.debug(
+                "VM raw: name=%s state=%s cpu=%s mem_assigned=%s mem_demand=%s uptime_raw=%s uptime_parsed=%s",
+                name, status, cpu_usage, mem_assigned, mem_demand, uptime_raw, uptime
+            )
         vms.append({
             'name': name,
             'status': status,

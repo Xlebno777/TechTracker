@@ -658,6 +658,16 @@ class AgentStatusViewSet(viewsets.ReadOnlyModelViewSet):
 
 def _normalize_vm_status(value):
     raw = (value or '').strip().lower()
+    if raw.isdigit():
+        code = int(raw)
+        if code == 2:
+            return 'running'
+        if code == 3:
+            return 'off'
+        if code == 6:
+            return 'saved'
+        if code == 9:
+            return 'paused'
     if raw in ('running', 'on', 'started', 'работает', 'включена', 'включен', 'запущена', 'запущен'):
         return 'running'
     if raw in ('off', 'stopped', 'poweroff', 'poweredoff', 'выключена', 'выключен', 'остановлена', 'остановлен'):

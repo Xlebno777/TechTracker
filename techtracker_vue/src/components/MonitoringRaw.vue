@@ -101,8 +101,8 @@ const AUTO_REFRESH_MS = 60 * 1000;
 const SERIES_LIMIT = 5000;
 
 const stepOptions = [
-  { label: 'Минута', stepMinutes: 1, rangeMinutes: 120 },
-  { label: 'Час', stepMinutes: 60, rangeMinutes: 24 * 60 },
+  { label: 'Минута', stepMinutes: 1, rangeMinutes: 24 * 60 },
+  { label: 'Час', stepMinutes: 60, rangeMinutes: 7 * 24 * 60 },
   { label: 'День', stepMinutes: 1440, rangeMinutes: 30 * 24 * 60 },
   { label: 'Неделя', stepMinutes: 10080, rangeMinutes: 180 * 24 * 60 },
   { label: 'Месяц', stepMinutes: 43200, rangeMinutes: 365 * 24 * 60 }
@@ -188,9 +188,16 @@ const formatNumber = (value, unit = '') => {
   return `${value.toFixed(1)}${unit ? ` ${unit}` : ''}`;
 };
 
-const formatTime = (timestamp) => {
+const formatLabel = (timestamp) => {
   const date = new Date(timestamp);
-  return date.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+  if (Number.isNaN(date.getTime())) return '';
+  const pad = (value) => String(value).padStart(2, '0');
+  const hh = pad(date.getHours());
+  const mm = pad(date.getMinutes());
+  const dd = pad(date.getDate());
+  const MM = pad(date.getMonth() + 1);
+  const yyyy = date.getFullYear();
+  return `${hh}:${mm} ${dd}:${MM}:${yyyy}`;
 };
 
 const initChartOptions = () => {
@@ -202,7 +209,16 @@ const initChartOptions = () => {
     maintainAspectRatio: false,
     plugins: { legend: { labels: { color: textColor } } },
     scales: {
-      x: { ticks: { color: textColorSecondary }, grid: { color: surfaceBorder } },
+      x: {
+        ticks: {
+          color: textColorSecondary,
+          callback: function(value) {
+            const label = this.getLabelForValue(value) || '';
+            return label.split(' ')[0] || label;
+          }
+        },
+        grid: { color: surfaceBorder }
+      },
       y: { ticks: { color: textColorSecondary }, grid: { color: surfaceBorder } }
     }
   };
@@ -215,7 +231,16 @@ const initChartOptions = () => {
     maintainAspectRatio: false,
     plugins: { legend: { labels: { color: textColor } } },
     scales: {
-      x: { ticks: { color: textColorSecondary }, grid: { color: surfaceBorder } },
+      x: {
+        ticks: {
+          color: textColorSecondary,
+          callback: function(value) {
+            const label = this.getLabelForValue(value) || '';
+            return label.split(' ')[0] || label;
+          }
+        },
+        grid: { color: surfaceBorder }
+      },
       y: { ticks: { color: textColorSecondary }, grid: { color: surfaceBorder } }
     }
   };
@@ -291,7 +316,7 @@ const rebuildCharts = () => {
   const netSentSeries = bucketSeries(rawSeries.value.netSent, step);
 
   charts.value.cpu.data = {
-    labels: cpuSeries.map(p => formatTime(p.time)),
+    labels: cpuSeries.map(p => formatLabel(p.time)),
     datasets: [{
       label: 'CPU %',
       data: cpuSeries.map(p => p.value),
@@ -303,7 +328,7 @@ const rebuildCharts = () => {
   };
 
   charts.value.mem.data = {
-    labels: memSeries.map(p => formatTime(p.time)),
+    labels: memSeries.map(p => formatLabel(p.time)),
     datasets: [{
       label: 'RAM %',
       data: memSeries.map(p => p.value),
@@ -315,7 +340,7 @@ const rebuildCharts = () => {
   };
 
   charts.value.net.data = {
-    labels: netRecvSeries.map(p => formatTime(p.time)),
+    labels: netRecvSeries.map(p => formatLabel(p.time)),
     datasets: [
       {
         label: 'Rx KB/s',
@@ -337,7 +362,7 @@ const rebuildCharts = () => {
   };
 
   charts.value.ping.data = {
-    labels: pingSeries.map(p => formatTime(p.time)),
+    labels: pingSeries.map(p => formatLabel(p.time)),
     datasets: [{
       label: 'Ping ms',
       data: pingSeries.map(p => p.value),
