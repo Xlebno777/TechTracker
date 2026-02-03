@@ -528,7 +528,6 @@ class RawMetricViewSet(viewsets.ReadOnlyModelViewSet):
     def get_queryset(self):
         qs = super().get_queryset()
         since_minutes = self.request.query_params.get('since_minutes')
-        limit = self.request.query_params.get('limit')
         if since_minutes:
             try:
                 minutes = int(since_minutes)
@@ -536,14 +535,27 @@ class RawMetricViewSet(viewsets.ReadOnlyModelViewSet):
                     qs = qs.filter(timestamp__gte=timezone.now() - timedelta(minutes=minutes))
             except ValueError:
                 pass
+        return qs
+
+    def list(self, request, *args, **kwargs):
+        queryset = self.filter_queryset(self.get_queryset())
+
+        limit = request.query_params.get('limit')
         if limit:
             try:
                 limit_val = int(limit)
                 if limit_val > 0:
-                    qs = qs[:limit_val]
+                    queryset = queryset[:limit_val]
             except ValueError:
                 pass
-        return qs
+
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data)
 
     @action(detail=False, methods=['post'], permission_classes=[MetricsAgentPermission])
     def ingest(self, request):
