@@ -1,6 +1,9 @@
+import json
 import math
+import os
 from datetime import timedelta
 
+import requests
 from django.utils import timezone
 
 from inventory_api.models import RawMetric, ComputedMetric
@@ -439,6 +442,157 @@ def build_diagnostic_report(device):
         'raw_latest': raw_latest,
         'computed_latest': computed_latest,
         'active_rules': [i['id'] for i in issues],
+        'rule_issues': issues,
     }
 
+    return report, payload
+
+
+def _load_prompt_template(payload):
+    template = None
+    try:
+        from django.conf import settings
+        path = os.path.join(settings.BASE_DIR, 'LLM_PROMPT_TEMPLATE.md')
+        with open(path, 'r', encoding='utf-8') as handle:
+            template = handle.read()
+    except Exception:
+        template = None
+
+    if template and 'SYSTEM:' in template and 'USER:' in template:
+        system_part = template.split('SYSTEM:', 1)[1].split('USER:', 1)[0].strip()
+        user_part = template.split('USER:', 1)[1].strip()
+    else:
+        system_part = (
+            "You are a diagnostic assistant for system administrators. "
+            "Use only the provided data. If data is missing, say so. "
+            "Provide a concise summary, then issues with evidence and recommendations. "
+            "Do not invent metrics or devices."
+        )
+        user_part = (
+            "You are given JSON with raw metrics, computed metrics, agent status, and active rules. "
+            "Use all metrics. Analyze 3 windows: last 1h, 24h, 7d. "
+            "Produce a diagnostic report.\n\n"
+            "INPUT JSON:\n```{{DIAGNOSTIC_PAYLOAD_JSON}}```\n\n"
+            "REQUIRED OUTPUT (JSON):\n"
+            "{\n"
+            '  "summary": "...",\n'
+            '  "severity": "low|medium|high|critical",\n'
+            '  "issues": [\n'
+            '    {\n'
+            '      "id": "mem_leak",\n'
+            '      "title": "Possible memory leak",\n'
+            '      "severity": "high",\n'
+            '      "evidence": ["mem_trend_24h=0.8", "swap_active_ratio_24h=0.2"],\n'
+            '      "explanation": "...",\n'
+            '      "recommendation": "..." \n'
+            '    }\n'
+            "  ],\n"
+            '  "recommendations": ["...", "..."],\n'
+            '  "confidence": 0.0\n'
+            "}\n\n"
+            "NOTES:\n"
+            "- Use evidence from input only.\n"
+            "- If no issues, return empty issues array and recommend \"No action required\".\n"
+            "- Keep summary under 2 sentences."
+        )
+
+    payload_json = json.dumps(payload, ensure_ascii=False)
+    user_part = user_part.replace('{{DIAGNOSTIC_PAYLOAD_JSON}}', payload_json)
+    return system_part, user_part
+
+
+def _extract_json(text):
+    try:
+        return json.loads(text)
+    except Exception:
+        pass
+    if not text:
+        return None
+    start = text.find('{')
+    end = text.rfind('}')
+    if start == -1 or end == -1 or end <= start:
+        return None
+    snippet = text[start:end + 1]
+    try:
+        return json.loads(snippet)
+    except Exception:
+        return None
+
+
+def _run_groq_llm(payload):
+    api_key = os.environ.get('GROQ_API_KEY')
+    if not api_key:
+        return None, 'GROQ_API_KEY is not set'
+
+    base_url = os.environ.get('GROQ_BASE_URL', 'https://api.groq.com/openai/v1')
+    model = os.environ.get('GROQ_MODEL', 'llama-3.1-8b-instant')
+    timeout = int(os.environ.get('GROQ_TIMEOUT_SEC', '45'))
+
+    system_part, user_part = _load_prompt_template(payload)
+    req = {
+        'model': model,
+        'temperature': 0.2,
+        'max_tokens': 800,
+        'messages': [
+            {'role': 'system', 'content': system_part},
+            {'role': 'user', 'content': user_part},
+        ],
+    }
+
+    try:
+        resp = requests.post(
+            f"{base_url}/chat/completions",
+            headers={
+                'Authorization': f"Bearer {api_key}",
+                'Content-Type': 'application/json',
+            },
+            json=req,
+            timeout=timeout,
+        )
+        if resp.status_code >= 400:
+            return None, f"Groq error {resp.status_code}: {resp.text[:300]}"
+        data = resp.json()
+        content = data['choices'][0]['message']['content']
+        parsed = _extract_json(content)
+        if not parsed:
+            return None, "Groq response not JSON"
+        return parsed, None
+    except Exception as exc:
+        return None, str(exc)
+
+
+def generate_diagnostic_report(device, mode=None):
+    local_report, payload = build_diagnostic_report(device)
+
+    provider = os.environ.get('LLM_PROVIDER', 'local').lower()
+    if mode == 'rules':
+        payload['llm_used'] = False
+        payload['llm_provider'] = provider
+        payload['llm_mode'] = 'rules'
+        return local_report, payload
+    if provider != 'groq':
+        payload['llm_used'] = False
+        payload['llm_provider'] = provider
+        payload['llm_mode'] = 'rules'
+        return local_report, payload
+
+    llm_report, err = _run_groq_llm(payload)
+    if not llm_report:
+        payload['llm_used'] = False
+        payload['llm_provider'] = 'groq'
+        payload['llm_mode'] = 'rules'
+        payload['llm_error'] = err
+        return local_report, payload
+
+    report = {
+        'summary': llm_report.get('summary') or local_report['summary'],
+        'severity': llm_report.get('severity') or local_report['severity'],
+        'issues': llm_report.get('issues') or local_report['issues'],
+        'recommendations': llm_report.get('recommendations') or local_report['recommendations'],
+        'confidence': llm_report.get('confidence', local_report.get('confidence', 0.0)),
+    }
+    payload['llm_used'] = True
+    payload['llm_provider'] = 'groq'
+    payload['llm_mode'] = 'llm'
+    payload['llm_model'] = os.environ.get('GROQ_MODEL', 'llama-3.1-8b-instant')
     return report, payload

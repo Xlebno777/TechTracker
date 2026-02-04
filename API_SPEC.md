@@ -149,6 +149,17 @@ Response:
 - `GET /api/diagnostics/latest/?serial=HOST-SERIAL` -> latest report for a device
 - `GET /api/diagnostics/` -> list reports (admin)
 
+Environment (optional):
+- `LLM_PROVIDER=groq` to enable Groq calls
+- `GROQ_API_KEY` (required when provider is groq)
+- `GROQ_MODEL` (default: `llama-3.1-8b-instant`)
+- `GROQ_BASE_URL` (default: `https://api.groq.com/openai/v1`)
+
+Request body (optional):
+```json
+{"serial": "OPTIONAL-SERIAL", "mode": "llm|rules"}
+```
+
 Response (example):
 ```json
 {

@@ -363,6 +363,7 @@ class DiagnosticReportSerializer(serializers.ModelSerializer):
 
 class DiagnosticRunSerializer(serializers.Serializer):
     serial = serializers.CharField(required=False, allow_blank=True)
+    mode = serializers.ChoiceField(choices=['llm', 'rules'], required=False)
 
 
 class RawMetricItemSerializer(serializers.Serializer):

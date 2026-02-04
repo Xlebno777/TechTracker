@@ -6,7 +6,21 @@
         <h2 class="text-2xl font-bold m-0 text-900">Диагностика (ИИ)</h2>
         <p class="text-500 m-0">Краткий диагноз по метрикам и правилам</p>
       </div>
-      <div class="flex align-items-center gap-2">
+      <div class="flex flex-wrap align-items-center gap-2">
+        <div class="mode-toggle">
+          <Button
+            :outlined="mode !== 'llm'"
+            :severity="mode === 'llm' ? 'primary' : 'secondary'"
+            label="LLM"
+            @click="mode = 'llm'"
+          />
+          <Button
+            :outlined="mode !== 'rules'"
+            :severity="mode === 'rules' ? 'primary' : 'secondary'"
+            label="Rules"
+            @click="mode = 'rules'"
+          />
+        </div>
         <Button icon="pi pi-refresh" label="Запустить анализ" rounded @click="runAnalysis" :loading="running" />
       </div>
     </div>
@@ -22,8 +36,14 @@
         </div>
       </div>
 
-      <div class="text-500 text-sm mb-3">
-        Обновлено: {{ formatTime(report.created_at) }}
+      <div class="text-500 text-sm mb-3 meta-row">
+        <span>Обновлено: {{ formatTime(report.created_at) }}</span>
+        <span v-if="modeLabel" class="mode-badge">{{ modeLabel }}</span>
+      </div>
+
+      <div v-if="fallbackReason" class="fallback-note">
+        <i class="pi pi-info-circle"></i>
+        <span>{{ fallbackReason }}</span>
       </div>
 
       <div class="section-title">Рекомендации</div>
@@ -73,6 +93,9 @@ import { useToast } from 'primevue/usetoast';
 const toast = useToast();
 const running = ref(false);
 const report = ref(null);
+const mode = ref('llm');
+const modeLabel = ref('');
+const fallbackReason = ref('');
 
 const severityLabel = (value) => {
   if (value === 'critical') return 'Критично';
@@ -104,15 +127,18 @@ const loadLatest = async () => {
   try {
     const res = await apiClient.get('diagnostics/latest/');
     report.value = res.data;
+    updateModeInfo(res.data);
   } catch (e) {
     report.value = null;
+    modeLabel.value = '';
+    fallbackReason.value = '';
   }
 };
 
 const runAnalysis = async () => {
   running.value = true;
   try {
-    await apiClient.post('diagnostics/run/', {});
+    await apiClient.post('diagnostics/run/', { mode: mode.value });
     await loadLatest();
     toast.add({ severity: 'success', summary: 'Готово', detail: 'Анализ выполнен', life: 2500 });
   } catch (e) {
@@ -121,6 +147,35 @@ const runAnalysis = async () => {
   } finally {
     running.value = false;
   }
+};
+
+const updateModeInfo = (data) => {
+  const payload = data?.payload || {};
+  const llmUsed = payload?.llm_used;
+  const llmMode = payload?.llm_mode;
+  const provider = payload?.llm_provider;
+  const model = payload?.llm_model;
+
+  if (llmUsed) {
+    modeLabel.value = `LLM (${provider || 'provider'}) ${model ? `• ${model}` : ''}`.trim();
+    fallbackReason.value = '';
+    return;
+  }
+
+  modeLabel.value = 'Rules';
+  if (llmMode === 'rules') {
+    fallbackReason.value = 'Выбран режим Rules — ИИ не использовался.';
+    return;
+  }
+  if (payload?.llm_error) {
+    fallbackReason.value = `Fallback на Rules: ${payload.llm_error}`;
+    return;
+  }
+  if (provider && provider !== 'groq') {
+    fallbackReason.value = `Fallback на Rules: LLM_PROVIDER=${provider}`;
+    return;
+  }
+  fallbackReason.value = 'Fallback на Rules: LLM недоступен.';
 };
 
 onMounted(() => {
@@ -153,11 +208,43 @@ onMounted(() => {
   padding-left: 1.2rem;
   color: #334155;
 }
+.mode-toggle {
+  display: inline-flex;
+  gap: 0.35rem;
+  padding: 0.25rem;
+  border-radius: 999px;
+  background: #f1f5f9;
+}
 .severity-pill {
   padding: 0.35rem 0.75rem;
   border-radius: 999px;
   font-weight: 600;
   font-size: 0.85rem;
+}
+.mode-badge {
+  background: #e2e8f0;
+  color: #334155;
+  padding: 0.2rem 0.6rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+.meta-row {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.fallback-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: 10px;
+  background: rgba(148, 163, 184, 0.15);
+  color: #475569;
+  font-size: 0.85rem;
+  margin-bottom: 0.75rem;
 }
 .severity-low {
   color: #16a34a;

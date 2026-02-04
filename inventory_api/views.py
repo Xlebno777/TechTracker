@@ -38,7 +38,7 @@ from .serializers import (
     DiagnosticReportSerializer, DiagnosticRunSerializer
 )
 from .permissions import PrintJobPermission, PrinterAgentPermission, MetricsAgentPermission, VMStatusAgentPermission, AdminGroupPermission
-from .diagnostics import build_diagnostic_report
+from .diagnostics import generate_diagnostic_report
 from django.utils import timezone
 from datetime import timedelta
 
@@ -674,6 +674,7 @@ class DiagnosticReportViewSet(viewsets.ReadOnlyModelViewSet):
         serializer = DiagnosticRunSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         serial = serializer.validated_data.get('serial') or None
+        mode = serializer.validated_data.get('mode')
 
         devices = Device.objects.all()
         if serial:
@@ -683,7 +684,7 @@ class DiagnosticReportViewSet(viewsets.ReadOnlyModelViewSet):
 
         created = []
         for device in devices:
-            report, payload = build_diagnostic_report(device)
+            report, payload = generate_diagnostic_report(device, mode=mode)
             created.append(DiagnosticReport.objects.create(
                 device=device,
                 summary=report['summary'],
