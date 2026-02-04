@@ -401,11 +401,11 @@ class DiagnosticReport(models.Model):
         verbose_name_plural = "Диагностические отчеты"
         ordering = ['-created_at']
         indexes = [
-            models.Index(fields=['device', 'status', '-updated_at']),
-            models.Index(fields=['status', '-updated_at']),
+            models.Index(fields=['device', 'severity', '-created_at']),
+            models.Index(fields=['severity', '-created_at']),
         ]
 
     def __str__(self):
-        return f"{self.device.name} - {self.status}"
+        return f"{self.device.name} - {self.severity}"
 
 # ... другие модели (например, Request для заявок)
