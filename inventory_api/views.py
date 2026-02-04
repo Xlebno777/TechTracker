@@ -25,7 +25,7 @@ from .models import (
     Device, DeviceType, Location, UserProfile,
     ComputerSpecs, PrinterScannerSpecs, NetworkDeviceSpecs,
     Cartridge, CartridgeLog, Log, Metric, PrintJob,
-    MonitoringSetting, RawMetric, TrackedVM, ComputedMetric, AgentStatus
+    MonitoringSetting, RawMetric, TrackedVM, ComputedMetric, AgentStatus, DiagnosticReport
 )
 from .serializers import (
     DeviceSerializer, DeviceCreateUpdateSerializer,
@@ -34,9 +34,11 @@ from .serializers import (
     PrinterScannerSpecsSerializer, NetworkDeviceSpecsSerializer,
     CartridgeSerializer, CartridgeLogSerializer, LogSerializer, UserSerializer,
     MetricSerializer, PrintJobSerializer, RawMetricSerializer, RawMetricIngestSerializer,
-    TrackedVMSerializer, TrackedVMSyncSerializer, ComputedMetricSerializer, AgentStatusSerializer, AgentStatusReportSerializer
+    TrackedVMSerializer, TrackedVMSyncSerializer, ComputedMetricSerializer, AgentStatusSerializer, AgentStatusReportSerializer,
+    DiagnosticReportSerializer, DiagnosticRunSerializer
 )
-from .permissions import PrintJobPermission, PrinterAgentPermission, MetricsAgentPermission, VMStatusAgentPermission
+from .permissions import PrintJobPermission, PrinterAgentPermission, MetricsAgentPermission, VMStatusAgentPermission, AdminGroupPermission
+from .diagnostics import build_diagnostic_report
 from django.utils import timezone
 from datetime import timedelta
 
@@ -655,6 +657,64 @@ class AgentStatusViewSet(viewsets.ReadOnlyModelViewSet):
             }
         )
         return Response({"detail": "ok"}, status=status.HTTP_200_OK)
+
+
+class DiagnosticReportViewSet(viewsets.ReadOnlyModelViewSet):
+    queryset = DiagnosticReport.objects.all()
+    serializer_class = DiagnosticReportSerializer
+    permission_classes = [AdminGroupPermission]
+
+    filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
+    filterset_fields = ['device', 'severity']
+    ordering_fields = ['created_at']
+    ordering = ['-created_at']
+
+    @action(detail=False, methods=['post'], permission_classes=[AdminGroupPermission])
+    def run(self, request):
+        serializer = DiagnosticRunSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        serial = serializer.validated_data.get('serial') or None
+
+        devices = Device.objects.all()
+        if serial:
+            devices = devices.filter(serial_number=serial)
+        if not devices.exists():
+            return Response({"detail": "Device not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        created = []
+        for device in devices:
+            report, payload = build_diagnostic_report(device)
+            created.append(DiagnosticReport.objects.create(
+                device=device,
+                summary=report['summary'],
+                severity=report['severity'],
+                issues=report['issues'],
+                recommendations=report['recommendations'],
+                payload=payload,
+            ))
+
+        if serial and created:
+            return Response(DiagnosticReportSerializer(created[0]).data, status=status.HTTP_200_OK)
+        return Response({"created": len(created)}, status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=['get'])
+    def latest(self, request):
+        serial = request.query_params.get('serial')
+        device_id = request.query_params.get('device')
+
+        qs = DiagnosticReport.objects.all()
+        if serial:
+            device = Device.objects.filter(serial_number=serial).first()
+            if not device:
+                return Response({"detail": "Device not found"}, status=status.HTTP_404_NOT_FOUND)
+            qs = qs.filter(device=device)
+        if device_id:
+            qs = qs.filter(device_id=device_id)
+
+        report = qs.order_by('-created_at').first()
+        if not report:
+            return Response({"detail": "No diagnostic report yet"}, status=status.HTTP_404_NOT_FOUND)
+        return Response(DiagnosticReportSerializer(report).data, status=status.HTTP_200_OK)
 
 
 def _normalize_vm_status(value):

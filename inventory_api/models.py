@@ -378,6 +378,28 @@ class AgentStatus(models.Model):
         verbose_name = "Статус агента"
         verbose_name_plural = "Статусы агентов"
         ordering = ['-updated_at']
+
+
+class DiagnosticReport(models.Model):
+    SEVERITY_CHOICES = [
+        ('low', 'Low'),
+        ('medium', 'Medium'),
+        ('high', 'High'),
+        ('critical', 'Critical'),
+    ]
+
+    device = models.ForeignKey(Device, on_delete=models.CASCADE, related_name='diagnostic_reports')
+    summary = models.TextField()
+    severity = models.CharField(max_length=20, choices=SEVERITY_CHOICES, default='low')
+    issues = models.JSONField(default=list, blank=True)
+    recommendations = models.JSONField(default=list, blank=True)
+    payload = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Диагностический отчет"
+        verbose_name_plural = "Диагностические отчеты"
+        ordering = ['-created_at']
         indexes = [
             models.Index(fields=['device', 'status', '-updated_at']),
             models.Index(fields=['status', '-updated_at']),

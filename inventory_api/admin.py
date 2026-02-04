@@ -5,7 +5,7 @@ from import_export.admin import ImportExportModelAdmin
 from .models import (
     Device, DeviceType, Location, UserProfile, ComputerSpecs, PrinterScannerSpecs,
     NetworkDeviceSpecs, Cartridge, CartridgeLog, Log, Metric,
-    MonitoringSetting, RawMetric, TrackedVM, ComputedMetric, AgentStatus
+    MonitoringSetting, RawMetric, TrackedVM, ComputedMetric, AgentStatus, DiagnosticReport
 )
 
 @admin.register(DeviceType)
@@ -175,3 +175,10 @@ class AgentStatusAdmin(admin.ModelAdmin):
     list_display = ('device', 'status', 'updated_at')
     list_filter = ('status', 'device')
     search_fields = ('device__name', 'device__serial_number', 'message')
+
+
+@admin.register(DiagnosticReport)
+class DiagnosticReportAdmin(admin.ModelAdmin):
+    list_display = ('device', 'severity', 'created_at')
+    list_filter = ('severity', 'device')
+    search_fields = ('device__name', 'summary')

@@ -141,12 +141,20 @@ class Command(BaseCommand):
                 points = next(iter(cpu_groups.values()))['points']
                 slope = _linear_slope(points)
                 _add_metric(metrics_out, device, 'cpu_trend_24h', slope, '%/h', '24h')
+                vals = [v for _, v in points]
+                if vals:
+                    _add_metric(metrics_out, device, 'cpu_peak_24h', max(vals), '%', '24h')
+                    _add_metric(metrics_out, device, 'cpu_variance_24h', _variance(vals), '%^2', '24h')
 
             mem_groups = _group_series(device, 'mem_usage_percent', now - timedelta(hours=24))
             if mem_groups:
                 points = next(iter(mem_groups.values()))['points']
                 slope = _linear_slope(points)
                 _add_metric(metrics_out, device, 'mem_trend_24h', slope, '%/h', '24h')
+                vals = [v for _, v in points]
+                if vals:
+                    _add_metric(metrics_out, device, 'mem_peak_24h', max(vals), '%', '24h')
+                    _add_metric(metrics_out, device, 'mem_variance_24h', _variance(vals), '%^2', '24h')
 
             # --- Disk fill rate (per disk) ---
             disk_groups = _group_series(device, 'disk_usage_percent', now - timedelta(days=7))
@@ -161,6 +169,7 @@ class Command(BaseCommand):
                     continue
                 rate = (last_val - first_val) / days
                 _add_metric(metrics_out, device, 'disk_fill_rate_7d', rate, '%/day', '7d', group['labels'])
+                _add_metric(metrics_out, device, 'disk_usage_peak_7d', max(v for _, v in pts), '%', '7d', group['labels'])
 
             # --- Net traffic trend ---
             sent_groups = _group_series(device, 'net_bytes_sent', now - timedelta(hours=24))
@@ -193,6 +202,7 @@ class Command(BaseCommand):
                         _add_metric(metrics_out, device, 'ping_spike_count_1h', spike_count, 'count', '1h')
                 jitter = _stddev(vals)
                 _add_metric(metrics_out, device, 'ping_jitter_1h', jitter, 'ms', '1h')
+                _add_metric(metrics_out, device, 'ping_peak_1h', max(vals), 'ms', '1h')
 
             # --- Temperature ---
             temp_24h = _group_series(device, 'system_temperature', now - timedelta(hours=24))
@@ -223,6 +233,39 @@ class Command(BaseCommand):
                 if vals:
                     ratio = sum(1 for v in vals if v > 0) / len(vals)
                     _add_metric(metrics_out, device, 'swap_active_ratio_24h', ratio, 'ratio', '24h')
+
+            # --- Net error frequency ---
+            err_in = _group_series(device, 'net_errors_in', now - timedelta(hours=1))
+            err_out = _group_series(device, 'net_errors_out', now - timedelta(hours=1))
+            if err_in:
+                vals = [v for _, v in next(iter(err_in.values()))['points']]
+                if vals:
+                    _add_metric(metrics_out, device, 'net_errors_in_rate_1h', sum(vals) / len(vals), 'count', '1h')
+                    _add_metric(metrics_out, device, 'net_errors_in_burst_count_1h', sum(1 for v in vals if v > 0), 'count', '1h')
+            if err_out:
+                vals = [v for _, v in next(iter(err_out.values()))['points']]
+                if vals:
+                    _add_metric(metrics_out, device, 'net_errors_out_rate_1h', sum(vals) / len(vals), 'count', '1h')
+                    _add_metric(metrics_out, device, 'net_errors_out_burst_count_1h', sum(1 for v in vals if v > 0), 'count', '1h')
+
+            # --- Disk IO anomaly (p95 spikes) ---
+            read_24h = _group_series(device, 'disk_read_bytes', now - timedelta(hours=24))
+            for group in read_24h.values():
+                vals = [v for _, v in group['points']]
+                if len(vals) >= MIN_SAMPLES:
+                    p95 = _percentile(vals, 95)
+                    if p95 is not None:
+                        spikes = sum(1 for v in vals if v > p95)
+                        _add_metric(metrics_out, device, 'disk_read_spike_count_24h', spikes, 'count', '24h', group['labels'])
+
+            write_24h = _group_series(device, 'disk_write_bytes', now - timedelta(hours=24))
+            for group in write_24h.values():
+                vals = [v for _, v in group['points']]
+                if len(vals) >= MIN_SAMPLES:
+                    p95 = _percentile(vals, 95)
+                    if p95 is not None:
+                        spikes = sum(1 for v in vals if v > p95)
+                        _add_metric(metrics_out, device, 'disk_write_spike_count_24h', spikes, 'count', '24h', group['labels'])
 
             # --- Memory leak probability ---
             uptime_24h = _group_series(device, 'uptime_seconds', now - timedelta(hours=24))

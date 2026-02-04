@@ -51,6 +51,11 @@
           <i class="pi pi-shield"></i>
           <span>Диагностика агента</span>
         </router-link>
+
+        <router-link v-if="auth.isAdmin" :to="{ name: 'AiDiagnostics' }" class="nav-link" active-class="active">
+          <i class="pi pi-bolt"></i>
+          <span>Диагностика (ИИ)</span>
+        </router-link>
       </nav>
 
       <div class="nav-footer">

@@ -2,7 +2,7 @@ from rest_framework import serializers
 from .models import (
     Device, DeviceType, Location, UserProfile, ComputerSpecs,
     PrinterScannerSpecs, NetworkDeviceSpecs, Cartridge, CartridgeLog,
-    Log, Metric, PrintJob, MonitoringSetting, RawMetric, TrackedVM, ComputedMetric, AgentStatus
+    Log, Metric, PrintJob, MonitoringSetting, RawMetric, TrackedVM, ComputedMetric, AgentStatus, DiagnosticReport
 )
 from django.utils import timezone
 from django.contrib.auth.models import User, Group
@@ -352,6 +352,17 @@ class AgentStatusReportSerializer(serializers.Serializer):
     serial_number = serializers.CharField()
     status = serializers.ChoiceField(choices=['ok', 'error'])
     message = serializers.CharField(required=False, allow_blank=True, default='')
+
+
+class DiagnosticReportSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = DiagnosticReport
+        fields = '__all__'
+        read_only_fields = ('id', 'created_at')
+
+
+class DiagnosticRunSerializer(serializers.Serializer):
+    serial = serializers.CharField(required=False, allow_blank=True)
 
 
 class RawMetricItemSerializer(serializers.Serializer):

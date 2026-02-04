@@ -56,3 +56,14 @@ class VMStatusAgentPermission(BasePermission):
         if not user or not user.is_authenticated:
             return False
         return _is_admin(user) or user.groups.filter(name='Agent').exists()
+
+
+class AdminGroupPermission(BasePermission):
+    """
+    Allow only staff or users in Admins group.
+    """
+    def has_permission(self, request, view):
+        user = request.user
+        if not user or not user.is_authenticated:
+            return False
+        return _is_admin(user)
