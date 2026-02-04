@@ -46,7 +46,7 @@ def _latest_metrics(device, model, since):
             'code': row.code,
             'value': value,
             'unit': getattr(row, 'unit', '') or '',
-            'timestamp': row.timestamp,
+            'timestamp': row.timestamp.isoformat() if row.timestamp else None,
             'labels': labels,
         })
     return out
@@ -72,7 +72,7 @@ def _latest_computed(device, since):
             'value': value,
             'unit': row.unit or '',
             'window': row.window,
-            'timestamp': row.timestamp,
+            'timestamp': row.timestamp.isoformat() if row.timestamp else None,
             'labels': labels,
         })
     return out
