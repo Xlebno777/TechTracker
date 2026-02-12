@@ -329,6 +329,15 @@ onMounted(() => {
   place-items: center;
 }
 
+:global(html),
+:global(body) {
+  font-family: 'Inter', 'Segoe UI', Roboto, sans-serif;
+}
+
+:global(.p-component) {
+  font-family: 'Inter', 'Segoe UI', Roboto, sans-serif;
+}
+
 :global(.page-shell) {
   width: 100%;
   min-width: 0;

@@ -41,18 +41,6 @@
       </div>
 
       <div class="card p-3 mb-3">
-        <div class="flex flex-wrap gap-2 align-items-center">
-          <span class="text-600">Массовые действия ({{ selectedPaths.length }})</span>
-          <Button label="Вкл" size="small" @click="bulkEnable(true)" :disabled="!selectedPaths.length" />
-          <Button label="Выкл" size="small" severity="secondary" @click="bulkEnable(false)" :disabled="!selectedPaths.length" />
-          <InputNumber v-model="bulkInterval" :min="5" :max="3600" suffix=" c" class="bulk-input" />
-          <Button label="Применить интервал" size="small" severity="secondary" @click="bulkSetInterval" :disabled="!selectedPaths.length" />
-          <Button label="Проверить выбранные" size="small" severity="help" @click="probeSelected" :disabled="!selectedPaths.length" />
-          <Button label="Проверить все" size="small" severity="help" outlined @click="probeAll" />
-        </div>
-      </div>
-
-      <div class="card p-3 mb-3">
         <h4 class="m-0 mb-2">Мастер создания путей</h4>
         <div class="grid">
           <div class="col-12 md:col-3">
@@ -101,6 +89,18 @@
               display="chip"
             />
           </div>
+        </div>
+      </div>
+
+      <div class="card p-3 mb-3">
+        <div class="flex flex-wrap gap-2 align-items-center">
+          <span class="text-600 font-medium">Массовые действия ({{ selectedPaths.length }})</span>
+          <Button label="Вкл" size="small" @click="bulkEnable(true)" :disabled="!selectedPaths.length" />
+          <Button label="Выкл" size="small" severity="secondary" @click="bulkEnable(false)" :disabled="!selectedPaths.length" />
+          <InputNumber v-model="bulkInterval" :min="5" :max="3600" suffix=" c" class="bulk-input" />
+          <Button label="Применить интервал" size="small" severity="secondary" @click="bulkSetInterval" :disabled="!selectedPaths.length" />
+          <Button label="Проверить выбранные" size="small" severity="help" @click="probeSelected" :disabled="!selectedPaths.length" />
+          <Button label="Проверить все" size="small" severity="help" outlined @click="probeAll" />
         </div>
       </div>
 
@@ -228,6 +228,10 @@
               @click="importScannedDevices"
               :disabled="!selectedScanned.length"
             />
+            <div class="flex align-items-center gap-2 ml-auto">
+              <InputSwitch v-model="showOnlyNewScanned" />
+              <span class="text-600 text-sm">Только новые (не в БД)</span>
+            </div>
           </div>
         </div>
       </div>
@@ -237,12 +241,13 @@
           <span>Подсеть: <b>{{ scanStats.cidr || '—' }}</b></span>
           <span>Хостов проверено: <b>{{ scanStats.host_count || 0 }}</b></span>
           <span>Доступно: <b>{{ scanStats.alive_count || 0 }}</b></span>
+          <span>IP обновлено по MAC: <b>{{ scanStats.ip_updated_count || 0 }}</b></span>
           <span>Выбрано: <b>{{ selectedScanned.length }}</b></span>
         </div>
       </div>
 
       <DataTable
-        :value="scannedDevices"
+        :value="filteredScannedDevices"
         v-model:selection="selectedScanned"
         dataKey="ip_address"
         :loading="scanLoading"
@@ -355,58 +360,58 @@
             <Button label="Добавить правило" icon="pi pi-plus" @click="openCreateRuleDialog" />
           </div>
         </div>
-        <DataTable :value="alertRules" :loading="loadingDerived" class="table-compact" stripedRows responsiveLayout="scroll">
-          <Column field="order" header="Порядок">
+        <DataTable :value="alertRules" :loading="loadingDerived" class="table-compact rules-table" stripedRows responsiveLayout="scroll">
+          <Column field="order" header="Порядок" style="min-width: 7rem">
             <template #body="{ data }">
               <InputNumber v-model="data.order" :min="1" :max="10000" class="w-full" />
             </template>
           </Column>
-          <Column field="code" header="Код">
+          <Column field="code" header="Код" style="min-width: 12rem">
             <template #body="{ data }">
               <InputText v-model="data.code" class="w-full" />
             </template>
           </Column>
-          <Column field="name" header="Название">
+          <Column field="name" header="Название" style="min-width: 15rem">
             <template #body="{ data }">
               <InputText v-model="data.name" class="w-full" />
             </template>
           </Column>
-          <Column field="description" header="Описание">
+          <Column field="description" header="Описание" style="min-width: 15rem">
             <template #body="{ data }">
               <InputText v-model="data.description" class="w-full" />
             </template>
           </Column>
-          <Column field="metric_code" header="Метрика">
+          <Column field="metric_code" header="Метрика" style="min-width: 12rem">
             <template #body="{ data }">
               <Dropdown v-model="data.metric_code" :options="metricCodeOptions" optionLabel="label" optionValue="value" class="w-full" />
             </template>
           </Column>
-          <Column field="window" header="Окно">
+          <Column field="window" header="Окно" style="min-width: 8rem">
             <template #body="{ data }">
               <Dropdown v-model="data.window" :options="windowOptions" optionLabel="label" optionValue="value" class="w-full" />
             </template>
           </Column>
-          <Column field="comparison" header="Сравнение">
+          <Column field="comparison" header="Сравнение" style="min-width: 8rem">
             <template #body="{ data }">
               <Dropdown v-model="data.comparison" :options="comparisonOptions" optionLabel="label" optionValue="value" class="w-full" />
             </template>
           </Column>
-          <Column field="threshold_value" header="Порог">
+          <Column field="threshold_value" header="Порог" style="min-width: 8rem">
             <template #body="{ data }">
               <InputNumber v-model="data.threshold_value" :minFractionDigits="0" :maxFractionDigits="2" class="w-full" />
             </template>
           </Column>
-          <Column field="severity" header="Severity">
+          <Column field="severity" header="Severity" style="min-width: 9rem">
             <template #body="{ data }">
               <Dropdown v-model="data.severity" :options="severityOptions" optionLabel="label" optionValue="value" class="w-full" />
             </template>
           </Column>
-          <Column field="enabled" header="Enabled">
+          <Column field="enabled" header="Enabled" style="min-width: 7rem">
             <template #body="{ data }">
               <InputSwitch v-model="data.enabled" />
             </template>
           </Column>
-          <Column header="Действия">
+          <Column header="Действия" style="min-width: 8rem">
             <template #body="{ data }">
               <div class="flex gap-1">
                 <Button icon="pi pi-save" text rounded @click="saveRule(data)" />
@@ -461,7 +466,13 @@
       </div>
     </div>
 
-    <Dialog v-model:visible="pathDialogVisible" modal :header="editingPathId ? 'Редактировать путь' : 'Создать путь'" :style="{ width: '40rem' }">
+    <Dialog
+      v-model:visible="pathDialogVisible"
+      modal
+      :header="editingPathId ? 'Редактировать путь' : 'Создать путь'"
+      :style="{ width: '48rem' }"
+      :breakpoints="{ '960px': '80vw', '640px': '96vw' }"
+    >
       <div class="grid p-fluid">
         <div class="col-12 md:col-6">
           <label class="block mb-2">Источник</label>
@@ -471,19 +482,19 @@
           <label class="block mb-2">Назначение</label>
           <Dropdown v-model="pathForm.dst_device" :options="deviceOptionsWithIp" optionLabel="label" optionValue="value" class="w-full" />
         </div>
-        <div class="col-12 md:col-3">
+        <div class="col-12 md:col-6 lg:col-3">
           <label class="block mb-2">Интервал</label>
           <InputNumber v-model="pathForm.interval_sec" :min="5" :max="3600" suffix=" c" class="w-full" />
         </div>
-        <div class="col-12 md:col-3">
+        <div class="col-12 md:col-6 lg:col-3">
           <label class="block mb-2">Timeout</label>
           <InputNumber v-model="pathForm.timeout_sec" :min="1" :max="120" suffix=" c" class="w-full" />
         </div>
-        <div class="col-12 md:col-3">
+        <div class="col-12 md:col-6 lg:col-3">
           <label class="block mb-2">Пакеты</label>
           <InputNumber v-model="pathForm.packet_count" :min="1" :max="10" class="w-full" />
         </div>
-        <div class="col-12 md:col-3">
+        <div class="col-12 md:col-6 lg:col-3 flex flex-column justify-content-end">
           <label class="block mb-2">Вкл</label>
           <InputSwitch v-model="pathForm.enabled" />
         </div>
@@ -519,7 +530,13 @@
       </div>
     </Dialog>
 
-    <Dialog v-model:visible="ruleDialogVisible" modal header="Добавить правило тревоги" :style="{ width: '44rem' }">
+    <Dialog
+      v-model:visible="ruleDialogVisible"
+      modal
+      header="Добавить правило тревоги"
+      :style="{ width: '52rem' }"
+      :breakpoints="{ '960px': '86vw', '640px': '96vw' }"
+    >
       <div class="grid p-fluid">
         <div class="col-12 md:col-6">
           <label class="block mb-2">Код</label>
@@ -533,31 +550,31 @@
           <label class="block mb-2">Описание</label>
           <InputText v-model="ruleForm.description" placeholder="Что означает тревога" class="w-full" />
         </div>
-        <div class="col-12 md:col-4">
+        <div class="col-12 md:col-6">
           <label class="block mb-2">Метрика</label>
           <Dropdown v-model="ruleForm.metric_code" :options="metricCodeOptions" optionLabel="label" optionValue="value" class="w-full" />
         </div>
-        <div class="col-12 md:col-2">
+        <div class="col-12 md:col-3">
           <label class="block mb-2">Окно</label>
           <Dropdown v-model="ruleForm.window" :options="windowOptions" optionLabel="label" optionValue="value" class="w-full" />
         </div>
-        <div class="col-12 md:col-2">
+        <div class="col-12 md:col-3">
           <label class="block mb-2">Сравнение</label>
           <Dropdown v-model="ruleForm.comparison" :options="comparisonOptions" optionLabel="label" optionValue="value" class="w-full" />
         </div>
-        <div class="col-12 md:col-2">
+        <div class="col-12 md:col-3">
           <label class="block mb-2">Порог</label>
           <InputNumber v-model="ruleForm.threshold_value" :maxFractionDigits="2" class="w-full" />
         </div>
-        <div class="col-12 md:col-2">
+        <div class="col-12 md:col-3">
           <label class="block mb-2">Порядок</label>
           <InputNumber v-model="ruleForm.order" :min="1" :max="10000" class="w-full" />
         </div>
-        <div class="col-12 md:col-4">
+        <div class="col-12 md:col-3">
           <label class="block mb-2">Severity</label>
           <Dropdown v-model="ruleForm.severity" :options="severityOptions" optionLabel="label" optionValue="value" class="w-full" />
         </div>
-        <div class="col-12 md:col-4">
+        <div class="col-12 md:col-3 flex flex-column justify-content-end">
           <label class="block mb-2">Enabled</label>
           <InputSwitch v-model="ruleForm.enabled" />
         </div>
@@ -606,10 +623,12 @@ const selectedScanned = ref([]);
 const scanSuggestions = ref([]);
 const scanCidr = ref('');
 const scanTimeoutMs = ref(600);
+const showOnlyNewScanned = ref(true);
 const scanStats = ref({
   cidr: '',
   host_count: 0,
   alive_count: 0,
+  ip_updated_count: 0,
 });
 const alertRules = ref([]);
 const derivedRows = ref([]);
@@ -806,6 +825,10 @@ const filteredActiveAlerts = computed(() => {
     return severityOk && haystack.includes(search);
   });
 });
+const filteredScannedDevices = computed(() => {
+  if (!showOnlyNewScanned.value) return scannedDevices.value;
+  return scannedDevices.value.filter((item) => !item.existing_device_id);
+});
 
 const stateLabel = (state) => {
   if (state === 'up') return 'UP';
@@ -929,9 +952,24 @@ const runNetworkScan = async () => {
       cidr: res.data?.cidr || scanCidr.value || '',
       host_count: res.data?.host_count || 0,
       alive_count: res.data?.alive_count || 0,
+      ip_updated_count: res.data?.ip_updated_count || 0,
     };
+    if ((res.data?.ip_updated_count || 0) > 0) {
+      toast.add({
+        severity: 'info',
+        summary: 'IP обновлены',
+        detail: `Обновлено IP по MAC: ${res.data.ip_updated_count}`,
+        life: 3000,
+      });
+    }
   } catch (e) {
     scannedDevices.value = [];
+    scanStats.value = {
+      cidr: '',
+      host_count: 0,
+      alive_count: 0,
+      ip_updated_count: 0,
+    };
     const detail = e?.response?.data?.detail || 'Не удалось выполнить сканирование';
     toast.add({ severity: 'error', summary: 'Ошибка', detail, life: 4500 });
   } finally {
@@ -1459,6 +1497,11 @@ onBeforeUnmount(() => {
 .table-compact :deep(.p-inputnumber-input) {
   min-height: 2rem;
 }
+.rules-table :deep(.p-inputnumber),
+.rules-table :deep(.p-dropdown),
+.rules-table :deep(.p-inputtext) {
+  width: 100%;
+}
 .alert-filter {
   min-width: 12rem;
 }
@@ -1522,5 +1565,14 @@ onBeforeUnmount(() => {
 }
 .network-monitoring :deep(.p-dialog .p-dialog-content) {
   overflow-x: hidden;
+}
+
+@media (max-width: 992px) {
+  .bulk-input {
+    width: 7.5rem;
+  }
+  .alert-filter {
+    min-width: 100%;
+  }
 }
 </style>

@@ -500,32 +500,73 @@ class DeviceViewSet(viewsets.ModelViewSet):
 
         items = scan_result.get('results', [])
         ip_values = [item.get('ip_address') for item in items if item.get('ip_address')]
+        mac_values = [
+            normalized for normalized in (
+                _normalize_mac(item.get('mac_address')) for item in items if item.get('mac_address')
+            ) if normalized
+        ]
         existing_by_ip = {
             device.ip_address: device
             for device in Device.objects.filter(ip_address__in=ip_values)
         } if ip_values else {}
+        existing_by_mac = {
+            str(device.mac_address).upper().replace('-', ':'): device
+            for device in Device.objects.filter(mac_address__in=mac_values)
+            if device.mac_address
+        } if mac_values else {}
+
+        ip_updated_count = 0
 
         for item in items:
             existing = None
+            matched_by = None
             ip_address = item.get('ip_address')
             mac_address = _normalize_mac(item.get('mac_address'))
-            if ip_address:
-                existing = existing_by_ip.get(ip_address)
-            if existing is None and mac_address:
-                existing = Device.objects.filter(mac_address__iexact=mac_address).first()
+            existing_ip = existing_by_ip.get(ip_address) if ip_address else None
+            existing_mac = existing_by_mac.get(mac_address) if mac_address else None
+
+            if existing_mac is not None:
+                existing = existing_mac
+                matched_by = 'mac'
+            elif existing_ip is not None:
+                existing = existing_ip
+                matched_by = 'ip'
+
             if existing:
+                # Если IP изменился, но MAC совпал — обновляем IP найденного устройства.
+                if matched_by == 'mac' and ip_address and existing.ip_address != ip_address:
+                    conflict = Device.objects.filter(ip_address=ip_address).exclude(id=existing.id).first()
+                    if conflict is None:
+                        old_ip = existing.ip_address
+                        existing.ip_address = ip_address
+                        existing.save(update_fields=['ip_address', 'updated_at'])
+                        ip_updated_count += 1
+                        item['ip_updated'] = True
+                        item['old_ip_address'] = old_ip
+                        if old_ip and old_ip in existing_by_ip and existing_by_ip[old_ip].id == existing.id:
+                            del existing_by_ip[old_ip]
+                        existing_by_ip[ip_address] = existing
+                    else:
+                        item['ip_updated'] = False
+                        item['ip_update_conflict_device_id'] = conflict.id
+                else:
+                    item['ip_updated'] = False
                 item['existing_device_id'] = existing.id
                 item['existing_device_name'] = existing.name
                 item['existing_serial_number'] = existing.serial_number
+                item['matched_by'] = matched_by
             else:
                 item['existing_device_id'] = None
                 item['existing_device_name'] = None
                 item['existing_serial_number'] = None
+                item['matched_by'] = None
+                item['ip_updated'] = False
 
         return Response({
             "cidr": scan_result.get('cidr'),
             "host_count": scan_result.get('host_count'),
             "alive_count": scan_result.get('alive_count'),
+            "ip_updated_count": ip_updated_count,
             "results": items,
         }, status=status.HTTP_200_OK)
 
