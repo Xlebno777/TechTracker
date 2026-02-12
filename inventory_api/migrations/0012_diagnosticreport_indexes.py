@@ -10,10 +10,10 @@ class Migration(migrations.Migration):
     operations = [
         migrations.AddIndex(
             model_name='diagnosticreport',
-            index=models.Index(fields=['device', 'severity', '-created_at'], name='inventory_d_device__a9a0c0_idx'),
+            index=models.Index(fields=['device', 'severity', '-created_at'], name='inventory_a_device__f1977f_idx'),
         ),
         migrations.AddIndex(
             model_name='diagnosticreport',
-            index=models.Index(fields=['severity', '-created_at'], name='inventory_d_severit_b1da8f_idx'),
+            index=models.Index(fields=['severity', '-created_at'], name='inventory_a_severit_0e3736_idx'),
         ),
     ]

@@ -4,6 +4,7 @@ import io
 import ipaddress
 import re
 import uuid
+from collections import defaultdict
 from django.http import HttpResponse
 from django.core.files.base import ContentFile
 from PIL import Image
@@ -16,6 +17,7 @@ from rest_framework.permissions import IsAuthenticated, DjangoModelPermissions, 
 from django.contrib.auth.models import User
 from django.db import models
 from django.db import IntegrityError
+from django.db import transaction
 from django.db.utils import ProgrammingError
 from django.db.models import Q
 from django_filters.rest_framework import DjangoFilterBackend
@@ -25,7 +27,8 @@ from .models import (
     Device, DeviceType, Location, UserProfile,
     ComputerSpecs, PrinterScannerSpecs, NetworkDeviceSpecs,
     Cartridge, CartridgeLog, Log, Metric, PrintJob,
-    MonitoringSetting, RawMetric, TrackedVM, ComputedMetric, AgentStatus, DiagnosticReport
+    MonitoringSetting, RawMetric, TrackedVM, ComputedMetric, AgentStatus, DiagnosticReport,
+    NetworkPath, NetworkOutage, NetworkAlertRule
 )
 from .serializers import (
     DeviceSerializer, DeviceCreateUpdateSerializer,
@@ -35,10 +38,17 @@ from .serializers import (
     CartridgeSerializer, CartridgeLogSerializer, LogSerializer, UserSerializer,
     MetricSerializer, PrintJobSerializer, RawMetricSerializer, RawMetricIngestSerializer,
     TrackedVMSerializer, TrackedVMSyncSerializer, ComputedMetricSerializer, AgentStatusSerializer, AgentStatusReportSerializer,
-    DiagnosticReportSerializer, DiagnosticRunSerializer
+    DiagnosticReportSerializer, DiagnosticRunSerializer, NetworkPathSerializer, NetworkOutageSerializer,
+    NetworkAlertRuleSerializer
 )
 from .permissions import PrintJobPermission, PrinterAgentPermission, MetricsAgentPermission, VMStatusAgentPermission, AdminGroupPermission
 from .diagnostics import generate_diagnostic_report
+from .network_probe import run_network_probe
+from .network_alerts import (
+    ensure_default_network_alert_rules,
+    evaluate_network_alert_rules,
+    get_network_derived_snapshot,
+)
 from django.utils import timezone
 from datetime import timedelta
 
@@ -716,6 +726,457 @@ class DiagnosticReportViewSet(viewsets.ReadOnlyModelViewSet):
         if not report:
             return Response({"detail": "No diagnostic report yet"}, status=status.HTTP_404_NOT_FOUND)
         return Response(DiagnosticReportSerializer(report).data, status=status.HTTP_200_OK)
+
+
+class NetworkPathViewSet(viewsets.ModelViewSet):
+    queryset = NetworkPath.objects.all().select_related('src_device', 'dst_device')
+    serializer_class = NetworkPathSerializer
+    permission_classes = [AdminGroupPermission]
+
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_fields = ['src_device', 'dst_device', 'enabled', 'last_state']
+    search_fields = ['src_device__name', 'src_device__serial_number', 'dst_device__name', 'dst_device__serial_number']
+    ordering_fields = ['id', 'enabled', 'last_state', 'last_checked_at', 'updated_at', 'created_at']
+    ordering = ['src_device__name', 'dst_device__name']
+
+    @staticmethod
+    def _to_bool(value, default=False):
+        if value is None:
+            return default
+        if isinstance(value, str):
+            return value.strip().lower() in ('1', 'true', 'yes', 'on')
+        return bool(value)
+
+    @staticmethod
+    def _to_int(value, default=None):
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return default
+
+    @staticmethod
+    def _contains_any(text, keywords):
+        raw = (text or '').lower()
+        return any(key in raw for key in keywords)
+
+    def _is_server_device(self, device):
+        type_name = (device.device_type.name if device.device_type else '') or ''
+        name = device.name or ''
+        return self._contains_any(type_name, ('сервер', 'server', 'hyper-v', 'хост')) or self._contains_any(name, ('server', 'srv', 'hyper-v', 'host'))
+
+    def _is_router_device(self, device):
+        type_name = (device.device_type.name if device.device_type else '') or ''
+        name = device.name or ''
+        return self._contains_any(type_name, ('маршрутиз', 'router', 'роутер')) or self._contains_any(name, ('router', 'маршрутиз', 'роутер'))
+
+    def _is_gateway_device(self, device):
+        type_name = (device.device_type.name if device.device_type else '') or ''
+        name = device.name or ''
+        return self._contains_any(type_name, ('шлюз', 'gateway', 'gw')) or self._contains_any(name, ('gateway', 'шлюз', 'gw'))
+
+    def _collect_indicators(self, path_ids):
+        now = timezone.now()
+        since_24h = now - timedelta(hours=24)
+        since_7d = now - timedelta(days=7)
+        path_ids_set = {int(pid) for pid in path_ids}
+        if not path_ids_set:
+            return {}
+        metrics_map = {
+            int(pid): {
+                'samples_24h': 0,
+                'up_24h': 0,
+                'samples_7d': 0,
+                'up_7d': 0,
+                'outage_count_24h': 0,
+                'outage_count_7d': 0,
+                'last_outage_duration_sec': None,
+            }
+            for pid in path_ids_set
+        }
+
+        reach_rows = (
+            RawMetric.objects
+            .filter(code='net_path_reachable', timestamp__gte=since_7d)
+            .values('timestamp', 'value', 'labels')
+        )
+        for row in reach_rows:
+            labels = row.get('labels') or {}
+            path_id = self._to_int(labels.get('path_id'))
+            if path_id not in path_ids_set:
+                continue
+            value = float(row.get('value') or 0.0)
+            ts = row.get('timestamp')
+            metrics_map[path_id]['samples_7d'] += 1
+            if value >= 0.5:
+                metrics_map[path_id]['up_7d'] += 1
+            if ts and ts >= since_24h:
+                metrics_map[path_id]['samples_24h'] += 1
+                if value >= 0.5:
+                    metrics_map[path_id]['up_24h'] += 1
+
+        outages = (
+            NetworkOutage.objects
+            .filter(path_id__in=path_ids_set)
+            .values('path_id', 'started_at', 'ended_at', 'duration_sec', 'is_active')
+        )
+        latest_ended = {}
+        for row in outages:
+            path_id = row['path_id']
+            started_at = row.get('started_at')
+            ended_at = row.get('ended_at')
+            if started_at and started_at >= since_24h:
+                metrics_map[path_id]['outage_count_24h'] += 1
+            if started_at and started_at >= since_7d:
+                metrics_map[path_id]['outage_count_7d'] += 1
+            if ended_at:
+                previous = latest_ended.get(path_id)
+                if previous is None or ended_at > previous:
+                    latest_ended[path_id] = ended_at
+                    metrics_map[path_id]['last_outage_duration_sec'] = row.get('duration_sec')
+
+        for path_id, row in metrics_map.items():
+            s24 = row['samples_24h']
+            s7 = row['samples_7d']
+            row['uptime_24h_pct'] = round((row['up_24h'] / s24) * 100.0, 2) if s24 else None
+            row['uptime_7d_pct'] = round((row['up_7d'] / s7) * 100.0, 2) if s7 else None
+        return metrics_map
+
+    def _attach_indicators(self, payload):
+        if isinstance(payload, list):
+            ids = [item['id'] for item in payload]
+            indicators = self._collect_indicators(ids)
+            for item in payload:
+                item.update(indicators.get(item['id'], {}))
+            return payload
+        if isinstance(payload, dict) and payload.get('id'):
+            indicators = self._collect_indicators([payload['id']])
+            payload.update(indicators.get(payload['id'], {}))
+            return payload
+        return payload
+
+    def list(self, request, *args, **kwargs):
+        queryset = self.filter_queryset(self.get_queryset())
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            data = self._attach_indicators(list(serializer.data))
+            return self.get_paginated_response(data)
+        serializer = self.get_serializer(queryset, many=True)
+        data = self._attach_indicators(list(serializer.data))
+        return Response(data)
+
+    def retrieve(self, request, *args, **kwargs):
+        instance = self.get_object()
+        serializer = self.get_serializer(instance)
+        data = self._attach_indicators(dict(serializer.data))
+        return Response(data)
+
+    @action(detail=False, methods=['post'], permission_classes=[AdminGroupPermission])
+    def probe(self, request):
+        path_id_raw = request.data.get('path_id')
+        path_ids_raw = request.data.get('path_ids')
+        save_metrics = request.data.get('save_metrics', True)
+        respect_interval = request.data.get('respect_interval', False)
+        path_id = None
+        path_ids = None
+
+        if path_id_raw not in (None, ''):
+            try:
+                path_id = int(path_id_raw)
+            except (TypeError, ValueError):
+                return Response({"detail": "path_id must be integer"}, status=status.HTTP_400_BAD_REQUEST)
+        if isinstance(path_ids_raw, list):
+            path_ids = []
+            for raw in path_ids_raw:
+                parsed = self._to_int(raw)
+                if parsed is None:
+                    return Response({"detail": "path_ids must contain integers"}, status=status.HTTP_400_BAD_REQUEST)
+                path_ids.append(parsed)
+
+        if isinstance(save_metrics, str):
+            save_metrics = save_metrics.strip().lower() not in ('0', 'false', 'no')
+        else:
+            save_metrics = bool(save_metrics)
+
+        if isinstance(respect_interval, str):
+            respect_interval = respect_interval.strip().lower() in ('1', 'true', 'yes')
+        else:
+            respect_interval = bool(respect_interval)
+
+        stats = run_network_probe(
+            path_id=path_id,
+            path_ids=path_ids,
+            save_metrics=save_metrics,
+            respect_interval=respect_interval,
+        )
+        return Response(stats, status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=['post'], permission_classes=[AdminGroupPermission])
+    def bulk_update(self, request):
+        ids = request.data.get('ids')
+        if not isinstance(ids, list) or not ids:
+            return Response({"detail": "ids must be non-empty list"}, status=status.HTTP_400_BAD_REQUEST)
+
+        allowed_fields = ['enabled', 'interval_sec', 'timeout_sec', 'packet_count', 'fail_threshold', 'recover_threshold']
+        update_payload = {field: request.data[field] for field in allowed_fields if field in request.data}
+        if not update_payload:
+            return Response({"detail": "No update fields provided"}, status=status.HTTP_400_BAD_REQUEST)
+
+        paths = list(NetworkPath.objects.filter(id__in=ids).select_related('src_device', 'dst_device'))
+        if not paths:
+            return Response({"detail": "No paths found"}, status=status.HTTP_404_NOT_FOUND)
+
+        updated = 0
+        errors = []
+        with transaction.atomic():
+            for path in paths:
+                serializer = self.get_serializer(path, data=update_payload, partial=True)
+                if serializer.is_valid():
+                    serializer.save()
+                    updated += 1
+                else:
+                    errors.append({'id': path.id, 'errors': serializer.errors})
+
+        return Response({'updated': updated, 'errors': errors}, status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=['post'], permission_classes=[AdminGroupPermission])
+    def generate_template(self, request):
+        template = (request.data.get('template') or '').strip().lower()
+        update_existing = self._to_bool(request.data.get('update_existing'), False)
+        defaults = request.data.get('defaults') if isinstance(request.data.get('defaults'), dict) else {}
+
+        src_ids = request.data.get('src_device_ids') or []
+        dst_ids = request.data.get('dst_device_ids') or []
+
+        devices = list(Device.objects.select_related('device_type').all())
+        devices_by_id = {d.id: d for d in devices}
+
+        if template == 'custom':
+            src_devices = [devices_by_id.get(self._to_int(i)) for i in src_ids]
+            dst_devices = [devices_by_id.get(self._to_int(i)) for i in dst_ids]
+            src_devices = [d for d in src_devices if d]
+            dst_devices = [d for d in dst_devices if d]
+        elif template == 'servers_to_gateways':
+            src_devices = [d for d in devices if self._is_server_device(d)]
+            dst_devices = [d for d in devices if self._is_gateway_device(d)]
+        elif template == 'servers_to_routers':
+            src_devices = [d for d in devices if self._is_server_device(d)]
+            dst_devices = [d for d in devices if self._is_router_device(d)]
+        elif template == 'routers_to_gateways':
+            src_devices = [d for d in devices if self._is_router_device(d)]
+            dst_devices = [d for d in devices if self._is_gateway_device(d)]
+        else:
+            return Response(
+                {"detail": "Unsupported template. Use custom|servers_to_gateways|servers_to_routers|routers_to_gateways"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        sane_defaults = {
+            'enabled': self._to_bool(defaults.get('enabled'), True),
+            'interval_sec': self._to_int(defaults.get('interval_sec'), 60),
+            'timeout_sec': self._to_int(defaults.get('timeout_sec'), 3),
+            'packet_count': self._to_int(defaults.get('packet_count'), 1),
+            'fail_threshold': self._to_int(defaults.get('fail_threshold'), 3),
+            'recover_threshold': self._to_int(defaults.get('recover_threshold'), 2),
+        }
+
+        created = 0
+        updated = 0
+        skipped = 0
+        errors = []
+        for src in src_devices:
+            for dst in dst_devices:
+                if src.id == dst.id:
+                    skipped += 1
+                    continue
+                existing = NetworkPath.objects.filter(src_device=src, dst_device=dst).first()
+                if existing:
+                    if not update_existing:
+                        skipped += 1
+                        continue
+                    serializer = self.get_serializer(existing, data=sane_defaults, partial=True)
+                    if serializer.is_valid():
+                        serializer.save()
+                        updated += 1
+                    else:
+                        errors.append({'src': src.id, 'dst': dst.id, 'errors': serializer.errors})
+                    continue
+
+                serializer = self.get_serializer(data={
+                    'src_device': src.id,
+                    'dst_device': dst.id,
+                    **sane_defaults,
+                })
+                if serializer.is_valid():
+                    serializer.save()
+                    created += 1
+                else:
+                    errors.append({'src': src.id, 'dst': dst.id, 'errors': serializer.errors})
+
+        return Response(
+            {'created': created, 'updated': updated, 'skipped': skipped, 'errors': errors[:30]},
+            status=status.HTTP_200_OK
+        )
+
+    @action(detail=False, methods=['get'], permission_classes=[AdminGroupPermission])
+    def matrix(self, request):
+        include_disabled = self._to_bool(request.query_params.get('include_disabled'), False)
+        paths_qs = NetworkPath.objects.select_related('src_device', 'dst_device')
+        if not include_disabled:
+            paths_qs = paths_qs.filter(enabled=True)
+
+        paths = list(paths_qs.order_by('src_device__name', 'dst_device__name'))
+        serialized = self.get_serializer(paths, many=True).data
+        enriched = self._attach_indicators(list(serialized))
+
+        src_map = {}
+        dst_map = {}
+        for item in enriched:
+            src_map[item['src_device']] = {'id': item['src_device'], 'name': item.get('src_device_name') or str(item['src_device'])}
+            dst_map[item['dst_device']] = {'id': item['dst_device'], 'name': item.get('dst_device_name') or str(item['dst_device'])}
+
+        path_by_pair = {(item['src_device'], item['dst_device']): item for item in enriched}
+        destinations = [dst_map[key] for key in sorted(dst_map, key=lambda x: dst_map[x]['name'])]
+
+        rows = []
+        for src_id in sorted(src_map, key=lambda x: src_map[x]['name']):
+            cells = []
+            for dst in destinations:
+                item = path_by_pair.get((src_id, dst['id']))
+                if item:
+                    cells.append({
+                        'dst_device_id': dst['id'],
+                        'path_id': item['id'],
+                        'state': item['last_state'],
+                        'latency_ms': item['last_latency_ms'],
+                        'packet_loss_pct': item['last_packet_loss_pct'],
+                        'uptime_24h_pct': item.get('uptime_24h_pct'),
+                        'uptime_7d_pct': item.get('uptime_7d_pct'),
+                    })
+                else:
+                    cells.append({
+                        'dst_device_id': dst['id'],
+                        'path_id': None,
+                        'state': 'none',
+                        'latency_ms': None,
+                        'packet_loss_pct': None,
+                        'uptime_24h_pct': None,
+                        'uptime_7d_pct': None,
+                    })
+            rows.append({
+                'src_device_id': src_id,
+                'src_device_name': src_map[src_id]['name'],
+                'cells': cells,
+            })
+
+        return Response({
+            'sources': [src_map[key] for key in sorted(src_map, key=lambda x: src_map[x]['name'])],
+            'destinations': destinations,
+            'rows': rows,
+        }, status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=['get'], permission_classes=[AdminGroupPermission])
+    def derived(self, request):
+        rows = get_network_derived_snapshot()
+        return Response(rows, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['get'], permission_classes=[AdminGroupPermission])
+    def history(self, request, pk=None):
+        path = self.get_object()
+        since_hours = self._to_int(request.query_params.get('since_hours'), 24)
+        since_hours = min(max(1, since_hours), 24 * 30)
+        since = timezone.now() - timedelta(hours=since_hours)
+
+        rows = (
+            RawMetric.objects
+            .filter(
+                device=path.src_device,
+                code__in=['net_path_reachable', 'ping_latency_matrix', 'ping_packet_loss_matrix'],
+                timestamp__gte=since,
+            )
+            .values('code', 'value', 'timestamp', 'labels')
+            .order_by('timestamp')
+        )
+        series = defaultdict(list)
+        for row in rows:
+            labels = row.get('labels') or {}
+            path_id = self._to_int(labels.get('path_id'))
+            if path_id != path.id:
+                continue
+            series[row['code']].append({
+                'timestamp': row['timestamp'],
+                'value': float(row['value']),
+            })
+
+        return Response({
+            'path': path.id,
+            'src_device': path.src_device.name,
+            'dst_device': path.dst_device.name,
+            'series': {
+                'reachable': series.get('net_path_reachable', []),
+                'latency_ms': series.get('ping_latency_matrix', []),
+                'packet_loss_pct': series.get('ping_packet_loss_matrix', []),
+            },
+        }, status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=['post'], permission_classes=[AdminGroupPermission])
+    def evaluate_alerts(self, request):
+        recompute = self._to_bool(request.data.get('recompute'), True)
+        ensure_defaults = self._to_bool(request.data.get('ensure_defaults'), True)
+        if ensure_defaults:
+            ensure_default_network_alert_rules()
+        if recompute:
+            call_command('compute_derived_metrics')
+        payload = evaluate_network_alert_rules()
+        return Response(payload, status=status.HTTP_200_OK)
+
+
+class NetworkOutageViewSet(viewsets.ReadOnlyModelViewSet):
+    queryset = NetworkOutage.objects.all().select_related('path', 'path__src_device', 'path__dst_device')
+    serializer_class = NetworkOutageSerializer
+    permission_classes = [AdminGroupPermission]
+
+    filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
+    filterset_fields = ['path', 'is_active', 'path__src_device', 'path__dst_device']
+    ordering_fields = ['started_at', 'ended_at', 'duration_sec', 'created_at']
+    ordering = ['-started_at']
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        since_days = self.request.query_params.get('since_days')
+        since_hours = self.request.query_params.get('since_hours')
+        if since_days:
+            try:
+                days = int(since_days)
+                if days > 0:
+                    qs = qs.filter(started_at__gte=timezone.now() - timedelta(days=days))
+            except ValueError:
+                pass
+        elif since_hours:
+            try:
+                hours = int(since_hours)
+                if hours > 0:
+                    qs = qs.filter(started_at__gte=timezone.now() - timedelta(hours=hours))
+            except ValueError:
+                pass
+        return qs
+
+
+class NetworkAlertRuleViewSet(viewsets.ModelViewSet):
+    queryset = NetworkAlertRule.objects.all()
+    serializer_class = NetworkAlertRuleSerializer
+    permission_classes = [AdminGroupPermission]
+
+    filter_backends = [DjangoFilterBackend, filters.OrderingFilter, filters.SearchFilter]
+    filterset_fields = ['enabled', 'severity', 'metric_code', 'window']
+    search_fields = ['code', 'name', 'description']
+    ordering_fields = ['order', 'code', 'updated_at']
+    ordering = ['order', 'code']
+
+    @action(detail=False, methods=['post'], permission_classes=[AdminGroupPermission])
+    def seed_defaults(self, request):
+        stats = ensure_default_network_alert_rules()
+        return Response(stats, status=status.HTTP_200_OK)
 
 
 def _normalize_vm_status(value):

@@ -22,6 +22,11 @@
           <span>Анализ мониторинга</span>
         </router-link>
 
+        <router-link v-if="auth.isAdmin" :to="{ name: 'NetworkMonitoring' }" class="nav-link" active-class="active">
+          <i class="pi pi-sitemap"></i>
+          <span>Сеть</span>
+        </router-link>
+
         <router-link :to="{ name: 'DeviceTable' }" class="nav-link" active-class="active">
           <i class="pi pi-table"></i>
           <span>Устройства</span>

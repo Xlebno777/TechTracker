@@ -2,7 +2,8 @@ from rest_framework import serializers
 from .models import (
     Device, DeviceType, Location, UserProfile, ComputerSpecs,
     PrinterScannerSpecs, NetworkDeviceSpecs, Cartridge, CartridgeLog,
-    Log, Metric, PrintJob, MonitoringSetting, RawMetric, TrackedVM, ComputedMetric, AgentStatus, DiagnosticReport
+    Log, Metric, PrintJob, MonitoringSetting, RawMetric, TrackedVM, ComputedMetric, AgentStatus, DiagnosticReport,
+    NetworkPath, NetworkOutage, NetworkAlertRule
 )
 from django.utils import timezone
 from django.contrib.auth.models import User, Group
@@ -364,6 +365,88 @@ class DiagnosticReportSerializer(serializers.ModelSerializer):
 class DiagnosticRunSerializer(serializers.Serializer):
     serial = serializers.CharField(required=False, allow_blank=True)
     mode = serializers.ChoiceField(choices=['llm', 'rules'], required=False)
+
+
+class NetworkPathSerializer(serializers.ModelSerializer):
+    src_device_name = serializers.CharField(source='src_device.name', read_only=True)
+    dst_device_name = serializers.CharField(source='dst_device.name', read_only=True)
+    src_device_serial = serializers.CharField(source='src_device.serial_number', read_only=True)
+    dst_device_serial = serializers.CharField(source='dst_device.serial_number', read_only=True)
+    dst_ip = serializers.CharField(source='dst_device.ip_address', read_only=True)
+
+    class Meta:
+        model = NetworkPath
+        fields = [
+            'id', 'src_device', 'dst_device',
+            'src_device_name', 'dst_device_name', 'src_device_serial', 'dst_device_serial', 'dst_ip',
+            'enabled', 'interval_sec', 'timeout_sec', 'packet_count',
+            'fail_threshold', 'recover_threshold',
+            'last_state', 'consecutive_failures', 'consecutive_successes',
+            'last_checked_at', 'last_latency_ms', 'last_packet_loss_pct',
+            'notes', 'created_at', 'updated_at',
+        ]
+        read_only_fields = (
+            'last_state', 'consecutive_failures', 'consecutive_successes',
+            'last_checked_at', 'last_latency_ms', 'last_packet_loss_pct',
+            'created_at', 'updated_at',
+        )
+
+    def validate(self, attrs):
+        src = attrs.get('src_device') or getattr(self.instance, 'src_device', None)
+        dst = attrs.get('dst_device') or getattr(self.instance, 'dst_device', None)
+
+        if src and dst and src.id == dst.id:
+            raise serializers.ValidationError("src_device and dst_device must be different.")
+
+        if dst and not dst.ip_address:
+            raise serializers.ValidationError("Destination device must have IP address.")
+
+        timeout_sec = attrs.get('timeout_sec', getattr(self.instance, 'timeout_sec', 3))
+        interval_sec = attrs.get('interval_sec', getattr(self.instance, 'interval_sec', 60))
+        packet_count = attrs.get('packet_count', getattr(self.instance, 'packet_count', 1))
+        fail_threshold = attrs.get('fail_threshold', getattr(self.instance, 'fail_threshold', 3))
+        recover_threshold = attrs.get('recover_threshold', getattr(self.instance, 'recover_threshold', 2))
+
+        if interval_sec < 5:
+            raise serializers.ValidationError("interval_sec must be >= 5.")
+        if timeout_sec < 1:
+            raise serializers.ValidationError("timeout_sec must be >= 1.")
+        if timeout_sec > interval_sec:
+            raise serializers.ValidationError("timeout_sec must be <= interval_sec.")
+        if packet_count < 1 or packet_count > 10:
+            raise serializers.ValidationError("packet_count must be in range 1..10.")
+        if fail_threshold < 1 or recover_threshold < 1:
+            raise serializers.ValidationError("fail_threshold and recover_threshold must be >= 1.")
+
+        return attrs
+
+
+class NetworkOutageSerializer(serializers.ModelSerializer):
+    path_src = serializers.CharField(source='path.src_device.name', read_only=True)
+    path_dst = serializers.CharField(source='path.dst_device.name', read_only=True)
+    path_dst_ip = serializers.CharField(source='path.dst_device.ip_address', read_only=True)
+
+    class Meta:
+        model = NetworkOutage
+        fields = [
+            'id', 'path', 'path_src', 'path_dst', 'path_dst_ip',
+            'started_at', 'ended_at', 'duration_sec',
+            'fail_count', 'recover_count', 'is_active',
+            'last_probe_at', 'last_error', 'created_at',
+        ]
+        read_only_fields = (
+            'id', 'path', 'path_src', 'path_dst', 'path_dst_ip',
+            'started_at', 'ended_at', 'duration_sec',
+            'fail_count', 'recover_count', 'is_active',
+            'last_probe_at', 'last_error', 'created_at',
+        )
+
+
+class NetworkAlertRuleSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = NetworkAlertRule
+        fields = '__all__'
+        read_only_fields = ('id', 'created_at', 'updated_at')
 
 
 class RawMetricItemSerializer(serializers.Serializer):

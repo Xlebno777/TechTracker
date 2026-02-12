@@ -408,4 +408,111 @@ class DiagnosticReport(models.Model):
     def __str__(self):
         return f"{self.device.name} - {self.severity}"
 
-# ... другие модели (например, Request для заявок)
+
+class NetworkPath(models.Model):
+    STATE_CHOICES = [
+        ('unknown', 'Unknown'),
+        ('up', 'Up'),
+        ('down', 'Down'),
+    ]
+
+    src_device = models.ForeignKey(Device, on_delete=models.CASCADE, related_name='network_paths_src')
+    dst_device = models.ForeignKey(Device, on_delete=models.CASCADE, related_name='network_paths_dst')
+    enabled = models.BooleanField(default=True)
+    interval_sec = models.PositiveIntegerField(default=60)
+    timeout_sec = models.PositiveIntegerField(default=3)
+    packet_count = models.PositiveIntegerField(default=1)
+    fail_threshold = models.PositiveIntegerField(default=3)
+    recover_threshold = models.PositiveIntegerField(default=2)
+    last_state = models.CharField(max_length=20, choices=STATE_CHOICES, default='unknown')
+    consecutive_failures = models.PositiveIntegerField(default=0)
+    consecutive_successes = models.PositiveIntegerField(default=0)
+    last_checked_at = models.DateTimeField(null=True, blank=True)
+    last_latency_ms = models.FloatField(null=True, blank=True)
+    last_packet_loss_pct = models.FloatField(null=True, blank=True)
+    notes = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Сетевой путь"
+        verbose_name_plural = "Сетевые пути"
+        ordering = ['src_device__name', 'dst_device__name']
+        constraints = [
+            models.UniqueConstraint(fields=['src_device', 'dst_device'], name='uniq_network_path_src_dst'),
+            models.CheckConstraint(condition=~models.Q(src_device=models.F('dst_device')), name='chk_network_path_src_ne_dst'),
+        ]
+        indexes = [
+            models.Index(fields=['enabled', 'last_state']),
+            models.Index(fields=['src_device', 'dst_device']),
+        ]
+
+    def __str__(self):
+        return f"{self.src_device.name} -> {self.dst_device.name}"
+
+
+class NetworkOutage(models.Model):
+    path = models.ForeignKey(NetworkPath, on_delete=models.CASCADE, related_name='outages')
+    started_at = models.DateTimeField()
+    ended_at = models.DateTimeField(null=True, blank=True)
+    duration_sec = models.BigIntegerField(null=True, blank=True)
+    fail_count = models.PositiveIntegerField(default=0)
+    recover_count = models.PositiveIntegerField(default=0)
+    is_active = models.BooleanField(default=True)
+    last_probe_at = models.DateTimeField(null=True, blank=True)
+    last_error = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Сетевое пропадание"
+        verbose_name_plural = "Сетевые пропадания"
+        ordering = ['-started_at']
+        indexes = [
+            models.Index(fields=['path', 'is_active', '-started_at']),
+            models.Index(fields=['is_active', '-started_at']),
+        ]
+
+    def __str__(self):
+        return f"{self.path} ({self.started_at} - {self.ended_at or 'active'})"
+
+
+class NetworkAlertRule(models.Model):
+    SEVERITY_CHOICES = [
+        ('low', 'Low'),
+        ('medium', 'Medium'),
+        ('high', 'High'),
+        ('critical', 'Critical'),
+    ]
+    COMPARISON_CHOICES = [
+        ('gt', '>'),
+        ('gte', '>='),
+        ('lt', '<'),
+        ('lte', '<='),
+        ('eq', '='),
+        ('ne', '!='),
+    ]
+
+    code = models.CharField(max_length=100, unique=True)
+    name = models.CharField(max_length=200)
+    description = models.TextField(blank=True)
+    metric_code = models.CharField(max_length=100)
+    window = models.CharField(max_length=20, default='24h')
+    comparison = models.CharField(max_length=10, choices=COMPARISON_CHOICES, default='gt')
+    threshold_value = models.FloatField()
+    severity = models.CharField(max_length=20, choices=SEVERITY_CHOICES, default='medium')
+    enabled = models.BooleanField(default=True)
+    order = models.PositiveIntegerField(default=100)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Правило сетевой тревоги"
+        verbose_name_plural = "Правила сетевых тревог"
+        ordering = ['order', 'name']
+        indexes = [
+            models.Index(fields=['enabled', 'order']),
+            models.Index(fields=['metric_code', 'window']),
+        ]
+
+    def __str__(self):
+        return f"{self.code} ({self.metric_code} {self.comparison} {self.threshold_value})"

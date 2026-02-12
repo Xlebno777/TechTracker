@@ -5,7 +5,8 @@ from import_export.admin import ImportExportModelAdmin
 from .models import (
     Device, DeviceType, Location, UserProfile, ComputerSpecs, PrinterScannerSpecs,
     NetworkDeviceSpecs, Cartridge, CartridgeLog, Log, Metric,
-    MonitoringSetting, RawMetric, TrackedVM, ComputedMetric, AgentStatus, DiagnosticReport
+    MonitoringSetting, RawMetric, TrackedVM, ComputedMetric, AgentStatus, DiagnosticReport,
+    NetworkPath, NetworkOutage, NetworkAlertRule
 )
 
 @admin.register(DeviceType)
@@ -182,3 +183,30 @@ class DiagnosticReportAdmin(admin.ModelAdmin):
     list_display = ('device', 'severity', 'created_at')
     list_filter = ('severity', 'device')
     search_fields = ('device__name', 'summary')
+
+
+@admin.register(NetworkPath)
+class NetworkPathAdmin(admin.ModelAdmin):
+    list_display = (
+        'id', 'src_device', 'dst_device', 'enabled', 'last_state',
+        'last_latency_ms', 'last_packet_loss_pct', 'last_checked_at'
+    )
+    list_filter = ('enabled', 'last_state')
+    search_fields = (
+        'src_device__name', 'src_device__serial_number',
+        'dst_device__name', 'dst_device__serial_number'
+    )
+
+
+@admin.register(NetworkOutage)
+class NetworkOutageAdmin(admin.ModelAdmin):
+    list_display = ('id', 'path', 'is_active', 'started_at', 'ended_at', 'duration_sec', 'fail_count')
+    list_filter = ('is_active',)
+    search_fields = ('path__src_device__name', 'path__dst_device__name')
+
+
+@admin.register(NetworkAlertRule)
+class NetworkAlertRuleAdmin(admin.ModelAdmin):
+    list_display = ('code', 'name', 'metric_code', 'comparison', 'threshold_value', 'severity', 'enabled', 'order')
+    list_filter = ('enabled', 'severity', 'window')
+    search_fields = ('code', 'name', 'metric_code')

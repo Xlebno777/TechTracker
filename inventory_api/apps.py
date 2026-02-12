@@ -6,4 +6,6 @@ class InventoryApiConfig(AppConfig):
     name = 'inventory_api'
 
     def ready(self):
-        import inventory_api.signals # Импортируем сигналы при загрузке приложения
+        import inventory_api.signals  # Импортируем сигналы при загрузке приложения
+        from inventory_api.network_probe_scheduler import start_network_probe_scheduler
+        start_network_probe_scheduler()

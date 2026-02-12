@@ -149,6 +149,38 @@
 - payload (JSON)
 - created_at
 
+## NetworkPath
+- id (PK)
+- src_device_id (FK -> Device)
+- dst_device_id (FK -> Device)
+- enabled
+- interval_sec
+- timeout_sec
+- packet_count
+- fail_threshold
+- recover_threshold
+- last_state (unknown/up/down)
+- consecutive_failures
+- consecutive_successes
+- last_checked_at
+- last_latency_ms
+- last_packet_loss_pct
+- notes
+- created_at, updated_at
+
+## NetworkOutage
+- id (PK)
+- path_id (FK -> NetworkPath)
+- started_at
+- ended_at
+- duration_sec
+- fail_count
+- recover_count
+- is_active
+- last_probe_at
+- last_error
+- created_at
+
 ## Indexes (key)
 - Device: serial_number, status, location
 - RawMetric: (device, code, -timestamp), timestamp

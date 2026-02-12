@@ -4,7 +4,7 @@ from datetime import timedelta
 from django.core.management.base import BaseCommand
 from django.utils import timezone
 
-from inventory_api.models import Device, RawMetric, ComputedMetric
+from inventory_api.models import Device, RawMetric, ComputedMetric, NetworkPath, NetworkOutage
 
 
 CPU_SPIKE_THRESHOLD = 90.0
@@ -103,6 +103,22 @@ def _group_series(device, code, since):
         groups.setdefault(key, {'labels': labels, 'points': []})
         groups[key]['points'].append((row['timestamp'], value))
     return groups
+
+
+def _path_series(path, code, since):
+    qs = (
+        RawMetric.objects
+        .filter(device=path.src_device, code=code, timestamp__gte=since, labels__path_id=path.id)
+        .values('timestamp', 'value')
+        .order_by('timestamp')
+    )
+    points = []
+    for row in qs:
+        value = _to_float(row.get('value'))
+        if value is None:
+            continue
+        points.append((row['timestamp'], value))
+    return points
 
 
 def _add_metric(metrics, device, code, value, unit, window, labels=None, timestamp=None):
@@ -361,6 +377,61 @@ class Command(BaseCommand):
                 vals = [v for _, v in group['points']]
                 if vals:
                     _add_metric(metrics_out, device, 'vm_mem_peak_24h', max(vals), '%', '24h', group['labels'])
+
+        # --- Network path derived metrics ---
+        paths = NetworkPath.objects.select_related('src_device', 'dst_device').all()
+        for path in paths:
+            labels = {
+                'path_id': path.id,
+                'src_device_id': path.src_device_id,
+                'src_serial': path.src_device.serial_number,
+                'dst_device_id': path.dst_device_id,
+                'dst_serial': path.dst_device.serial_number,
+                'dst_ip': str(path.dst_device.ip_address or ''),
+            }
+
+            reach_24h = _path_series(path, 'net_path_reachable', now - timedelta(hours=24))
+            if reach_24h:
+                up_count = sum(1 for _, value in reach_24h if value >= 0.5)
+                uptime = (up_count / len(reach_24h)) * 100.0
+                _add_metric(metrics_out, path.src_device, 'net_path_uptime_24h', uptime, '%', '24h', labels)
+
+            reach_7d = _path_series(path, 'net_path_reachable', now - timedelta(days=7))
+            if reach_7d:
+                up_count = sum(1 for _, value in reach_7d if value >= 0.5)
+                uptime = (up_count / len(reach_7d)) * 100.0
+                _add_metric(metrics_out, path.src_device, 'net_path_uptime_7d', uptime, '%', '7d', labels)
+
+            latency_24h = _path_series(path, 'ping_latency_matrix', now - timedelta(hours=24))
+            if latency_24h:
+                lat_values = [value for _, value in latency_24h]
+                _add_metric(metrics_out, path.src_device, 'net_path_latency_p95_24h', _percentile(lat_values, 95), 'ms', '24h', labels)
+
+            latency_1h = _path_series(path, 'ping_latency_matrix', now - timedelta(hours=1))
+            if latency_1h:
+                lat_values = [value for _, value in latency_1h]
+                _add_metric(metrics_out, path.src_device, 'net_path_latency_jitter_1h', _stddev(lat_values), 'ms', '1h', labels)
+
+            loss_24h = _path_series(path, 'ping_packet_loss_matrix', now - timedelta(hours=24))
+            if loss_24h:
+                loss_values = [value for _, value in loss_24h]
+                _add_metric(metrics_out, path.src_device, 'net_path_packet_loss_avg_24h', sum(loss_values) / len(loss_values), '%', '24h', labels)
+
+            outages_24h = NetworkOutage.objects.filter(path=path, started_at__gte=now - timedelta(hours=24)).count()
+            _add_metric(metrics_out, path.src_device, 'net_path_outage_count_24h', outages_24h, 'count', '24h', labels)
+
+            outages_7d = NetworkOutage.objects.filter(path=path, started_at__gte=now - timedelta(days=7)).count()
+            _add_metric(metrics_out, path.src_device, 'net_path_outage_count_7d', outages_7d, 'count', '7d', labels)
+
+            _add_metric(
+                metrics_out,
+                path.src_device,
+                'net_path_down_flag_current',
+                1.0 if path.last_state == 'down' else 0.0,
+                'flag',
+                'current',
+                labels,
+            )
 
         if metrics_out:
             ComputedMetric.objects.bulk_create(metrics_out, batch_size=1000)

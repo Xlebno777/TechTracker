@@ -78,3 +78,12 @@ python manage.py compute_derived_metrics
 ServerAgent installer:
 - Папка: agents\\ServerAgent\\installer
 - Скрипт удаления на ПК: {app}\\remove_agent.ps1 (удаляет задачу автозапуска и папку)
+
+Встроенный auto-job для сетевого probe (без внешнего планировщика):
+- Запускается автоматически внутри backend-процесса Django.
+- Использует PostgreSQL advisory lock, чтобы не было дублей проверки при нескольких процессах.
+- Уважает interval_sec каждого NetworkPath.
+- Настройки через переменные окружения:
+  - NETWORK_PROBE_AUTOSTART=1
+  - NETWORK_PROBE_AUTO_INTERVAL_SEC=60
+  - NETWORK_PROBE_LOCK_KEY=4829137

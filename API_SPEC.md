@@ -123,6 +123,88 @@ Response:
 {"created": 1, "updated": 2, "skipped": 0}
 ```
 
+## Network monitoring (path probe)
+### Network paths CRUD
+- `GET /api/network-paths/`
+- `POST /api/network-paths/`
+- `GET /api/network-paths/{id}/`
+- `PATCH /api/network-paths/{id}/`
+- `DELETE /api/network-paths/{id}/`
+
+`NetworkPath` request body (example):
+```json
+{
+  "src_device": 1,
+  "dst_device": 2,
+  "enabled": true,
+  "interval_sec": 60,
+  "timeout_sec": 3,
+  "packet_count": 1,
+  "fail_threshold": 3,
+  "recover_threshold": 2,
+  "notes": "Server -> Gateway"
+}
+```
+
+### Probe run
+- `POST /api/network-paths/probe/`
+
+Request (optional):
+```json
+{"path_id": 10, "path_ids": [10,11], "save_metrics": true, "respect_interval": false}
+```
+
+Response:
+```json
+{
+  "checked": 5,
+  "skipped": 1,
+  "up": 4,
+  "down": 1,
+  "outages_opened": 1,
+  "outages_closed": 0,
+  "metrics_created": 14
+}
+```
+
+### Built-in auto job (backend)
+Environment variables:
+- `NETWORK_PROBE_AUTOSTART=1` (default)
+- `NETWORK_PROBE_AUTO_INTERVAL_SEC=60` (scheduler tick)
+- `NETWORK_PROBE_LOCK_KEY=4829137` (PostgreSQL advisory lock key)
+
+Behavior:
+- Scheduler starts inside Django process automatically.
+- Probe respects per-path `interval_sec`.
+- Advisory lock prevents duplicate probe runs across multiple backend processes.
+
+### Outages
+- `GET /api/network-outages/?is_active=true&ordering=-started_at`
+- `GET /api/network-outages/{id}/`
+
+### Bulk update paths
+- `POST /api/network-paths/bulk_update/`
+```json
+{"ids":[1,2,3], "enabled": true, "interval_sec": 60}
+```
+
+### Template generator
+- `POST /api/network-paths/generate_template/`
+```json
+{
+  "template": "servers_to_gateways",
+  "defaults": {"interval_sec":60,"timeout_sec":3,"packet_count":1,"fail_threshold":3,"recover_threshold":2},
+  "update_existing": false
+}
+```
+`template` supports: `custom`, `servers_to_gateways`, `servers_to_routers`, `routers_to_gateways`
+
+### Matrix view
+- `GET /api/network-paths/matrix/?include_disabled=0`
+
+### Path history
+- `GET /api/network-paths/{id}/history/?since_hours=168`
+
 ## Agent status (diagnostics)
 ### Report
 - `POST /api/agent-status/report/`

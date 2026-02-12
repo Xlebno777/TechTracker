@@ -7,6 +7,7 @@ import RequestForm from '../components/RequestForm.vue'
 import RequestList from '../components/RequestList.vue'
 import Dashboard from '../components/DashboardMain.vue'
 import MonitoringRaw from '../components/MonitoringRaw.vue'
+import NetworkMonitoring from '../components/NetworkMonitoring.vue'
 import AgentDiagnostics from '../components/AgentDiagnostics.vue'
 import DiagnosticsAI from '../components/DiagnosticsAI.vue'
 import PrintersPage from '../components/PrintersPage.vue'
@@ -67,6 +68,12 @@ const routes = [
     meta: { requiresAuth: true, forbidUsers: true }
   },
   {
+    path: '/network-monitoring',
+    name: 'NetworkMonitoring',
+    component: NetworkMonitoring,
+    meta: { requiresAuth: true, requiresAdmin: true }
+  },
+  {
     path: '/agent-diagnostics',
     name: 'AgentDiagnostics',
     component: AgentDiagnostics,
@@ -102,7 +109,7 @@ const router = createRouter({ // <-- router создаётся ЗДЕСЬ
 router.beforeEach((to, from, next) => {
   const hasToken = localStorage.getItem('auth_token') !== null;
 
-  if (to.name === 'DeviceTable' || to.name === 'DeviceCreate' || to.name === 'DeviceEdit' || to.name === 'RequestForm' || to.name === 'RequestList' || to.name === 'Printers' || to.name === 'Monitoring' || to.name === 'MonitoringAnalysis' || to.name === 'AgentDiagnostics' || to.name === 'AiDiagnostics' || to.name === 'AdminRequests') {
+  if (to.name === 'DeviceTable' || to.name === 'DeviceCreate' || to.name === 'DeviceEdit' || to.name === 'RequestForm' || to.name === 'RequestList' || to.name === 'Printers' || to.name === 'Monitoring' || to.name === 'NetworkMonitoring' || to.name === 'MonitoringAnalysis' || to.name === 'AgentDiagnostics' || to.name === 'AiDiagnostics' || to.name === 'AdminRequests') {
     if (!hasToken) {
       next({ name: 'AuthPage' });
     } else {
