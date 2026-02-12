@@ -369,4 +369,35 @@ onMounted(() => {
 :global(.tech-table .p-datatable-tbody > tr:hover) {
   background: #f1f5f9;
 }
+
+:global(.p-dialog .p-dialog-content .p-inputtext),
+:global(.p-dialog .p-dialog-content .p-inputnumber-input),
+:global(.p-dialog .p-dialog-content .p-dropdown),
+:global(.p-dialog .p-dialog-content .p-multiselect) {
+  min-height: 3rem;
+  font-size: 0.98rem;
+  border-radius: 10px;
+}
+
+:global(.p-dialog .p-dialog-content .p-dropdown),
+:global(.p-dialog .p-dialog-content .p-multiselect),
+:global(.p-dialog .p-dialog-content .p-inputnumber) {
+  width: 100%;
+}
+
+:global(.p-dialog .p-dialog-content .p-dropdown-label),
+:global(.p-dialog .p-dialog-content .p-multiselect-label),
+:global(.p-dialog .p-dialog-content .p-inputtext),
+:global(.p-dialog .p-dialog-content .p-inputnumber-input) {
+  padding-top: 0.72rem;
+  padding-bottom: 0.72rem;
+}
+
+:global(.p-dialog .p-dialog-content .p-button),
+:global(.p-dialog .p-dialog-footer .p-button) {
+  min-height: 3rem;
+  padding: 0.72rem 1.2rem;
+  border-radius: 10px;
+  font-size: 0.98rem;
+}
 </style>

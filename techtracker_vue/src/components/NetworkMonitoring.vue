@@ -93,14 +93,27 @@
       </div>
 
       <div class="card p-3 mb-3">
-        <div class="flex flex-wrap gap-2 align-items-center">
-          <span class="text-600 font-medium">Массовые действия ({{ selectedPaths.length }})</span>
-          <Button label="Вкл" size="small" @click="bulkEnable(true)" :disabled="!selectedPaths.length" />
-          <Button label="Выкл" size="small" severity="secondary" @click="bulkEnable(false)" :disabled="!selectedPaths.length" />
-          <InputNumber v-model="bulkInterval" :min="5" :max="3600" suffix=" c" class="bulk-input" />
-          <Button label="Применить интервал" size="small" severity="secondary" @click="bulkSetInterval" :disabled="!selectedPaths.length" />
-          <Button label="Проверить выбранные" size="small" severity="help" @click="probeSelected" :disabled="!selectedPaths.length" />
-          <Button label="Проверить все" size="small" severity="help" outlined @click="probeAll" />
+        <div class="bulk-toolbar">
+          <div class="bulk-group">
+            <span class="text-600 font-medium">Массовые действия ({{ selectedPaths.length }})</span>
+            <Button label="Вкл" size="small" @click="bulkEnable(true)" :disabled="!selectedPaths.length" />
+            <Button label="Выкл" size="small" severity="secondary" @click="bulkEnable(false)" :disabled="!selectedPaths.length" />
+          </div>
+          <div class="bulk-group bulk-interval-group">
+            <InputNumber v-model="bulkInterval" :min="5" :max="3600" suffix=" c" class="bulk-input" />
+            <Button
+              label="Применить интервал"
+              size="small"
+              severity="secondary"
+              class="bulk-interval-btn"
+              @click="bulkSetInterval"
+              :disabled="!selectedPaths.length"
+            />
+          </div>
+          <div class="bulk-group">
+            <Button label="Проверить выбранные" size="small" severity="help" @click="probeSelected" :disabled="!selectedPaths.length" />
+            <Button label="Проверить все" size="small" severity="help" outlined @click="probeAll" />
+          </div>
         </div>
       </div>
 
@@ -1471,8 +1484,28 @@ onBeforeUnmount(() => {
   min-height: 2.2rem;
   font-weight: 600;
 }
+.bulk-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+  justify-content: space-between;
+}
+.bulk-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+.bulk-interval-group {
+  flex: 1 1 20rem;
+}
 .bulk-input {
-  width: 9rem;
+  width: 10rem;
+  min-width: 10rem;
+}
+.bulk-interval-btn {
+  white-space: nowrap;
 }
 .metric-card {
   background: #f8fafc;
@@ -1568,8 +1601,19 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 992px) {
+  .bulk-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .bulk-group {
+    width: 100%;
+  }
   .bulk-input {
-    width: 7.5rem;
+    width: 100%;
+    min-width: 0;
+  }
+  .bulk-interval-btn {
+    width: 100%;
   }
   .alert-filter {
     min-width: 100%;
