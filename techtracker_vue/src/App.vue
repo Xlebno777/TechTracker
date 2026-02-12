@@ -12,15 +12,37 @@
       </div>
 
       <nav class="nav-menu">
-        <router-link v-if="!auth.isUser" :to="{ name: 'Monitoring' }" class="nav-link" active-class="active">
-          <i class="pi pi-chart-line"></i>
-          <span>Мониторинг</span>
-        </router-link>
+        <div v-if="!auth.isUser" class="nav-group">
+          <button
+            type="button"
+            class="nav-link nav-link-toggle"
+            :class="{ active: isMonitoringRoute }"
+            @click="toggleMonitoringMenu"
+          >
+            <i class="pi pi-chart-line"></i>
+            <span>Мониторинг</span>
+            <i
+              v-if="!isNavCollapsed"
+              class="pi submenu-chevron"
+              :class="isMonitoringMenuOpen ? 'pi-chevron-down' : 'pi-chevron-right'"
+            ></i>
+          </button>
 
-        <router-link v-if="!auth.isUser" :to="{ name: 'MonitoringAnalysis' }" class="nav-link" active-class="active">
-          <i class="pi pi-chart-bar"></i>
-          <span>Анализ мониторинга</span>
-        </router-link>
+          <div v-if="!isNavCollapsed && isMonitoringMenuOpen" class="nav-submenu">
+            <router-link :to="{ name: 'Monitoring' }" class="nav-sublink" active-class="active">
+              <i class="pi pi-wave-pulse"></i>
+              <span>Сырые метрики</span>
+            </router-link>
+            <router-link :to="{ name: 'MonitoringAnalysis' }" class="nav-sublink" active-class="active">
+              <i class="pi pi-chart-bar"></i>
+              <span>Анализ мониторинга</span>
+            </router-link>
+            <router-link :to="{ name: 'AiDiagnostics' }" class="nav-sublink" active-class="active">
+              <i class="pi pi-bolt"></i>
+              <span>Умная диагностика</span>
+            </router-link>
+          </div>
+        </div>
 
         <router-link v-if="auth.isAdmin" :to="{ name: 'NetworkMonitoring' }" class="nav-link" active-class="active">
           <i class="pi pi-sitemap"></i>
@@ -30,11 +52,6 @@
         <router-link :to="{ name: 'DeviceTable' }" class="nav-link" active-class="active">
           <i class="pi pi-table"></i>
           <span>Устройства</span>
-        </router-link>
-
-        <router-link v-if="!auth.isUser" :to="{ name: 'DeviceCreate' }" class="nav-link" active-class="active">
-          <i class="pi pi-plus"></i>
-          <span>Добавить</span>
         </router-link>
 
         <router-link :to="{ name: 'Printers' }" class="nav-link" active-class="active">
@@ -57,10 +74,6 @@
           <span>Диагностика агента</span>
         </router-link>
 
-        <router-link v-if="auth.isAdmin" :to="{ name: 'AiDiagnostics' }" class="nav-link" active-class="active">
-          <i class="pi pi-bolt"></i>
-          <span>Диагностика (ИИ)</span>
-        </router-link>
       </nav>
 
       <div class="nav-footer">
@@ -98,19 +111,51 @@
 </template>
 
 <script setup>
-import { onMounted, ref } from 'vue';
-import { useRouter } from 'vue-router';
+import { computed, nextTick, onMounted, ref, watch } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
 import { useAuthStore } from '@/stores/auth';
 import Button from 'primevue/button'; // Используем компонент Button
 
 const auth = useAuthStore();
 const router = useRouter();
+const route = useRoute();
 const isNavCollapsed = ref(false);
+const isMonitoringMenuOpen = ref(true);
+
+const monitoringRoutes = ['Monitoring', 'MonitoringAnalysis', 'AiDiagnostics'];
+const isMonitoringRoute = computed(() => monitoringRoutes.includes(route.name));
+
+const triggerLayoutRefresh = () => {
+  nextTick(() => {
+    window.dispatchEvent(new Event('resize'));
+    setTimeout(() => window.dispatchEvent(new Event('resize')), 260);
+  });
+};
+
+const toggleMonitoringMenu = () => {
+  if (isNavCollapsed.value) {
+    isNavCollapsed.value = false;
+    isMonitoringMenuOpen.value = true;
+    triggerLayoutRefresh();
+    return;
+  }
+  isMonitoringMenuOpen.value = !isMonitoringMenuOpen.value;
+};
 
 const handleLogout = async () => {
   await auth.logout();
   router.push('/login');
 };
+
+watch(isNavCollapsed, () => {
+  triggerLayoutRefresh();
+});
+
+watch(() => route.name, () => {
+  if (isMonitoringRoute.value) {
+    isMonitoringMenuOpen.value = true;
+  }
+});
 
 onMounted(() => {
   auth.init();
@@ -187,6 +232,11 @@ onMounted(() => {
   flex-direction: column;
   gap: 0.4rem;
 }
+.nav-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
 
 .nav-link {
   display: flex;
@@ -202,6 +252,42 @@ onMounted(() => {
 
 .nav-link i {
   font-size: 1rem;
+}
+.nav-link-toggle {
+  width: 100%;
+  border: none;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+.submenu-chevron {
+  margin-left: auto;
+  font-size: 0.78rem;
+}
+.nav-submenu {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding-left: 0.9rem;
+}
+.nav-sublink {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  color: #cbd5f5;
+  text-decoration: none;
+  padding: 0.52rem 0.7rem;
+  border-radius: 9px;
+  font-size: 0.92rem;
+}
+.nav-sublink:hover {
+  background: rgba(56, 189, 248, 0.12);
+  color: #e0f2fe;
+}
+.nav-sublink.active {
+  background: rgba(56, 189, 248, 0.2);
+  color: #e0f2fe;
+  box-shadow: inset 0 0 0 1px rgba(56, 189, 248, 0.25);
 }
 
 .nav-link:hover {
@@ -234,6 +320,7 @@ onMounted(() => {
   padding: 2rem;
   min-height: 100vh;
   width: 100%;
+  min-width: 0;
 }
 
 .loading-screen {
@@ -244,6 +331,7 @@ onMounted(() => {
 
 :global(.page-shell) {
   width: 100%;
+  min-width: 0;
 }
 
 :global(.page-shell .card) {

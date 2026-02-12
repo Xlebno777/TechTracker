@@ -44,6 +44,7 @@ from .serializers import (
 from .permissions import PrintJobPermission, PrinterAgentPermission, MetricsAgentPermission, VMStatusAgentPermission, AdminGroupPermission
 from .diagnostics import generate_diagnostic_report
 from .network_probe import run_network_probe
+from .network_discovery import scan_network, suggest_local_cidrs
 from .network_alerts import (
     ensure_default_network_alert_rules,
     evaluate_network_alert_rules,
@@ -96,6 +97,44 @@ def _get_pc_device_type():
         return device_type
     device_type, _ = DeviceType.objects.get_or_create(name='ПК')
     return device_type
+
+
+def _normalize_mac(value):
+    if not value:
+        return None
+    raw = str(value).strip().upper().replace('-', ':')
+    if re.match(r'^([0-9A-F]{2}:){5}[0-9A-F]{2}$', raw):
+        return raw
+    return None
+
+
+def _build_scanned_serial(ip_address=None, mac_address=None, max_len=100):
+    base = (ip_address or mac_address or str(uuid.uuid4())).strip()
+    cleaned = re.sub(r'[^A-Za-z0-9._-]+', '_', base)
+    serial = f"SCAN-{cleaned}"[:max_len]
+    if not Device.objects.filter(serial_number=serial).exists():
+        return serial
+    for idx in range(1, 1000):
+        candidate = f"{serial[:max_len-6]}-{idx}"
+        if not Device.objects.filter(serial_number=candidate).exists():
+            return candidate
+    return f"SCAN-{uuid.uuid4().hex[:8]}"
+
+
+def _find_existing_scanned_device(serial=None, ip_address=None, mac_address=None):
+    if serial:
+        found = Device.objects.filter(serial_number=serial).first()
+        if found:
+            return found
+    if ip_address:
+        found = Device.objects.filter(ip_address=ip_address).first()
+        if found:
+            return found
+    if mac_address:
+        found = Device.objects.filter(mac_address__iexact=mac_address).first()
+        if found:
+            return found
+    return None
 
 
 def _coerce_status(value):
@@ -428,6 +467,142 @@ class DeviceViewSet(viewsets.ModelViewSet):
             {"created": created, "updated": updated, "skipped": skipped},
             status=status.HTTP_200_OK
         )
+
+    @action(detail=False, methods=['get'], permission_classes=[AdminGroupPermission], url_path='network_scan_suggestions')
+    def network_scan_suggestions(self, request):
+        return Response({"cidrs": suggest_local_cidrs()}, status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=['post'], permission_classes=[AdminGroupPermission], url_path='network_scan')
+    def network_scan(self, request):
+        cidr = (request.data.get('cidr') or '').strip()
+        if not cidr:
+            suggestions = suggest_local_cidrs()
+            if not suggestions:
+                return Response(
+                    {"detail": "No local network ranges found. Provide CIDR manually."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            cidr = suggestions[0]
+
+        timeout_ms = request.data.get('timeout_ms')
+        try:
+            timeout_ms = int(timeout_ms) if timeout_ms is not None else 600
+        except (TypeError, ValueError):
+            timeout_ms = 600
+        timeout_ms = max(100, min(timeout_ms, 5000))
+
+        try:
+            scan_result = scan_network(cidr=cidr, timeout_ms=timeout_ms)
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as exc:
+            return Response({"detail": f"Network scan failed: {exc}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        items = scan_result.get('results', [])
+        ip_values = [item.get('ip_address') for item in items if item.get('ip_address')]
+        existing_by_ip = {
+            device.ip_address: device
+            for device in Device.objects.filter(ip_address__in=ip_values)
+        } if ip_values else {}
+
+        for item in items:
+            existing = None
+            ip_address = item.get('ip_address')
+            mac_address = _normalize_mac(item.get('mac_address'))
+            if ip_address:
+                existing = existing_by_ip.get(ip_address)
+            if existing is None and mac_address:
+                existing = Device.objects.filter(mac_address__iexact=mac_address).first()
+            if existing:
+                item['existing_device_id'] = existing.id
+                item['existing_device_name'] = existing.name
+                item['existing_serial_number'] = existing.serial_number
+            else:
+                item['existing_device_id'] = None
+                item['existing_device_name'] = None
+                item['existing_serial_number'] = None
+
+        return Response({
+            "cidr": scan_result.get('cidr'),
+            "host_count": scan_result.get('host_count'),
+            "alive_count": scan_result.get('alive_count'),
+            "results": items,
+        }, status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=['post'], permission_classes=[AdminGroupPermission], url_path='import_scanned')
+    def import_scanned(self, request):
+        payload = request.data.get('devices', request.data)
+        if not isinstance(payload, list):
+            return Response({"detail": "Expected list of scanned devices."}, status=status.HTTP_400_BAD_REQUEST)
+
+        device_type = _get_pc_device_type()
+        created = 0
+        skipped = 0
+        errors = []
+        created_items = []
+
+        for item in payload:
+            if not isinstance(item, dict):
+                skipped += 1
+                continue
+
+            ip_address = _normalize_ip((item.get('ip_address') or '').strip())
+            mac_address = _normalize_mac(item.get('mac_address'))
+            if not ip_address:
+                skipped += 1
+                errors.append({"ip_address": item.get('ip_address'), "detail": "Invalid or empty IP address."})
+                continue
+
+            name = (item.get('name') or '').strip() or ip_address
+            serial_number = (item.get('serial_number') or '').strip() or None
+            if serial_number:
+                serial_number = serial_number[:100]
+
+            existing = _find_existing_scanned_device(
+                serial=serial_number,
+                ip_address=ip_address,
+                mac_address=mac_address,
+            )
+            if existing:
+                skipped += 1
+                continue
+
+            if not serial_number:
+                serial_number = _build_scanned_serial(ip_address=ip_address, mac_address=mac_address)
+            elif Device.objects.filter(serial_number=serial_number).exists():
+                serial_number = _build_scanned_serial(ip_address=ip_address, mac_address=mac_address)
+
+            try:
+                with transaction.atomic():
+                    created_device = Device.objects.create(
+                        name=name[:200],
+                        serial_number=serial_number,
+                        device_type=device_type,
+                        status='active',
+                        ip_address=ip_address,
+                        mac_address=mac_address,
+                        owner=request.user,
+                    )
+                    created += 1
+                    created_items.append({
+                        "id": created_device.id,
+                        "name": created_device.name,
+                        "ip_address": created_device.ip_address,
+                        "serial_number": created_device.serial_number,
+                    })
+            except Exception as exc:
+                skipped += 1
+                errors.append({
+                    "ip_address": ip_address,
+                    "detail": str(exc),
+                })
+
+        return Response({
+            "created": created,
+            "skipped": skipped,
+            "errors": errors[:30],
+            "created_items": created_items[:100],
+        }, status=status.HTTP_200_OK)
     
     # --- НОВЫЙ МЕТОД ДЛЯ QR-КОДА ---
     @action(detail=True, methods=['get'], permission_classes=[IsAuthenticated])
@@ -1122,7 +1297,7 @@ class NetworkPathViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['post'], permission_classes=[AdminGroupPermission])
     def evaluate_alerts(self, request):
         recompute = self._to_bool(request.data.get('recompute'), True)
-        ensure_defaults = self._to_bool(request.data.get('ensure_defaults'), True)
+        ensure_defaults = self._to_bool(request.data.get('ensure_defaults'), False)
         if ensure_defaults:
             ensure_default_network_alert_rules()
         if recompute:
@@ -1175,7 +1350,14 @@ class NetworkAlertRuleViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['post'], permission_classes=[AdminGroupPermission])
     def seed_defaults(self, request):
-        stats = ensure_default_network_alert_rules()
+        raw = request.data.get('overwrite')
+        if raw is None:
+            overwrite = True
+        elif isinstance(raw, bool):
+            overwrite = raw
+        else:
+            overwrite = str(raw).strip().lower() in ('1', 'true', 'yes', 'y', 'on')
+        stats = ensure_default_network_alert_rules(overwrite=overwrite)
         return Response(stats, status=status.HTTP_200_OK)
 
 

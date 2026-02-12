@@ -5,6 +5,18 @@
       <div>
         <h2 class="text-2xl font-bold m-0 text-900">Диагностика (ИИ)</h2>
         <p class="text-500 m-0">Краткий диагноз по метрикам и правилам</p>
+        <div class="mt-3">
+          <label class="block text-600 text-sm mb-1">Устройство</label>
+          <Dropdown
+            v-model="selectedMonitoringDeviceId"
+            :options="monitoringDevices"
+            optionLabel="label"
+            optionValue="id"
+            placeholder="Нет активных устройств (AgentStatus=ok)"
+            class="device-select"
+            :loading="loadingMonitoringDevices"
+          />
+        </div>
       </div>
       <div class="flex flex-wrap align-items-center gap-2">
         <div class="mode-toggle">
@@ -84,11 +96,13 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue';
+import { ref, onMounted, watch } from 'vue';
 import apiClient from '@/api';
 import Button from 'primevue/button';
+import Dropdown from 'primevue/dropdown';
 import Toast from 'primevue/toast';
 import { useToast } from 'primevue/usetoast';
+import { useMonitoringDevice } from '@/composables/useMonitoringDevice';
 
 const toast = useToast();
 const running = ref(false);
@@ -96,6 +110,13 @@ const report = ref(null);
 const mode = ref('llm');
 const modeLabel = ref('');
 const fallbackReason = ref('');
+const {
+  monitoringDevices,
+  selectedMonitoringDeviceId,
+  selectedMonitoringSerial,
+  loadingMonitoringDevices,
+  loadMonitoringDevices,
+} = useMonitoringDevice();
 
 const severityLabel = (value) => {
   if (value === 'critical') return 'Критично';
@@ -125,7 +146,12 @@ const formatTime = (value) => {
 
 const loadLatest = async () => {
   try {
-    const res = await apiClient.get('diagnostics/latest/');
+    const params = new URLSearchParams();
+    if (selectedMonitoringDeviceId.value) {
+      params.set('device', String(selectedMonitoringDeviceId.value));
+    }
+    const query = params.toString();
+    const res = await apiClient.get(`diagnostics/latest/${query ? `?${query}` : ''}`);
     report.value = res.data;
     updateModeInfo(res.data);
   } catch (e) {
@@ -138,7 +164,11 @@ const loadLatest = async () => {
 const runAnalysis = async () => {
   running.value = true;
   try {
-    await apiClient.post('diagnostics/run/', { mode: mode.value });
+    const payload = { mode: mode.value };
+    if (selectedMonitoringSerial.value) {
+      payload.serial = selectedMonitoringSerial.value;
+    }
+    await apiClient.post('diagnostics/run/', payload);
     await loadLatest();
     toast.add({ severity: 'success', summary: 'Готово', detail: 'Анализ выполнен', life: 2500 });
   } catch (e) {
@@ -179,6 +209,12 @@ const updateModeInfo = (data) => {
 };
 
 onMounted(() => {
+  loadMonitoringDevices().then(() => {
+    loadLatest();
+  });
+});
+
+watch(selectedMonitoringDeviceId, () => {
   loadLatest();
 });
 </script>
@@ -261,5 +297,13 @@ onMounted(() => {
 .severity-critical {
   color: #7f1d1d;
   background: rgba(127, 29, 29, 0.2);
+}
+.device-select {
+  min-width: 24rem;
+}
+@media (max-width: 768px) {
+  .device-select {
+    min-width: 100%;
+  }
 }
 </style>

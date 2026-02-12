@@ -5,6 +5,18 @@
       <div>
         <h2 class="text-2xl font-bold m-0 text-900">Мониторинг (сырьевые метрики)</h2>
         <p class="text-500 m-0">Обновление в реальном времени (раз в минуту)</p>
+        <div class="mt-3">
+          <label class="block text-600 text-sm mb-1">Устройство</label>
+          <Dropdown
+            v-model="selectedMonitoringDeviceId"
+            :options="monitoringDevices"
+            optionLabel="label"
+            optionValue="id"
+            placeholder="Нет активных устройств (AgentStatus=ok)"
+            class="device-select"
+            :loading="loadingMonitoringDevices"
+          />
+        </div>
       </div>
       <div class="flex flex-column align-items-end gap-2">
         <span class="text-500 text-sm">Обновлено: {{ lastMetricLabel }}</span>
@@ -137,6 +149,7 @@ import Chart from 'primevue/chart';
 import Toast from 'primevue/toast';
 import { useToast } from 'primevue/usetoast';
 import Dropdown from 'primevue/dropdown';
+import { useMonitoringDevice } from '@/composables/useMonitoringDevice';
 
 const toast = useToast();
 const loading = ref(false);
@@ -145,6 +158,12 @@ const lastUpdated = ref(null);
 
 const AUTO_REFRESH_MS = 60 * 1000;
 const SERIES_LIMIT = 5000;
+const {
+  monitoringDevices,
+  selectedMonitoringDeviceId,
+  loadingMonitoringDevices,
+  loadMonitoringDevices,
+} = useMonitoringDevice();
 
 const stepOptions = [
   { label: 'Минута', stepMinutes: 1, rangeMinutes: 24 * 60 },
@@ -305,8 +324,13 @@ const initChartOptions = () => {
 };
 
 const fetchSeries = async (code, rangeMinutes, limit = SERIES_LIMIT) => {
-  const rangeParam = rangeMinutes ? `&since_minutes=${rangeMinutes}` : '';
-  const res = await apiClient.get(`metrics-raw/?code=${code}&ordering=-timestamp&limit=${limit}${rangeParam}`);
+  const params = new URLSearchParams();
+  params.set('code', code);
+  params.set('ordering', '-timestamp');
+  params.set('limit', String(limit));
+  if (rangeMinutes) params.set('since_minutes', String(rangeMinutes));
+  if (selectedMonitoringDeviceId.value) params.set('device', String(selectedMonitoringDeviceId.value));
+  const res = await apiClient.get(`metrics-raw/?${params.toString()}`);
   const data = Array.isArray(res.data) ? res.data : (res.data?.results || []);
   const sorted = data.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
   return sorted.map(item => ({
@@ -317,7 +341,12 @@ const fetchSeries = async (code, rangeMinutes, limit = SERIES_LIMIT) => {
 };
 
 const fetchLastPoint = async (code) => {
-  const res = await apiClient.get(`metrics-raw/?code=${code}&ordering=-timestamp&limit=1`);
+  const params = new URLSearchParams();
+  params.set('code', code);
+  params.set('ordering', '-timestamp');
+  params.set('limit', '1');
+  if (selectedMonitoringDeviceId.value) params.set('device', String(selectedMonitoringDeviceId.value));
+  const res = await apiClient.get(`metrics-raw/?${params.toString()}`);
   const data = Array.isArray(res.data) ? res.data : (res.data?.results || []);
   if (!data.length) return [];
   return [{
@@ -328,7 +357,12 @@ const fetchLastPoint = async (code) => {
 };
 
 const fetchDiskLatest = async () => {
-  const res = await apiClient.get('metrics-raw/?code=disk_usage_percent&ordering=-timestamp&limit=200');
+  const params = new URLSearchParams();
+  params.set('code', 'disk_usage_percent');
+  params.set('ordering', '-timestamp');
+  params.set('limit', '200');
+  if (selectedMonitoringDeviceId.value) params.set('device', String(selectedMonitoringDeviceId.value));
+  const res = await apiClient.get(`metrics-raw/?${params.toString()}`);
   const data = Array.isArray(res.data) ? res.data : (res.data?.results || []);
   const latest = new Map();
   data.forEach(item => {
@@ -556,13 +590,19 @@ const refreshData = () => {
 
 onMounted(() => {
   initChartOptions();
-  loadDashboardData();
+  loadMonitoringDevices().then(() => {
+    loadDashboardData();
+  });
   pollingInterval.value = setInterval(() => {
     loadDashboardData(true);
   }, AUTO_REFRESH_MS);
 });
 
 watch(selectedStep, () => {
+  loadDashboardData();
+});
+
+watch(selectedMonitoringDeviceId, () => {
   loadDashboardData();
 });
 
@@ -601,6 +641,9 @@ onBeforeUnmount(() => {
 }
 .step-select {
   min-width: 12rem;
+}
+.device-select {
+  min-width: 24rem;
 }
 .vm-grid {
   display: grid;
@@ -678,5 +721,11 @@ onBeforeUnmount(() => {
   text-align: right;
   font-weight: 600;
   color: #0f172a;
+}
+
+@media (max-width: 768px) {
+  .device-select {
+    min-width: 100%;
+  }
 }
 </style>

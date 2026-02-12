@@ -14,6 +14,7 @@
     <div class="tab-switch mb-3">
       <Button :outlined="activeTab !== 'paths'" label="Пути" @click="activeTab = 'paths'" />
       <Button :outlined="activeTab !== 'matrix'" label="Матрица" @click="activeTab = 'matrix'" />
+      <Button :outlined="activeTab !== 'scan'" label="Сканирование" @click="activeTab = 'scan'" />
       <Button :outlined="activeTab !== 'incidents'" label="Инциденты" @click="activeTab = 'incidents'" />
       <Button :outlined="activeTab !== 'derived_alerts'" label="Метрики и тревоги" @click="activeTab = 'derived_alerts'" />
     </div>
@@ -108,6 +109,7 @@
         v-model:selection="selectedPaths"
         dataKey="id"
         :loading="loadingPaths"
+        class="table-compact"
         paginator
         :rows="15"
         stripedRows
@@ -197,6 +199,81 @@
       </div>
     </div>
 
+    <div v-if="activeTab === 'scan'">
+      <div class="card p-3 mb-3">
+        <div class="grid">
+          <div class="col-12 md:col-4">
+            <label class="block mb-2">Подсеть (CIDR)</label>
+            <Dropdown
+              v-model="scanCidr"
+              :options="scanSuggestions"
+              optionLabel="label"
+              optionValue="value"
+              editable
+              placeholder="Например: 10.250.0.0/24"
+              class="w-full"
+            />
+          </div>
+          <div class="col-12 md:col-2">
+            <label class="block mb-2">Timeout ping</label>
+            <InputNumber v-model="scanTimeoutMs" :min="100" :max="5000" suffix=" ms" class="w-full" />
+          </div>
+          <div class="col-12 md:col-6 flex align-items-end gap-2">
+            <Button label="Сканировать" icon="pi pi-search" @click="runNetworkScan" :loading="scanLoading" />
+            <Button label="Сети хоста" icon="pi pi-sync" text @click="loadScanSuggestions" :loading="scanSuggestionsLoading" />
+            <Button
+              label="Добавить выбранные в базу"
+              icon="pi pi-plus"
+              severity="success"
+              @click="importScannedDevices"
+              :disabled="!selectedScanned.length"
+            />
+          </div>
+        </div>
+      </div>
+
+      <div class="card p-3 mb-3">
+        <div class="flex flex-wrap gap-3 text-600">
+          <span>Подсеть: <b>{{ scanStats.cidr || '—' }}</b></span>
+          <span>Хостов проверено: <b>{{ scanStats.host_count || 0 }}</b></span>
+          <span>Доступно: <b>{{ scanStats.alive_count || 0 }}</b></span>
+          <span>Выбрано: <b>{{ selectedScanned.length }}</b></span>
+        </div>
+      </div>
+
+      <DataTable
+        :value="scannedDevices"
+        v-model:selection="selectedScanned"
+        dataKey="ip_address"
+        :loading="scanLoading"
+        paginator
+        :rows="15"
+        stripedRows
+        responsiveLayout="scroll"
+      >
+        <Column selectionMode="multiple" headerStyle="width: 3rem"></Column>
+        <Column field="name" header="Название" />
+        <Column field="ip_address" header="IP" />
+        <Column field="mac_address" header="MAC">
+          <template #body="{ data }">{{ data.mac_address || '—' }}</template>
+        </Column>
+        <Column field="serial_number" header="Серийный">
+          <template #body="{ data }">{{ data.serial_number || '—' }}</template>
+        </Column>
+        <Column field="latency_ms" header="RTT (ms)">
+          <template #body="{ data }">{{ data.latency_ms ?? '—' }}</template>
+        </Column>
+        <Column header="В БД">
+          <template #body="{ data }">
+            <Tag
+              :value="data.existing_device_id ? `Да (${data.existing_device_name || data.existing_serial_number || data.existing_device_id})` : 'Нет'"
+              :severity="data.existing_device_id ? 'warning' : 'success'"
+            />
+          </template>
+        </Column>
+      </DataTable>
+    </div>
+
     <div v-if="activeTab === 'incidents'" class="card p-3">
       <div class="grid mb-2">
         <div class="col-12 md:col-3">
@@ -208,7 +285,7 @@
           <Dropdown v-model="incidentFilter.active" :options="activeOptions" optionLabel="label" optionValue="value" class="w-full" @change="loadOutages" />
         </div>
       </div>
-      <DataTable :value="outages" :loading="loadingOutages" paginator :rows="15" stripedRows responsiveLayout="scroll">
+      <DataTable :value="outages" :loading="loadingOutages" class="table-compact" paginator :rows="15" stripedRows responsiveLayout="scroll">
         <Column field="path_src" header="Источник" />
         <Column field="path_dst" header="Назначение" />
         <Column field="path_dst_ip" header="IP" />
@@ -272,15 +349,33 @@
       </div>
 
       <div class="card p-3 mb-3">
-        <h4 class="m-0 mb-2">Правила тревог</h4>
-        <DataTable :value="alertRules" :loading="loadingDerived" stripedRows responsiveLayout="scroll">
+        <div class="flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
+          <h4 class="m-0">Правила тревог</h4>
+          <div class="flex gap-2">
+            <Button label="Добавить правило" icon="pi pi-plus" @click="openCreateRuleDialog" />
+          </div>
+        </div>
+        <DataTable :value="alertRules" :loading="loadingDerived" class="table-compact" stripedRows responsiveLayout="scroll">
           <Column field="order" header="Порядок">
             <template #body="{ data }">
               <InputNumber v-model="data.order" :min="1" :max="10000" class="w-full" />
             </template>
           </Column>
-          <Column field="code" header="Код" />
-          <Column field="name" header="Название" />
+          <Column field="code" header="Код">
+            <template #body="{ data }">
+              <InputText v-model="data.code" class="w-full" />
+            </template>
+          </Column>
+          <Column field="name" header="Название">
+            <template #body="{ data }">
+              <InputText v-model="data.name" class="w-full" />
+            </template>
+          </Column>
+          <Column field="description" header="Описание">
+            <template #body="{ data }">
+              <InputText v-model="data.description" class="w-full" />
+            </template>
+          </Column>
           <Column field="metric_code" header="Метрика">
             <template #body="{ data }">
               <Dropdown v-model="data.metric_code" :options="metricCodeOptions" optionLabel="label" optionValue="value" class="w-full" />
@@ -311,9 +406,12 @@
               <InputSwitch v-model="data.enabled" />
             </template>
           </Column>
-          <Column header="Сохранить">
+          <Column header="Действия">
             <template #body="{ data }">
-              <Button icon="pi pi-save" text rounded @click="saveRule(data)" />
+              <div class="flex gap-1">
+                <Button icon="pi pi-save" text rounded @click="saveRule(data)" />
+                <Button icon="pi pi-trash" text rounded severity="danger" @click="removeRule(data)" />
+              </div>
             </template>
           </Column>
         </DataTable>
@@ -321,7 +419,7 @@
 
       <div class="card p-3 mb-3">
         <h4 class="m-0 mb-2">Derived метрики путей</h4>
-        <DataTable :value="derivedRows" :loading="loadingDerived" stripedRows paginator :rows="15" responsiveLayout="scroll">
+        <DataTable :value="derivedRows" :loading="loadingDerived" class="table-compact" stripedRows paginator :rows="15" responsiveLayout="scroll">
           <Column field="src_device_name" header="Источник" />
           <Column field="dst_device_name" header="Назначение" />
           <Column field="dst_ip" header="IP" />
@@ -348,7 +446,7 @@
             <InputText v-model="alertsFilter.search" placeholder="Поиск по пути/правилу" class="alert-filter" />
           </div>
         </div>
-        <DataTable :value="filteredActiveAlerts" :loading="loadingDerived" stripedRows paginator :rows="15" responsiveLayout="scroll">
+        <DataTable :value="filteredActiveAlerts" :loading="loadingDerived" class="table-compact" stripedRows paginator :rows="15" responsiveLayout="scroll">
           <Column field="severity" header="Severity">
             <template #body="{ data }"><Tag :value="data.severity" :severity="severityTag(data.severity)" /></template>
           </Column>
@@ -409,16 +507,65 @@
         <div class="text-700 mb-3">{{ historyPath.src_device }} -> {{ historyPath.dst_device }}</div>
         <div class="grid">
           <div class="col-12">
-            <Chart type="line" :data="historyCharts.reachability" :options="historyChartOptions" class="h-16rem" />
+            <Chart type="line" :data="historyCharts.reachability" :options="historyChartOptions.reachability" class="h-16rem" />
           </div>
           <div class="col-12 md:col-6">
-            <Chart type="line" :data="historyCharts.latency" :options="historyChartOptions" class="h-16rem" />
+            <Chart type="line" :data="historyCharts.latency" :options="historyChartOptions.latency" class="h-16rem" />
           </div>
           <div class="col-12 md:col-6">
-            <Chart type="line" :data="historyCharts.loss" :options="historyChartOptions" class="h-16rem" />
+            <Chart type="line" :data="historyCharts.loss" :options="historyChartOptions.loss" class="h-16rem" />
           </div>
         </div>
       </div>
+    </Dialog>
+
+    <Dialog v-model:visible="ruleDialogVisible" modal header="Добавить правило тревоги" :style="{ width: '44rem' }">
+      <div class="grid p-fluid">
+        <div class="col-12 md:col-6">
+          <label class="block mb-2">Код</label>
+          <InputText v-model="ruleForm.code" placeholder="Например: latency_high_custom" class="w-full" />
+        </div>
+        <div class="col-12 md:col-6">
+          <label class="block mb-2">Название</label>
+          <InputText v-model="ruleForm.name" placeholder="Человекочитаемое имя" class="w-full" />
+        </div>
+        <div class="col-12">
+          <label class="block mb-2">Описание</label>
+          <InputText v-model="ruleForm.description" placeholder="Что означает тревога" class="w-full" />
+        </div>
+        <div class="col-12 md:col-4">
+          <label class="block mb-2">Метрика</label>
+          <Dropdown v-model="ruleForm.metric_code" :options="metricCodeOptions" optionLabel="label" optionValue="value" class="w-full" />
+        </div>
+        <div class="col-12 md:col-2">
+          <label class="block mb-2">Окно</label>
+          <Dropdown v-model="ruleForm.window" :options="windowOptions" optionLabel="label" optionValue="value" class="w-full" />
+        </div>
+        <div class="col-12 md:col-2">
+          <label class="block mb-2">Сравнение</label>
+          <Dropdown v-model="ruleForm.comparison" :options="comparisonOptions" optionLabel="label" optionValue="value" class="w-full" />
+        </div>
+        <div class="col-12 md:col-2">
+          <label class="block mb-2">Порог</label>
+          <InputNumber v-model="ruleForm.threshold_value" :maxFractionDigits="2" class="w-full" />
+        </div>
+        <div class="col-12 md:col-2">
+          <label class="block mb-2">Порядок</label>
+          <InputNumber v-model="ruleForm.order" :min="1" :max="10000" class="w-full" />
+        </div>
+        <div class="col-12 md:col-4">
+          <label class="block mb-2">Severity</label>
+          <Dropdown v-model="ruleForm.severity" :options="severityOptions" optionLabel="label" optionValue="value" class="w-full" />
+        </div>
+        <div class="col-12 md:col-4">
+          <label class="block mb-2">Enabled</label>
+          <InputSwitch v-model="ruleForm.enabled" />
+        </div>
+      </div>
+      <template #footer>
+        <Button label="Отмена" severity="secondary" text @click="ruleDialogVisible = false" />
+        <Button label="Создать" icon="pi pi-check" @click="createRule" />
+      </template>
     </Dialog>
   </div>
 </template>
@@ -447,11 +594,23 @@ const autoTimer = ref(null);
 const loadingPaths = ref(false);
 const loadingOutages = ref(false);
 const loadingDerived = ref(false);
+const scanLoading = ref(false);
+const scanSuggestionsLoading = ref(false);
 
 const paths = ref([]);
 const devices = ref([]);
 const outages = ref([]);
 const selectedPaths = ref([]);
+const scannedDevices = ref([]);
+const selectedScanned = ref([]);
+const scanSuggestions = ref([]);
+const scanCidr = ref('');
+const scanTimeoutMs = ref(600);
+const scanStats = ref({
+  cidr: '',
+  host_count: 0,
+  alive_count: 0,
+});
 const alertRules = ref([]);
 const derivedRows = ref([]);
 const activeAlerts = ref([]);
@@ -528,10 +687,47 @@ const historyCharts = ref({
   latency: { labels: [], datasets: [] },
   loss: { labels: [], datasets: [] },
 });
-const historyChartOptions = {
+const createHistoryOptions = (yOverrides = {}) => ({
   maintainAspectRatio: false,
-  plugins: { legend: { display: true } },
-};
+  animation: false,
+  plugins: {
+    legend: { display: true, labels: { boxWidth: 16 } },
+  },
+  scales: {
+    x: {
+      ticks: {
+        maxRotation: 25,
+        minRotation: 25,
+        autoSkip: true,
+        maxTicksLimit: 10,
+      },
+      grid: { display: false },
+    },
+    y: {
+      beginAtZero: true,
+      ...yOverrides,
+    },
+  },
+});
+const historyChartOptions = ref({
+  reachability: createHistoryOptions({ min: 0, max: 1, ticks: { stepSize: 1 } }),
+  latency: createHistoryOptions(),
+  loss: createHistoryOptions({ min: 0, max: 100 }),
+});
+
+const ruleDialogVisible = ref(false);
+const ruleForm = ref({
+  code: '',
+  name: '',
+  description: '',
+  metric_code: 'net_path_down_flag_current',
+  window: 'current',
+  comparison: 'eq',
+  threshold_value: 1,
+  severity: 'high',
+  enabled: true,
+  order: 100,
+});
 
 const incidentFilter = ref({
   period: '24h',
@@ -699,6 +895,83 @@ const loadOutages = async () => {
   }
 };
 
+const loadScanSuggestions = async () => {
+  scanSuggestionsLoading.value = true;
+  try {
+    const res = await apiClient.get('devices/network_scan_suggestions/');
+    const cidrs = Array.isArray(res.data?.cidrs) ? res.data.cidrs : [];
+    scanSuggestions.value = cidrs.map((value) => ({ label: value, value }));
+    if (!scanCidr.value && scanSuggestions.value.length) {
+      scanCidr.value = scanSuggestions.value[0].value;
+    }
+  } catch (e) {
+    toast.add({
+      severity: 'error',
+      summary: 'Ошибка',
+      detail: e?.response?.data?.detail || 'Не удалось получить подсети',
+      life: 3500,
+    });
+  } finally {
+    scanSuggestionsLoading.value = false;
+  }
+};
+
+const runNetworkScan = async () => {
+  scanLoading.value = true;
+  selectedScanned.value = [];
+  try {
+    const res = await apiClient.post('devices/network_scan/', {
+      cidr: scanCidr.value || null,
+      timeout_ms: scanTimeoutMs.value || 600,
+    });
+    scannedDevices.value = Array.isArray(res.data?.results) ? res.data.results : [];
+    scanStats.value = {
+      cidr: res.data?.cidr || scanCidr.value || '',
+      host_count: res.data?.host_count || 0,
+      alive_count: res.data?.alive_count || 0,
+    };
+  } catch (e) {
+    scannedDevices.value = [];
+    const detail = e?.response?.data?.detail || 'Не удалось выполнить сканирование';
+    toast.add({ severity: 'error', summary: 'Ошибка', detail, life: 4500 });
+  } finally {
+    scanLoading.value = false;
+  }
+};
+
+const importScannedDevices = async () => {
+  if (!selectedScanned.value.length) {
+    return;
+  }
+  try {
+    const payload = selectedScanned.value
+      .filter((item) => !item.existing_device_id)
+      .map((item) => ({
+        name: item.name,
+        ip_address: item.ip_address,
+        mac_address: item.mac_address,
+        serial_number: item.serial_number,
+      }));
+
+    if (!payload.length) {
+      toast.add({ severity: 'warn', summary: 'Нет данных', detail: 'Все выбранные устройства уже есть в базе.', life: 3000 });
+      return;
+    }
+
+    const res = await apiClient.post('devices/import_scanned/', { devices: payload });
+    toast.add({
+      severity: 'success',
+      summary: 'Импорт завершен',
+      detail: `Создано: ${res.data?.created || 0}, пропущено: ${res.data?.skipped || 0}`,
+      life: 3500,
+    });
+    await Promise.all([loadDevices(), runNetworkScan()]);
+  } catch (e) {
+    const detail = e?.response?.data?.detail || 'Не удалось добавить устройства';
+    toast.add({ severity: 'error', summary: 'Ошибка', detail, life: 4500 });
+  }
+};
+
 const loadAlertRules = async () => {
   try {
     const res = await apiClient.get('network-alert-rules/?ordering=order,code');
@@ -734,12 +1007,62 @@ const severityTag = (severity) => {
   return 'success';
 };
 
+const openCreateRuleDialog = () => {
+  ruleForm.value = {
+    code: '',
+    name: '',
+    description: '',
+    metric_code: 'net_path_down_flag_current',
+    window: 'current',
+    comparison: 'eq',
+    threshold_value: 1,
+    severity: 'high',
+    enabled: true,
+    order: 100,
+  };
+  ruleDialogVisible.value = true;
+};
+
+const createRule = async () => {
+  const payload = {
+    code: (ruleForm.value.code || '').trim(),
+    name: (ruleForm.value.name || '').trim(),
+    description: (ruleForm.value.description || '').trim(),
+    metric_code: ruleForm.value.metric_code,
+    window: ruleForm.value.window,
+    comparison: ruleForm.value.comparison,
+    threshold_value: Number(ruleForm.value.threshold_value),
+    severity: ruleForm.value.severity,
+    enabled: !!ruleForm.value.enabled,
+    order: Number(ruleForm.value.order || 100),
+  };
+  if (!payload.code || !payload.name) {
+    toast.add({ severity: 'warn', summary: 'Проверка данных', detail: 'Код и название обязательны.', life: 3200 });
+    return;
+  }
+  if (Number.isNaN(payload.threshold_value)) {
+    toast.add({ severity: 'warn', summary: 'Проверка данных', detail: 'Порог должен быть числом.', life: 3200 });
+    return;
+  }
+  try {
+    await apiClient.post('network-alert-rules/', payload);
+    ruleDialogVisible.value = false;
+    await loadAlertRules();
+    toast.add({ severity: 'success', summary: 'Создано', detail: `Правило: ${payload.code}`, life: 2600 });
+  } catch (e) {
+    const detail = typeof e?.response?.data === 'object'
+      ? JSON.stringify(e.response.data)
+      : (e?.response?.data?.detail || 'Не удалось создать правило');
+    toast.add({ severity: 'error', summary: 'Ошибка', detail, life: 4500 });
+  }
+};
+
 const evaluateAlerts = async (recompute = true) => {
   loadingDerived.value = true;
   try {
     const res = await apiClient.post('network-paths/evaluate_alerts/', {
       recompute,
-      ensure_defaults: true,
+      ensure_defaults: false,
     });
     const payload = res.data || {};
     alertSummary.value = payload.summary || {
@@ -770,12 +1093,12 @@ const evaluateAlerts = async (recompute = true) => {
 
 const seedDefaultRules = async () => {
   try {
-    const res = await apiClient.post('network-alert-rules/seed_defaults/');
+    const res = await apiClient.post('network-alert-rules/seed_defaults/', { overwrite: true });
     await loadAlertRules();
     toast.add({
       severity: 'success',
       summary: 'Правила обновлены',
-      detail: `created=${res.data?.created || 0}, updated=${res.data?.updated || 0}`,
+      detail: `created=${res.data?.created || 0}, updated=${res.data?.updated || 0}, skipped=${res.data?.skipped || 0}`,
       life: 3200,
     });
   } catch (e) {
@@ -785,19 +1108,42 @@ const seedDefaultRules = async () => {
 };
 
 const saveRule = async (rule) => {
+  const payload = {
+    code: (rule.code || '').trim(),
+    name: (rule.name || '').trim(),
+    description: (rule.description || '').trim(),
+    metric_code: rule.metric_code,
+    window: rule.window,
+    comparison: rule.comparison,
+    threshold_value: Number(rule.threshold_value),
+    severity: rule.severity,
+    enabled: !!rule.enabled,
+    order: Number(rule.order || 100),
+  };
+  if (!payload.code || !payload.name || Number.isNaN(payload.threshold_value)) {
+    toast.add({ severity: 'warn', summary: 'Проверка данных', detail: 'Заполните код/название/порог корректно.', life: 3200 });
+    return;
+  }
   try {
-    await apiClient.patch(`network-alert-rules/${rule.id}/`, {
-      metric_code: rule.metric_code,
-      window: rule.window,
-      comparison: rule.comparison,
-      threshold_value: rule.threshold_value,
-      severity: rule.severity,
-      enabled: rule.enabled,
-      order: rule.order,
-    });
-    toast.add({ severity: 'success', summary: 'Сохранено', detail: `Правило: ${rule.code}`, life: 2200 });
+    await apiClient.patch(`network-alert-rules/${rule.id}/`, payload);
+    toast.add({ severity: 'success', summary: 'Сохранено', detail: `Правило: ${payload.code}`, life: 2200 });
   } catch (e) {
-    const detail = e?.response?.data?.detail || 'Не удалось сохранить правило';
+    const detail = typeof e?.response?.data === 'object'
+      ? JSON.stringify(e.response.data)
+      : (e?.response?.data?.detail || 'Не удалось сохранить правило');
+    toast.add({ severity: 'error', summary: 'Ошибка', detail, life: 3800 });
+  }
+};
+
+const removeRule = async (rule) => {
+  if (!window.confirm(`Удалить правило "${rule.name || rule.code}"?`)) return;
+  try {
+    await apiClient.delete(`network-alert-rules/${rule.id}/`);
+    await loadAlertRules();
+    await evaluateAlerts(false);
+    toast.add({ severity: 'success', summary: 'Удалено', detail: `Правило: ${rule.code}`, life: 2400 });
+  } catch (e) {
+    const detail = e?.response?.data?.detail || 'Не удалось удалить правило';
     toast.add({ severity: 'error', summary: 'Ошибка', detail, life: 3800 });
   }
 };
@@ -811,7 +1157,7 @@ const loadDerivedTab = async () => {
     ]);
     const res = await apiClient.post('network-paths/evaluate_alerts/', {
       recompute: false,
-      ensure_defaults: true,
+      ensure_defaults: false,
     });
     const payload = res.data || {};
     alertSummary.value = payload.summary || alertSummary.value;
@@ -832,6 +1178,8 @@ const refreshActiveTab = async () => {
     await loadPaths();
   } else if (activeTab.value === 'matrix') {
     await loadMatrix();
+  } else if (activeTab.value === 'scan') {
+    await runNetworkScan();
   } else if (activeTab.value === 'derived_alerts') {
     await loadDerivedTab();
   } else {
@@ -998,6 +1346,24 @@ const formatLabel = (timestamp) => {
   return `${pad(date.getHours())}:${pad(date.getMinutes())} ${pad(date.getDate())}:${pad(date.getMonth() + 1)}:${date.getFullYear()}`;
 };
 
+const buildRange = (values, { minFloor = 0, maxCap = null } = {}) => {
+  if (!values.length) return {};
+  const numeric = values.map((v) => Number(v)).filter((v) => Number.isFinite(v));
+  if (!numeric.length) return {};
+  const minValue = Math.min(...numeric);
+  const maxValue = Math.max(...numeric);
+  if (minValue === maxValue) {
+    const delta = Math.max(1, Math.abs(maxValue) * 0.1);
+    const min = Math.max(minFloor, minValue - delta);
+    const max = maxValue + delta;
+    return maxCap === null ? { min, max } : { min, max: Math.min(max, maxCap) };
+  }
+  const padding = (maxValue - minValue) * 0.1;
+  const min = Math.max(minFloor, minValue - padding);
+  const max = maxValue + padding;
+  return maxCap === null ? { min, max } : { min, max: Math.min(max, maxCap) };
+};
+
 const openCellHistory = async (cell) => {
   if (!cell.path_id) return;
   try {
@@ -1020,6 +1386,11 @@ const openCellHistory = async (cell) => {
       labels: loss.map((p) => formatLabel(p.timestamp)),
       datasets: [{ label: 'Loss %', data: loss.map((p) => p.value), borderColor: '#ef4444', fill: false, tension: 0.2 }],
     };
+    historyChartOptions.value = {
+      reachability: createHistoryOptions({ min: 0, max: 1, ticks: { stepSize: 1 } }),
+      latency: createHistoryOptions(buildRange(latency.map((p) => p.value), { minFloor: 0 })),
+      loss: createHistoryOptions(buildRange(loss.map((p) => p.value), { minFloor: 0, maxCap: 100 })),
+    };
     historyDialogVisible.value = true;
   } catch (e) {
     toast.add({ severity: 'error', summary: 'Ошибка', detail: 'Не удалось загрузить историю ячейки', life: 4000 });
@@ -1029,13 +1400,13 @@ const openCellHistory = async (cell) => {
 watch(activeTab, async (tab) => {
   if (tab === 'paths') await loadPaths();
   if (tab === 'matrix') await loadMatrix();
+  if (tab === 'scan') await runNetworkScan();
   if (tab === 'incidents') await loadOutages();
   if (tab === 'derived_alerts') await loadDerivedTab();
 });
 
 onMounted(async () => {
-  await loadDevices();
-  await loadPaths();
+  await Promise.all([loadDevices(), loadPaths(), loadScanSuggestions()]);
   autoTimer.value = setInterval(() => {
     if (activeTab.value === 'paths') loadPaths();
     if (activeTab.value === 'matrix') loadMatrix();
@@ -1052,10 +1423,15 @@ onBeforeUnmount(() => {
 <style scoped>
 .tab-switch {
   display: inline-flex;
+  flex-wrap: wrap;
   gap: 0.5rem;
   padding: 0.4rem;
   border-radius: 12px;
   background: #eef2ff;
+}
+.tab-switch :deep(.p-button) {
+  min-height: 2.2rem;
+  font-weight: 600;
 }
 .bulk-input {
   width: 9rem;
@@ -1064,8 +1440,27 @@ onBeforeUnmount(() => {
   background: #f8fafc;
   border: 1px solid #e2e8f0;
 }
+.network-monitoring :deep(.card) {
+  border-radius: 12px;
+  border: 1px solid #e2e8f0;
+}
+.network-monitoring :deep(.p-datatable .p-datatable-thead > tr > th) {
+  white-space: nowrap;
+  font-size: 0.82rem;
+  padding: 0.62rem 0.6rem;
+}
+.network-monitoring :deep(.p-datatable .p-datatable-tbody > tr > td) {
+  vertical-align: middle;
+  font-size: 0.85rem;
+  padding: 0.56rem 0.6rem;
+}
+.table-compact :deep(.p-inputtext),
+.table-compact :deep(.p-dropdown),
+.table-compact :deep(.p-inputnumber-input) {
+  min-height: 2rem;
+}
 .alert-filter {
-  min-width: 14rem;
+  min-width: 12rem;
 }
 .eff-cell {
   font-size: 0.84rem;
@@ -1083,7 +1478,7 @@ onBeforeUnmount(() => {
 }
 .matrix-table th,
 .matrix-table td {
-  padding: 0.45rem;
+  padding: 0.55rem;
   text-align: center;
   border-radius: 8px;
 }
@@ -1095,16 +1490,18 @@ onBeforeUnmount(() => {
 .matrix-cell {
   cursor: pointer;
   transition: transform 0.15s ease;
+  min-width: 170px;
+  min-height: 86px;
 }
 .matrix-cell:hover {
   transform: translateY(-1px);
 }
 .cell-main {
   font-weight: 600;
-  font-size: 0.82rem;
+  font-size: 0.8rem;
 }
 .cell-sub {
-  font-size: 0.75rem;
+  font-size: 0.72rem;
   opacity: 0.9;
 }
 .cell-up {
@@ -1122,5 +1519,8 @@ onBeforeUnmount(() => {
 .cell-none {
   background: #e2e8f0;
   color: #475569;
+}
+.network-monitoring :deep(.p-dialog .p-dialog-content) {
+  overflow-x: hidden;
 }
 </style>

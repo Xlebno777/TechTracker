@@ -82,19 +82,30 @@ DEFAULT_NETWORK_ALERT_RULES = [
 ]
 
 
-def ensure_default_network_alert_rules():
+def ensure_default_network_alert_rules(overwrite=False):
     created = 0
     updated = 0
+    skipped = 0
     for item in DEFAULT_NETWORK_ALERT_RULES:
-        obj, was_created = NetworkAlertRule.objects.update_or_create(
-            code=item['code'],
-            defaults=item,
-        )
-        if was_created:
-            created += 1
+        if overwrite:
+            _, was_created = NetworkAlertRule.objects.update_or_create(
+                code=item['code'],
+                defaults=item,
+            )
+            if was_created:
+                created += 1
+            else:
+                updated += 1
         else:
-            updated += 1
-    return {'created': created, 'updated': updated}
+            _, was_created = NetworkAlertRule.objects.get_or_create(
+                code=item['code'],
+                defaults=item,
+            )
+            if was_created:
+                created += 1
+            else:
+                skipped += 1
+    return {'created': created, 'updated': updated, 'skipped': skipped}
 
 
 def _coerce_path_id(labels):

@@ -5,6 +5,18 @@
       <div>
         <h2 class="text-2xl font-bold m-0 text-900">Анализ мониторинга</h2>
         <p class="text-500 m-0">Агрегации уровня 2, пересчёт по расписанию (раз в час)</p>
+        <div class="mt-3">
+          <label class="block text-600 text-sm mb-1">Устройство</label>
+          <Dropdown
+            v-model="selectedMonitoringDeviceId"
+            :options="monitoringDevices"
+            optionLabel="label"
+            optionValue="id"
+            placeholder="Нет активных устройств (AgentStatus=ok)"
+            class="device-select"
+            :loading="loadingMonitoringDevices"
+          />
+        </div>
       </div>
       <div class="flex flex-column align-items-end gap-2">
         <span class="text-500 text-sm">Обновлено: {{ lastMetricLabel }}</span>
@@ -162,11 +174,13 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue';
+import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue';
 import apiClient from '@/api';
 import Button from 'primevue/button';
+import Dropdown from 'primevue/dropdown';
 import Toast from 'primevue/toast';
 import { useToast } from 'primevue/usetoast';
+import { useMonitoringDevice } from '@/composables/useMonitoringDevice';
 
 const toast = useToast();
 const loading = ref(false);
@@ -176,6 +190,13 @@ const pollingInterval = ref(null);
 const agentError = ref(null);
 
 const AUTO_REFRESH_MS = 60 * 60 * 1000;
+const {
+  monitoringDevices,
+  selectedMonitoringDeviceId,
+  selectedMonitoringSerial,
+  loadingMonitoringDevices,
+  loadMonitoringDevices,
+} = useMonitoringDevice();
 
 const lastMetricLabel = computed(() => {
   if (!lastUpdated.value) return '—';
@@ -437,7 +458,12 @@ const loadDashboardData = async (silent = false) => {
     loading.value = true;
   }
   try {
-    const res = await apiClient.get('metrics-computed/?ordering=-timestamp');
+    const metricParams = new URLSearchParams();
+    metricParams.set('ordering', '-timestamp');
+    if (selectedMonitoringDeviceId.value) {
+      metricParams.set('device', String(selectedMonitoringDeviceId.value));
+    }
+    const res = await apiClient.get(`metrics-computed/?${metricParams.toString()}`);
     const data = Array.isArray(res.data) ? res.data : (res.data?.results || []);
     metrics.value = data;
     if (data.length > 0) {
@@ -449,7 +475,13 @@ const loadDashboardData = async (silent = false) => {
     } else {
       lastUpdated.value = new Date();
     }
-    const statusRes = await apiClient.get('agent-status/?status=error&ordering=-updated_at');
+    const statusParams = new URLSearchParams();
+    statusParams.set('status', 'error');
+    statusParams.set('ordering', '-updated_at');
+    if (selectedMonitoringDeviceId.value) {
+      statusParams.set('device', String(selectedMonitoringDeviceId.value));
+    }
+    const statusRes = await apiClient.get(`agent-status/?${statusParams.toString()}`);
     const statusData = Array.isArray(statusRes.data) ? statusRes.data : (statusRes.data?.results || []);
     agentError.value = statusData.length ? statusData[0] : null;
   } catch (e) {
@@ -464,7 +496,11 @@ const loadDashboardData = async (silent = false) => {
 const refreshData = async () => {
   loading.value = true;
   try {
-    await apiClient.post('metrics-computed/recompute/');
+    const payload = {};
+    if (selectedMonitoringSerial.value) {
+      payload.serial = selectedMonitoringSerial.value;
+    }
+    await apiClient.post('metrics-computed/recompute/', payload);
     await loadDashboardData(true);
     toast.add({ severity: 'success', summary: 'Обновлено', detail: 'Метрики пересчитаны', life: 3000 });
   } catch (e) {
@@ -476,10 +512,16 @@ const refreshData = async () => {
 };
 
 onMounted(() => {
-  loadDashboardData();
+  loadMonitoringDevices().then(() => {
+    loadDashboardData();
+  });
   pollingInterval.value = setInterval(() => {
     loadDashboardData(true);
   }, AUTO_REFRESH_MS);
+});
+
+watch(selectedMonitoringDeviceId, () => {
+  loadDashboardData();
 });
 
 onBeforeUnmount(() => {
@@ -560,5 +602,13 @@ onBeforeUnmount(() => {
 .warning-banner {
   background: #fff1f2;
   border: 1px solid #fecdd3;
+}
+.device-select {
+  min-width: 24rem;
+}
+@media (max-width: 768px) {
+  .device-select {
+    min-width: 100%;
+  }
 }
 </style>

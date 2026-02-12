@@ -89,14 +89,19 @@
       <!-- Действия -->
       <Column v-if="!auth.isUser" header="Действия" style="width: 120px">
         <template #body="{ data }">
-          <SplitButton
+          <Button
             label="Действия"
             icon="pi pi-cog"
-            :model="getMenuItems(data)"
             severity="secondary"
             size="small"
             text
             raised
+            @click="toggleActionMenu($event, data)"
+          />
+          <Menu
+            :ref="(el) => setActionMenuRef(el, data.id)"
+            :model="getMenuItems(data)"
+            popup
           />
         </template>
       </Column>
@@ -107,18 +112,11 @@
       <div v-if="selectedDevice" class="flex flex-column align-items-center">
         <img v-if="qrCodeUrl" :src="qrCodeUrl" alt="QR" class="mb-3 shadow-2 border-round" style="max-width: 150px" />
         
-        <div class="grid w-full">
-            <div class="col-6 font-bold">Серийный номер:</div>
-            <div class="col-6">{{ selectedDevice.serial_number }}</div>
-            
-            <div class="col-6 font-bold">Владелец:</div>
-            <div class="col-6">{{ getOwnerName(selectedDevice.owner) }}</div>
-
-            <div class="col-6 font-bold">Назначен:</div>
-            <div class="col-6">{{ getOwnerName(selectedDevice.assigned_to) }}</div>
-            
-            <div class="col-6 font-bold">Заметки:</div>
-            <div class="col-6">{{ selectedDevice.notes || '-' }}</div>
+        <div class="grid w-full detail-grid">
+          <template v-for="item in deviceDetailRows" :key="item.label">
+            <div class="col-12 md:col-4 font-bold">{{ item.label }}:</div>
+            <div class="col-12 md:col-8">{{ item.value }}</div>
+          </template>
         </div>
       </div>
     </Dialog>
@@ -142,7 +140,7 @@ import Column from 'primevue/column';
 import Dropdown from 'primevue/dropdown';
 import InputText from 'primevue/inputtext';
 import Button from 'primevue/button';
-import SplitButton from 'primevue/splitbutton';
+import Menu from 'primevue/menu';
 import Dialog from 'primevue/dialog';
 import Tag from 'primevue/tag';
 import ConfirmDialog from 'primevue/confirmdialog';
@@ -164,6 +162,7 @@ const loading = ref(true);
 const detailDialogVisible = ref(false);
 const selectedDevice = ref(null);
 const qrCodeUrl = ref(null);
+const actionMenuRefs = ref({});
 
 const filters = ref({
   device_type: null,
@@ -203,6 +202,15 @@ const getStatusSeverity = (val) => {
   }
 };
 
+const formatDateTime = (value) => {
+  if (!value) return '—';
+  try {
+    return new Intl.DateTimeFormat('ru-RU', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(value));
+  } catch (e) {
+    return value;
+  }
+};
+
 // Права доступа
 const canCreateDevice = computed(() => auth.isAdmin || auth.isPowerUser);
 
@@ -232,6 +240,45 @@ const filteredDevices = computed(() => {
   });
 });
 
+const deviceDetailRows = computed(() => {
+  if (!selectedDevice.value) return [];
+  const d = selectedDevice.value;
+  const rows = [
+    { label: 'Название', value: d.name || '—' },
+    { label: 'Тип', value: d.device_type?.name || '—' },
+    { label: 'Статус', value: getStatusLabel(d.status) || '—' },
+    { label: 'Серийный номер', value: d.serial_number || '—' },
+    { label: 'Инвентарный номер', value: d.asset_number || '—' },
+    { label: 'IP-адрес', value: d.ip_address || '—' },
+    { label: 'MAC-адрес', value: d.mac_address || '—' },
+    { label: 'Местоположение', value: d.location?.name || '—' },
+    { label: 'Владелец', value: getOwnerName(d.owner) },
+    { label: 'Назначен', value: getOwnerName(d.assigned_to) },
+    { label: 'QR ID', value: d.qr_code_id || '—' },
+    { label: 'Создано', value: formatDateTime(d.created_at) },
+    { label: 'Обновлено', value: formatDateTime(d.updated_at) },
+    { label: 'Заметки', value: d.notes || '—' }
+  ];
+
+  const pushSpecs = (prefix, specObj) => {
+    if (!specObj || typeof specObj !== 'object') return;
+    Object.entries(specObj).forEach(([key, value]) => {
+      if (key === 'id' || key === 'device') return;
+      if (value === null || value === undefined || value === '') return;
+      rows.push({
+        label: `${prefix}: ${key}`,
+        value: typeof value === 'boolean' ? (value ? 'Да' : 'Нет') : String(value),
+      });
+    });
+  };
+
+  pushSpecs('ПК', d.computer_specs);
+  pushSpecs('Принтер/МФУ', d.printer_scanner_specs);
+  pushSpecs('Сеть', d.network_specs);
+
+  return rows;
+});
+
 // --- Actions ---
 
 // Избранное (работаем через Store)
@@ -258,6 +305,21 @@ const toggleFavorite = async (device) => {
     toast.add({ severity: 'success', summary: isFav ? 'Добавлено' : 'Удалено', detail: res.data.message, life: 2000 });
   } catch (e) {
     toast.add({ severity: 'error', summary: 'Ошибка', detail: 'Не удалось обновить избранное' });
+  }
+};
+
+const setActionMenuRef = (el, deviceId) => {
+  if (el) {
+    actionMenuRefs.value[deviceId] = el;
+  } else {
+    delete actionMenuRefs.value[deviceId];
+  }
+};
+
+const toggleActionMenu = (event, device) => {
+  const menu = actionMenuRefs.value[device.id];
+  if (menu?.toggle) {
+    menu.toggle(event);
   }
 };
 
@@ -365,4 +427,7 @@ onBeforeUnmount(() => {
 .mb-2 { margin-bottom: 0.5rem; }
 .mb-3 { margin-bottom: 1rem; }
 .mb-4 { margin-bottom: 1.5rem; }
+.detail-grid {
+  font-size: 0.95rem;
+}
 </style>
