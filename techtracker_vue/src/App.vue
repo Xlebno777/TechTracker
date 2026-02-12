@@ -334,6 +334,16 @@ onMounted(() => {
   font-family: 'Inter', 'Segoe UI', Roboto, sans-serif;
 }
 
+:global(:root) {
+  --control-height: 3rem;
+  --control-font-size: 0.98rem;
+  --control-radius: 10px;
+  --control-padding-y: 0.72rem;
+  --control-padding-x: 1.2rem;
+  --dialog-width-lg: 68rem;
+  --dialog-max-width: 95vw;
+}
+
 :global(.p-component) {
   font-family: 'Inter', 'Segoe UI', Roboto, sans-serif;
 }
@@ -374,9 +384,9 @@ onMounted(() => {
 :global(.p-dialog .p-dialog-content .p-inputnumber-input),
 :global(.p-dialog .p-dialog-content .p-dropdown),
 :global(.p-dialog .p-dialog-content .p-multiselect) {
-  min-height: 3rem;
-  font-size: 0.98rem;
-  border-radius: 10px;
+  min-height: var(--control-height);
+  font-size: var(--control-font-size);
+  border-radius: var(--control-radius);
 }
 
 :global(.p-dialog .p-dialog-content .p-dropdown),
@@ -389,15 +399,25 @@ onMounted(() => {
 :global(.p-dialog .p-dialog-content .p-multiselect-label),
 :global(.p-dialog .p-dialog-content .p-inputtext),
 :global(.p-dialog .p-dialog-content .p-inputnumber-input) {
-  padding-top: 0.72rem;
-  padding-bottom: 0.72rem;
+  padding-top: var(--control-padding-y);
+  padding-bottom: var(--control-padding-y);
 }
 
 :global(.p-dialog .p-dialog-content .p-button),
 :global(.p-dialog .p-dialog-footer .p-button) {
-  min-height: 3rem;
-  padding: 0.72rem 1.2rem;
-  border-radius: 10px;
-  font-size: 0.98rem;
+  min-height: var(--control-height);
+  padding: var(--control-padding-y) var(--control-padding-x);
+  border-radius: var(--control-radius);
+  font-size: var(--control-font-size);
+}
+
+:global(.p-dialog) {
+  max-width: var(--dialog-max-width);
+}
+
+:global(.p-dialog .p-dialog-content) {
+  overflow-x: hidden;
+  overflow-y: auto;
+  max-height: calc(94vh - 8.5rem);
 }
 </style>

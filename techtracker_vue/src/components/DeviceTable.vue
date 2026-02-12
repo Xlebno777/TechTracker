@@ -108,7 +108,13 @@
     </DataTable>
 
     <!-- Модальное окно деталей -->
-    <Dialog v-model:visible="detailDialogVisible" :header="selectedDevice?.name" modal :style="{ width: '50vw' }" :breakpoints="{ '960px': '75vw', '640px': '90vw' }">
+    <Dialog
+      v-model:visible="detailDialogVisible"
+      :header="selectedDevice?.name"
+      modal
+      :style="{ width: 'min(65vw, var(--dialog-width-lg))', maxWidth: 'var(--dialog-max-width)' }"
+      :breakpoints="{ '1400px': '78vw', '960px': '90vw', '640px': '96vw' }"
+    >
       <div v-if="selectedDevice" class="flex flex-column align-items-center">
         <img v-if="qrCodeUrl" :src="qrCodeUrl" alt="QR" class="mb-3 shadow-2 border-round" style="max-width: 150px" />
         

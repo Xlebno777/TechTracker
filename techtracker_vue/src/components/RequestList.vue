@@ -80,7 +80,13 @@
     </DataTable>
 
     <!-- Диалог смены статуса -->
-    <Dialog v-model:visible="statusDialogVisible" header="Изменить статус" modal :style="{ width: '350px' }">
+    <Dialog
+      v-model:visible="statusDialogVisible"
+      header="Изменить статус"
+      modal
+      :style="{ width: 'min(460px, var(--dialog-width-lg))', maxWidth: 'var(--dialog-max-width)' }"
+      :breakpoints="{ '640px': '96vw' }"
+    >
       <div class="field mt-3">
         <label class="font-semibold block mb-2">Новый статус</label>
         <Dropdown v-model="selectedRequestStatus" :options="statusOptions" optionLabel="label" optionValue="value" class="w-full" />

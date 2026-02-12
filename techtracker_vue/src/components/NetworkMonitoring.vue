@@ -42,30 +42,32 @@
 
       <div class="card p-3 mb-3">
         <h4 class="m-0 mb-2">Мастер создания путей</h4>
-        <div class="grid">
-          <div class="col-12 md:col-3">
+        <div class="path-master-grid">
+          <div class="path-master-item item-template">
             <label class="block mb-2">Шаблон</label>
             <Dropdown v-model="templateForm.template" :options="templateOptions" optionLabel="label" optionValue="value" class="w-full" />
           </div>
-          <div class="col-12 md:col-3">
+          <div class="path-master-item item-interval">
             <label class="block mb-2">Интервал</label>
             <InputNumber v-model="templateForm.defaults.interval_sec" :min="5" :max="3600" suffix=" c" class="w-full" />
           </div>
-          <div class="col-12 md:col-2">
+          <div class="path-master-item item-timeout">
             <label class="block mb-2">Timeout</label>
             <InputNumber v-model="templateForm.defaults.timeout_sec" :min="1" :max="120" suffix=" c" class="w-full" />
           </div>
-          <div class="col-12 md:col-2">
+          <div class="path-master-item item-fail-recover">
             <label class="block mb-2">Fail/Recover</label>
-            <div class="flex gap-2">
+            <div class="fail-recover-grid">
               <InputNumber v-model="templateForm.defaults.fail_threshold" :min="1" :max="20" class="w-full" />
               <InputNumber v-model="templateForm.defaults.recover_threshold" :min="1" :max="20" class="w-full" />
             </div>
           </div>
-          <div class="col-12 md:col-2 flex align-items-end">
+          <div class="path-master-item item-generate">
             <Button label="Сгенерировать" icon="pi pi-sparkles" class="w-full" @click="runTemplate" />
           </div>
-          <div v-if="templateForm.template === 'custom'" class="col-12 md:col-6">
+        </div>
+        <div v-if="templateForm.template === 'custom'" class="path-master-grid custom-devices-grid mt-2">
+          <div class="path-master-item">
             <label class="block mb-2">Источники</label>
             <MultiSelect
               v-model="templateForm.src_device_ids"
@@ -77,7 +79,7 @@
               display="chip"
             />
           </div>
-          <div v-if="templateForm.template === 'custom'" class="col-12 md:col-6">
+          <div class="path-master-item">
             <label class="block mb-2">Назначения (с IP)</label>
             <MultiSelect
               v-model="templateForm.dst_device_ids"
@@ -483,8 +485,8 @@
       v-model:visible="pathDialogVisible"
       modal
       :header="editingPathId ? 'Редактировать путь' : 'Создать путь'"
-      :style="{ width: '48rem' }"
-      :breakpoints="{ '960px': '80vw', '640px': '96vw' }"
+      :style="{ width: 'var(--dialog-width-lg)', maxWidth: 'var(--dialog-max-width)' }"
+      :breakpoints="{ '1400px': '78vw', '1200px': '84vw', '960px': '92vw', '640px': '96vw' }"
     >
       <div class="grid p-fluid">
         <div class="col-12 md:col-6">
@@ -526,7 +528,13 @@
       </template>
     </Dialog>
 
-    <Dialog v-model:visible="historyDialogVisible" modal header="История пути" :style="{ width: '56rem' }">
+    <Dialog
+      v-model:visible="historyDialogVisible"
+      modal
+      header="История пути"
+      :style="{ width: 'var(--dialog-width-lg)', maxWidth: 'var(--dialog-max-width)' }"
+      :breakpoints="{ '1600px': '86vw', '1200px': '92vw', '960px': '95vw', '640px': '96vw' }"
+    >
       <div v-if="historyPath">
         <div class="text-700 mb-3">{{ historyPath.src_device }} -> {{ historyPath.dst_device }}</div>
         <div class="grid">
@@ -547,8 +555,8 @@
       v-model:visible="ruleDialogVisible"
       modal
       header="Добавить правило тревоги"
-      :style="{ width: '52rem' }"
-      :breakpoints="{ '960px': '86vw', '640px': '96vw' }"
+      :style="{ width: 'var(--dialog-width-lg)', maxWidth: 'var(--dialog-max-width)' }"
+      :breakpoints="{ '1400px': '86vw', '1200px': '90vw', '960px': '94vw', '640px': '96vw' }"
     >
       <div class="grid p-fluid">
         <div class="col-12 md:col-6">
@@ -1484,6 +1492,43 @@ onBeforeUnmount(() => {
   min-height: 2.2rem;
   font-weight: 600;
 }
+.path-master-grid {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: 0.75rem;
+  align-items: end;
+}
+.path-master-item {
+  grid-column: span 12;
+  min-width: 0;
+}
+.item-template,
+.item-interval {
+  grid-column: span 3;
+}
+.item-timeout,
+.item-fail-recover,
+.item-generate {
+  grid-column: span 2;
+}
+.item-generate {
+  display: flex;
+  align-items: flex-end;
+}
+.custom-devices-grid .path-master-item {
+  grid-column: span 6;
+}
+.fail-recover-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem;
+}
+.path-master-grid :deep(.p-dropdown),
+.path-master-grid :deep(.p-multiselect),
+.path-master-grid :deep(.p-inputnumber),
+.path-master-grid :deep(.p-inputnumber-input) {
+  width: 100%;
+}
 .bulk-toolbar {
   display: flex;
   flex-wrap: wrap;
@@ -1601,6 +1646,14 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 992px) {
+  .item-template,
+  .item-interval,
+  .item-timeout,
+  .item-fail-recover,
+  .item-generate,
+  .custom-devices-grid .path-master-item {
+    grid-column: span 12;
+  }
   .bulk-toolbar {
     flex-direction: column;
     align-items: stretch;
@@ -1617,6 +1670,22 @@ onBeforeUnmount(() => {
   }
   .alert-filter {
     min-width: 100%;
+  }
+}
+@media (max-width: 1360px) {
+  .item-template,
+  .item-interval {
+    grid-column: span 4;
+  }
+  .item-timeout,
+  .item-fail-recover,
+  .item-generate {
+    grid-column: span 4;
+  }
+}
+@media (max-width: 640px) {
+  .fail-recover-grid {
+    grid-template-columns: 1fr;
   }
 }
 </style>
