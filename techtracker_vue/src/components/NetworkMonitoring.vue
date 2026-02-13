@@ -96,7 +96,7 @@
 
       <div class="card p-3 mb-3">
         <div class="bulk-toolbar">
-          <div class="bulk-group">
+          <div class="bulk-group bulk-group-actions">
             <span class="text-600 font-medium">Массовые действия ({{ selectedPaths.length }})</span>
             <Button label="Вкл" size="small" @click="bulkEnable(true)" :disabled="!selectedPaths.length" />
             <Button label="Выкл" size="small" severity="secondary" @click="bulkEnable(false)" :disabled="!selectedPaths.length" />
@@ -112,7 +112,7 @@
               :disabled="!selectedPaths.length"
             />
           </div>
-          <div class="bulk-group">
+          <div class="bulk-group bulk-group-probe">
             <Button label="Проверить выбранные" size="small" severity="help" @click="probeSelected" :disabled="!selectedPaths.length" />
             <Button label="Проверить все" size="small" severity="help" outlined @click="probeAll" />
           </div>
@@ -1530,26 +1530,42 @@ onBeforeUnmount(() => {
   width: 100%;
 }
 .bulk-toolbar {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
   gap: 0.75rem;
-  align-items: center;
-  justify-content: space-between;
+  align-items: end;
 }
 .bulk-group {
+  min-width: 0;
+}
+.bulk-group-actions {
+  grid-column: span 4;
   display: flex;
   flex-wrap: wrap;
   gap: 0.5rem;
   align-items: center;
 }
 .bulk-interval-group {
-  flex: 1 1 20rem;
+  grid-column: span 4;
+  display: grid;
+  grid-template-columns: minmax(11rem, 1fr) auto;
+  gap: 0.5rem;
+  align-items: end;
+}
+.bulk-group-probe {
+  grid-column: span 4;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  justify-content: flex-end;
 }
 .bulk-input {
-  width: 10rem;
-  min-width: 10rem;
+  width: 100%;
+  min-width: 0;
 }
 .bulk-interval-btn {
+  align-self: end;
   white-space: nowrap;
 }
 .metric-card {
@@ -1645,6 +1661,28 @@ onBeforeUnmount(() => {
   overflow-x: hidden;
 }
 
+@media (max-width: 1360px) {
+  .item-template,
+  .item-interval {
+    grid-column: span 4;
+  }
+  .item-timeout,
+  .item-fail-recover,
+  .item-generate {
+    grid-column: span 4;
+  }
+  .bulk-group-actions {
+    grid-column: span 6;
+  }
+  .bulk-interval-group {
+    grid-column: span 6;
+    grid-template-columns: minmax(11rem, 1fr) auto;
+  }
+  .bulk-group-probe {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
+  }
+}
 @media (max-width: 992px) {
   .item-template,
   .item-interval,
@@ -1655,11 +1693,17 @@ onBeforeUnmount(() => {
     grid-column: span 12;
   }
   .bulk-toolbar {
-    flex-direction: column;
+    grid-template-columns: 1fr;
     align-items: stretch;
   }
-  .bulk-group {
-    width: 100%;
+  .bulk-group-actions,
+  .bulk-interval-group,
+  .bulk-group-probe {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
+  }
+  .bulk-interval-group {
+    grid-template-columns: 1fr;
   }
   .bulk-input {
     width: 100%;
@@ -1670,17 +1714,6 @@ onBeforeUnmount(() => {
   }
   .alert-filter {
     min-width: 100%;
-  }
-}
-@media (max-width: 1360px) {
-  .item-template,
-  .item-interval {
-    grid-column: span 4;
-  }
-  .item-timeout,
-  .item-fail-recover,
-  .item-generate {
-    grid-column: span 4;
   }
 }
 @media (max-width: 640px) {

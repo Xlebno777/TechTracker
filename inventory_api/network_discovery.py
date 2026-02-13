@@ -12,6 +12,11 @@ SNMP_SERIAL_OIDS = (
     "1.3.6.1.2.1.43.5.1.1.17.1",  # prtGeneralSerialNumber
     "1.3.6.1.2.1.25.3.2.1.3.1",   # hrDeviceDescr
 )
+SNMP_NAME_OIDS = (
+    "1.3.6.1.2.1.1.5.0",          # sysName
+    "1.3.6.1.2.1.43.5.1.1.16.1",  # prtGeneralPrinterName
+    "1.3.6.1.2.1.25.3.2.1.3.1",   # hrDeviceDescr
+)
 
 
 def _run_command(command, timeout_sec=3):
@@ -106,15 +111,26 @@ def _try_reverse_dns(ip):
         return None
 
 
-def _try_snmp_serial(ip):
+def _sanitize_discovered_name(value):
+    if not value:
+        return None
+    name = str(value).strip().strip('"').strip()
+    if not name:
+        return None
+    if re.fullmatch(r"(?:\d{1,3}\.){3}\d{1,3}", name):
+        return None
+    return name[:200]
+
+
+def _try_snmp_value(ip, oids, timeout_sec=2):
     snmpget = shutil.which("snmpget")
     if not snmpget:
         return None, "none"
 
-    for oid in SNMP_SERIAL_OIDS:
+    for oid in oids:
         command = [snmpget, "-v2c", "-c", "public", "-Oqv", "-t", "0.4", "-r", "0", ip, oid]
         try:
-            completed = _run_command(command, timeout_sec=2)
+            completed = _run_command(command, timeout_sec=timeout_sec)
         except Exception:
             continue
 
@@ -129,8 +145,66 @@ def _try_snmp_serial(ip):
             or lowered == "unknown"
         ):
             continue
-        return value[:100], "snmp"
+        return value, "snmp"
     return None, "none"
+
+
+def _try_snmp_serial(ip):
+    value, source = _try_snmp_value(ip, SNMP_SERIAL_OIDS)
+    if not value:
+        return None, source
+    return value[:100], source
+
+
+def _try_snmp_name(ip):
+    value, source = _try_snmp_value(ip, SNMP_NAME_OIDS)
+    if not value:
+        return None, source
+    return _sanitize_discovered_name(value), source
+
+
+def _try_windows_ping_name(ip):
+    if not _is_windows() or not shutil.which("ping"):
+        return None
+    try:
+        completed = _run_command(["ping", "-a", "-n", "1", "-w", "350", ip], timeout_sec=2)
+    except Exception:
+        return None
+
+    output = (completed.stdout or "") + "\n" + (completed.stderr or "")
+    for raw_line in output.splitlines():
+        line = raw_line.strip()
+        marker = f"[{ip}]"
+        if marker not in line:
+            continue
+        left_part = line.split(marker, 1)[0].strip()
+        if not left_part:
+            continue
+        # Works for both "Pinging NAME [ip]" and localized variants.
+        candidate = left_part.split()[-1]
+        sanitized = _sanitize_discovered_name(candidate)
+        if sanitized and sanitized.lower() != ip.lower():
+            return sanitized
+    return None
+
+
+def _try_windows_nbtstat_name(ip):
+    if not _is_windows() or not shutil.which("nbtstat"):
+        return None
+    try:
+        completed = _run_command(["nbtstat", "-A", ip], timeout_sec=2)
+    except Exception:
+        return None
+
+    output = (completed.stdout or "") + "\n" + (completed.stderr or "")
+    for line in output.splitlines():
+        match = re.search(r"^\s*([^\s<]+)\s*<00>\s+UNIQUE", line, re.IGNORECASE)
+        if not match:
+            continue
+        candidate = _sanitize_discovered_name(match.group(1))
+        if candidate and candidate.upper() not in {"WORKGROUP", "MSHOME"}:
+            return candidate
+    return None
 
 
 def _iter_ipv4_hosts(network):
@@ -220,10 +294,22 @@ def scan_network(cidr, timeout_ms=DEFAULT_PING_TIMEOUT_MS, max_hosts=DEFAULT_MAX
     results = []
     for item in alive:
         ip = item["ip_address"]
-        hostname = _try_reverse_dns(ip)
+        hostname = _sanitize_discovered_name(_try_reverse_dns(ip))
+        snmp_name, name_source = _try_snmp_name(ip)
+        ping_name = _try_windows_ping_name(ip) if not snmp_name and not hostname else None
+        nbt_name = _try_windows_nbtstat_name(ip) if not snmp_name and not hostname and not ping_name else None
         serial, serial_source = _try_snmp_serial(ip)
+        resolved_name = snmp_name or hostname or ping_name or nbt_name or ip
+        resolved_source = (
+            "snmp" if snmp_name
+            else "dns" if hostname
+            else "ping" if ping_name
+            else "nbtstat" if nbt_name
+            else "ip"
+        )
         results.append({
-            "name": hostname or ip,
+            "name": resolved_name,
+            "name_source": resolved_source if resolved_source != "snmp" else name_source,
             "ip_address": ip,
             "mac_address": arp_map.get(ip),
             "serial_number": serial,

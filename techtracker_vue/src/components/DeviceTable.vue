@@ -13,32 +13,71 @@
 
     <!-- Панель фильтров -->
     <div class="card p-4 mb-4 shadow-1 border-round bg-white">
-      <div class="grid formgrid p-fluid">
-        <div class="col-12 md:col-3 mb-3">
+      <div class="device-filter-grid">
+        <div class="filter-field">
           <label class="font-semibold block mb-2">Тип</label>
-          <Dropdown v-model="filters.device_type" :options="deviceTypes" optionLabel="name" optionValue="id" showClear placeholder="Все" />
+          <Dropdown
+            v-model="filters.device_type"
+            :options="deviceTypes"
+            optionLabel="name"
+            optionValue="id"
+            showClear
+            placeholder="Все"
+            class="w-full"
+          />
         </div>
-        <div class="col-12 md:col-3 mb-3">
+        <div class="filter-field">
           <label class="font-semibold block mb-2">Статус</label>
-          <Dropdown v-model="filters.status" :options="statusOptions" optionLabel="label" optionValue="value" showClear placeholder="Все" />
+          <Dropdown
+            v-model="filters.status"
+            :options="statusOptions"
+            optionLabel="label"
+            optionValue="value"
+            showClear
+            placeholder="Все"
+            class="w-full"
+          />
         </div>
-        <div class="col-12 md:col-3 mb-3">
+        <div class="filter-field">
           <label class="font-semibold block mb-2">Местоположение</label>
-          <Dropdown v-model="filters.location" :options="locations" optionLabel="name" optionValue="id" showClear placeholder="Все" />
+          <Dropdown
+            v-model="filters.location"
+            :options="locations"
+            optionLabel="name"
+            optionValue="id"
+            showClear
+            placeholder="Все"
+            class="w-full"
+          />
         </div>
-        <div class="col-12 md:col-3 mb-3">
+        <div class="filter-field">
           <label class="font-semibold block mb-2">Владелец</label>
-          <Dropdown v-model="filters.owner" :options="users" optionLabel="username" optionValue="id" showClear placeholder="Все" />
+          <Dropdown
+            v-model="filters.owner"
+            :options="users"
+            optionLabel="username"
+            optionValue="id"
+            showClear
+            placeholder="Все"
+            class="w-full"
+          />
         </div>
-        <div class="col-12 md:col-9 mb-3">
+        <div class="filter-field filter-search">
           <label class="font-semibold block mb-2">Поиск</label>
           <span class="p-input-icon-left w-full">
             <i class="pi pi-search" />
             <InputText v-model="filters.search" placeholder="Название или серийный номер..." class="w-full" />
           </span>
         </div>
-        <div class="col-12 md:col-3 mb-3 flex align-items-end">
-          <Button label="Сбросить" icon="pi pi-filter-slash" severity="secondary" outlined class="w-full" @click="resetFilters" />
+        <div class="filter-field filter-reset">
+          <Button
+            label="Сбросить"
+            icon="pi pi-filter-slash"
+            severity="secondary"
+            outlined
+            class="w-full"
+            @click="resetFilters"
+          />
         </div>
       </div>
     </div>
@@ -422,12 +461,27 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-/* Стили для сетки, если PrimeFlex не подключен глобально */
-.grid { display: flex; flex-wrap: wrap; margin: -0.5rem; }
-.col-12 { flex: 0 0 100%; padding: 0.5rem; }
-@media (min-width: 768px) {
-  .md\:col-3 { flex: 0 0 25%; max-width: 25%; }
-  .md\:col-9 { flex: 0 0 75%; max-width: 75%; }
+.device-filter-grid {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: 0.85rem;
+  align-items: end;
+}
+.filter-field {
+  grid-column: span 3;
+  min-width: 0;
+}
+.filter-search {
+  grid-column: span 9;
+}
+.filter-reset {
+  grid-column: span 3;
+  display: flex;
+  align-items: end;
+}
+.device-filter-grid :deep(.p-dropdown),
+.device-filter-grid :deep(.p-inputtext) {
+  width: 100%;
 }
 .w-full { width: 100%; }
 .mb-2 { margin-bottom: 0.5rem; }
@@ -435,5 +489,23 @@ onBeforeUnmount(() => {
 .mb-4 { margin-bottom: 1.5rem; }
 .detail-grid {
   font-size: 0.95rem;
+}
+@media (max-width: 1200px) {
+  .filter-field {
+    grid-column: span 6;
+  }
+  .filter-search {
+    grid-column: span 8;
+  }
+  .filter-reset {
+    grid-column: span 4;
+  }
+}
+@media (max-width: 768px) {
+  .filter-field,
+  .filter-search,
+  .filter-reset {
+    grid-column: span 12;
+  }
 }
 </style>
