@@ -13,6 +13,7 @@
 
     <div class="tab-switch mb-3">
       <Button :outlined="activeTab !== 'paths'" label="Пути" @click="activeTab = 'paths'" />
+      <Button :outlined="activeTab !== 'automap'" label="Автокарта" @click="activeTab = 'automap'" />
       <Button :outlined="activeTab !== 'matrix'" label="Матрица" @click="activeTab = 'matrix'" />
       <Button :outlined="activeTab !== 'scan'" label="Сканирование" @click="activeTab = 'scan'" />
       <Button :outlined="activeTab !== 'incidents'" label="Инциденты" @click="activeTab = 'incidents'" />
@@ -174,6 +175,189 @@
           </template>
         </Column>
       </DataTable>
+    </div>
+
+    <div v-if="activeTab === 'automap'">
+      <div class="card p-3 mb-3">
+        <div class="grid">
+          <div class="col-12 md:col-4">
+            <label class="block mb-2">Поиск</label>
+            <InputText
+              v-model="mapFilter.search"
+              placeholder="Имя узла / IP / serial / путь"
+              class="w-full"
+            />
+          </div>
+          <div class="col-12 md:col-2">
+            <label class="block mb-2">Состояние ребра</label>
+            <Dropdown
+              v-model="mapFilter.state"
+              :options="mapStateOptions"
+              optionLabel="label"
+              optionValue="value"
+              showClear
+              class="w-full"
+            />
+          </div>
+          <div class="col-12 md:col-2">
+            <label class="block mb-2">Окно для rebuild</label>
+            <Dropdown
+              v-model="mapWindowHours"
+              :options="mapWindowOptions"
+              optionLabel="label"
+              optionValue="value"
+              class="w-full"
+            />
+          </div>
+          <div class="col-12 md:col-2 flex align-items-end">
+            <div class="flex align-items-center gap-2">
+              <InputSwitch v-model="mapFilter.includeDisabled" />
+              <span class="text-600">Показывать выключенные</span>
+            </div>
+          </div>
+          <div class="col-12 md:col-2 flex align-items-end">
+            <Button
+              label="Пересобрать карту"
+              icon="pi pi-cog"
+              class="w-full"
+              :loading="loadingMap"
+              @click="rebuildNetworkMap"
+            />
+          </div>
+        </div>
+      </div>
+
+      <div class="card p-3 mb-3">
+        <div class="map-summary-row">
+          <div class="map-summary-item">
+            <div class="summary-label">Снимок</div>
+            <div class="summary-value">#{{ mapSnapshot?.id || '—' }}</div>
+          </div>
+          <div class="map-summary-item">
+            <div class="summary-label">Узлы</div>
+            <div class="summary-value">{{ mapSnapshot?.node_count ?? 0 }}</div>
+          </div>
+          <div class="map-summary-item">
+            <div class="summary-label">Ребра</div>
+            <div class="summary-value">{{ mapSnapshot?.edge_count ?? 0 }}</div>
+          </div>
+          <div class="map-summary-item">
+            <div class="summary-label">Статус сборки</div>
+            <Tag :value="(mapSnapshot?.status || 'unknown').toUpperCase()" :severity="mapStatusSeverity(mapSnapshot?.status)" />
+          </div>
+          <div class="map-summary-item">
+            <div class="summary-label">Обновлено</div>
+            <div class="summary-value">{{ fmtTime(mapSnapshot?.generated_at) }}</div>
+          </div>
+          <div class="map-summary-item">
+            <div class="summary-label">Сборка (ms)</div>
+            <div class="summary-value">{{ mapSnapshot?.build_duration_ms ?? '—' }}</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card p-3 mb-3">
+        <div class="map-canvas-wrap">
+          <svg viewBox="0 0 1200 700" class="map-canvas" preserveAspectRatio="xMidYMid meet">
+            <g v-for="edge in mapGraph.edges" :key="edge.id">
+              <line
+                :x1="edge.x1"
+                :y1="edge.y1"
+                :x2="edge.x2"
+                :y2="edge.y2"
+                :stroke="mapEdgeColor(edge.state)"
+                :stroke-opacity="mapEdgeOpacity(edge)"
+                :stroke-width="mapEdgeWidth(edge)"
+                stroke-linecap="round"
+                @mouseenter="onMapEdgeMouseEnter(edge, $event)"
+                @mousemove="onMapEdgeMouseMove(edge, $event)"
+                @mouseleave="onMapEdgeMouseLeave"
+              />
+            </g>
+            <g v-for="node in mapGraph.nodes" :key="node.id">
+              <circle
+                :cx="node.x"
+                :cy="node.y"
+                :r="mapNodeRadius(node)"
+                :fill="mapNodeFill(node)"
+                :stroke="mapNodeStroke(node)"
+                :stroke-width="mapNodeStrokeWidth(node)"
+                :opacity="mapNodeOpacity(node)"
+                class="map-node-circle"
+                @mouseenter="onMapNodeMouseEnter(node, $event)"
+                @mousemove="onMapNodeMouseMove(node, $event)"
+                @mouseleave="onMapNodeMouseLeave"
+                @click="onMapNodeClick(node)"
+              />
+              <text
+                :x="node.x"
+                :y="node.y + 4"
+                text-anchor="middle"
+                class="map-node-short"
+                :opacity="mapNodeOpacity(node)"
+              >
+                {{ node.shortName }}
+              </text>
+              <text
+                :x="node.x"
+                :y="node.y + 34"
+                text-anchor="middle"
+                class="map-node-label"
+                :opacity="mapNodeOpacity(node)"
+              >
+                {{ node.label }}
+              </text>
+            </g>
+          </svg>
+          <div
+            v-if="mapTooltip.visible"
+            class="map-tooltip"
+            :style="{ left: `${mapTooltip.x}px`, top: `${mapTooltip.y}px` }"
+          >
+            <div class="map-tooltip-title">{{ mapTooltip.title }}</div>
+            <div v-for="(line, idx) in mapTooltip.lines" :key="idx" class="map-tooltip-line">{{ line }}</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card p-3">
+        <h4 class="m-0 mb-2">Ребра автокарты</h4>
+        <DataTable
+          :value="filteredMapEdges"
+          :loading="loadingMap"
+          class="table-compact"
+          paginator
+          :rows="15"
+          stripedRows
+          responsiveLayout="scroll"
+        >
+          <Column field="src_name" header="Источник" />
+          <Column field="dst_name" header="Назначение" />
+          <Column field="dst_ip" header="IP">
+            <template #body="{ data }">{{ data.dst_ip || '—' }}</template>
+          </Column>
+          <Column field="state" header="Состояние">
+            <template #body="{ data }">
+              <Tag :value="stateLabel(data.state)" :severity="stateSeverity(data.state)" />
+            </template>
+          </Column>
+          <Column field="enabled" header="Вкл">
+            <template #body="{ data }">
+              <Tag :value="data.enabled ? 'Да' : 'Нет'" :severity="data.enabled ? 'success' : 'secondary'" />
+            </template>
+          </Column>
+          <Column field="confidence_pct" header="Confidence %">
+            <template #body="{ data }">{{ formatNum(data.confidence_pct, 1) }}</template>
+          </Column>
+          <Column field="latency_ms" header="RTT (ms)">
+            <template #body="{ data }">{{ formatNum(data.latency_ms, 1) }}</template>
+          </Column>
+          <Column field="packet_loss_pct" header="Loss %">
+            <template #body="{ data }">{{ formatNum(data.packet_loss_pct, 1) }}</template>
+          </Column>
+          <Column field="outage_count_24h" header="Outage 24ч" />
+        </DataTable>
+      </div>
     </div>
 
     <div v-if="activeTab === 'matrix'" class="card p-3">
@@ -632,6 +816,7 @@ const autoTimer = ref(null);
 const loadingPaths = ref(false);
 const loadingOutages = ref(false);
 const loadingDerived = ref(false);
+const loadingMap = ref(false);
 const scanLoading = ref(false);
 const scanSuggestionsLoading = ref(false);
 
@@ -654,6 +839,19 @@ const scanStats = ref({
 const alertRules = ref([]);
 const derivedRows = ref([]);
 const activeAlerts = ref([]);
+const mapSnapshot = ref(null);
+const mapNodes = ref([]);
+const mapEdges = ref([]);
+const mapSelectedNodeKey = ref(null);
+const mapHoveredNodeKey = ref(null);
+const mapHoveredEdgeId = ref(null);
+const mapTooltip = ref({
+  visible: false,
+  x: 0,
+  y: 0,
+  title: '',
+  lines: [],
+});
 const alertSummary = ref({
   critical: 0,
   high: 0,
@@ -666,6 +864,12 @@ const alertsFilter = ref({
   severity: '',
   search: '',
 });
+const mapFilter = ref({
+  search: '',
+  state: null,
+  includeDisabled: true,
+});
+const mapWindowHours = ref(24);
 
 const pathDialogVisible = ref(false);
 const editingPathId = ref(null);
@@ -706,6 +910,18 @@ const stateOptions = [
   { label: 'UP', value: 'up' },
   { label: 'DOWN', value: 'down' },
   { label: 'UNKNOWN', value: 'unknown' },
+];
+const mapStateOptions = [
+  { label: 'UP', value: 'up' },
+  { label: 'DOWN', value: 'down' },
+  { label: 'UNKNOWN', value: 'unknown' },
+];
+const mapWindowOptions = [
+  { label: '1 час', value: 1 },
+  { label: '6 часов', value: 6 },
+  { label: '24 часа', value: 24 },
+  { label: '72 часа', value: 72 },
+  { label: '7 дней', value: 168 },
 ];
 const enabledOptions = [
   { label: 'Включен', value: true },
@@ -828,6 +1044,137 @@ const deviceOptionsWithIp = computed(() => devices.value
   .filter((d) => !!d.ip_address)
   .map((d) => ({ label: `${d.name} (${d.ip_address})`, value: d.id })));
 
+const mapNodeKey = (node) => (node?.device ? `dev:${node.device}` : `node:${node?.id}`);
+const edgeNodeKey = (edge, side) => {
+  const deviceId = side === 'src' ? edge?.src_device : edge?.dst_device;
+  const edgeId = edge?.id;
+  if (deviceId) return `dev:${deviceId}`;
+  return side === 'src' ? `src:${edgeId}` : `dst:${edgeId}`;
+};
+
+const filteredMapEdges = computed(() => {
+  const search = (mapFilter.value.search || '').trim().toLowerCase();
+  return mapEdges.value.filter((edge) => {
+    if (!mapFilter.value.includeDisabled && !edge.enabled) return false;
+    if (mapFilter.value.state && edge.state !== mapFilter.value.state) return false;
+    if (!search) return true;
+    const haystack = `${edge.src_name || ''} ${edge.dst_name || ''} ${edge.dst_ip || ''}`.toLowerCase();
+    return haystack.includes(search);
+  });
+});
+
+const filteredMapNodes = computed(() => {
+  const allNodes = mapNodes.value;
+  const search = (mapFilter.value.search || '').trim().toLowerCase();
+  const hasEdgeLevelFilter = Boolean(mapFilter.value.state) || !mapFilter.value.includeDisabled;
+  if (!search && !hasEdgeLevelFilter) {
+    return allNodes;
+  }
+
+  const matchedNodeKeys = new Set();
+  for (const node of allNodes) {
+    const haystack = `${node.device_name || ''} ${node.ip_address || ''} ${node.serial_number || ''}`.toLowerCase();
+    if (search && haystack.includes(search)) {
+      matchedNodeKeys.add(mapNodeKey(node));
+    }
+  }
+
+  const edgeNodeKeys = new Set();
+  for (const edge of filteredMapEdges.value) {
+    edgeNodeKeys.add(edgeNodeKey(edge, 'src'));
+    edgeNodeKeys.add(edgeNodeKey(edge, 'dst'));
+  }
+
+  return allNodes.filter((node) => {
+    const key = mapNodeKey(node);
+    if (matchedNodeKeys.has(key)) return true;
+    if (edgeNodeKeys.has(key)) return true;
+    return false;
+  });
+});
+
+const mapGraph = computed(() => {
+  const width = 1200;
+  const height = 700;
+  const nodes = filteredMapNodes.value;
+  const nodePos = new Map();
+  const total = nodes.length;
+  const radius = Math.max(110, Math.min(width, height) * 0.36);
+  const centerX = width / 2;
+  const centerY = height / 2;
+
+  nodes.forEach((node, idx) => {
+    const angle = total <= 1 ? -Math.PI / 2 : (-Math.PI / 2) + (2 * Math.PI * idx / total);
+    const x = centerX + radius * Math.cos(angle);
+    const y = centerY + radius * Math.sin(angle);
+    nodePos.set(mapNodeKey(node), { x, y });
+  });
+
+  const graphEdges = filteredMapEdges.value
+    .map((edge) => {
+      const srcKey = edgeNodeKey(edge, 'src');
+      const dstKey = edgeNodeKey(edge, 'dst');
+      const from = nodePos.get(srcKey);
+      const to = nodePos.get(dstKey);
+      if (!from || !to) return null;
+      return {
+        id: edge.id,
+        srcKey,
+        dstKey,
+        src_name: edge.src_name,
+        dst_name: edge.dst_name,
+        dst_ip: edge.dst_ip,
+        state: edge.state,
+        enabled: edge.enabled,
+        latency_ms: edge.latency_ms,
+        packet_loss_pct: edge.packet_loss_pct,
+        confidence_pct: edge.confidence_pct,
+        outage_count_24h: edge.outage_count_24h,
+        x1: from.x,
+        y1: from.y,
+        x2: to.x,
+        y2: to.y,
+      };
+    })
+    .filter(Boolean);
+
+  const graphNodes = nodes.map((node) => {
+    const key = mapNodeKey(node);
+    const pos = nodePos.get(key) || { x: centerX, y: centerY };
+    const raw = node.device_name || node.ip_address || node.serial_number || `Node ${node.id}`;
+    const shortName = raw.length > 10 ? `${raw.slice(0, 10)}…` : raw;
+    return {
+      id: node.id,
+      key,
+      status: node.status,
+      device_type_name: node.device_type_name,
+      ip_address: node.ip_address,
+      serial_number: node.serial_number,
+      last_seen: node.last_seen,
+      label: raw,
+      shortName,
+      x: pos.x,
+      y: pos.y,
+    };
+  });
+
+  return { width, height, nodes: graphNodes, edges: graphEdges };
+});
+
+const mapSelectedConnectedNodeKeys = computed(() => {
+  const selected = mapSelectedNodeKey.value;
+  const keys = new Set();
+  if (!selected) return keys;
+  keys.add(selected);
+  for (const edge of mapGraph.value.edges) {
+    if (edge.srcKey === selected || edge.dstKey === selected) {
+      keys.add(edge.srcKey);
+      keys.add(edge.dstKey);
+    }
+  }
+  return keys;
+});
+
 const filteredPaths = computed(() => {
   return paths.value.filter((p) => {
     const stateOk = !pathFilter.value.state || p.last_state === pathFilter.value.state;
@@ -854,13 +1201,156 @@ const filteredScannedDevices = computed(() => {
 const stateLabel = (state) => {
   if (state === 'up') return 'UP';
   if (state === 'down') return 'DOWN';
+  if (state === 'none') return 'NONE';
   return 'UNKNOWN';
 };
 const stateSeverity = (state) => {
   if (state === 'up') return 'success';
   if (state === 'down') return 'danger';
+  if (state === 'none') return 'secondary';
   return 'warning';
 };
+const mapStatusSeverity = (status) => {
+  if (status === 'ok') return 'success';
+  if (status === 'error') return 'danger';
+  return 'warning';
+};
+const mapEdgeColor = (state) => {
+  if (state === 'up') return '#16a34a';
+  if (state === 'down') return '#dc2626';
+  if (state === 'unknown') return '#f59e0b';
+  return '#94a3b8';
+};
+const mapNodeFill = (node) => {
+  const typeName = (node?.device_type_name || '').toLowerCase();
+  if (typeName.includes('сервер') || typeName.includes('server')) return '#e0f2fe';
+  if (typeName.includes('маршрут') || typeName.includes('router') || typeName.includes('шлюз')) return '#ede9fe';
+  if (node?.status === 'active') return '#dcfce7';
+  if (node?.status === 'in_repair') return '#fef3c7';
+  return '#e2e8f0';
+};
+const isEdgeConnectedToSelected = (edge) => {
+  const selected = mapSelectedNodeKey.value;
+  if (!selected) return true;
+  return edge.srcKey === selected || edge.dstKey === selected;
+};
+const mapEdgeOpacity = (edge) => {
+  if (mapSelectedNodeKey.value) {
+    return isEdgeConnectedToSelected(edge) ? (edge.enabled ? 0.96 : 0.62) : 0.12;
+  }
+  if (mapHoveredEdgeId.value) {
+    return mapHoveredEdgeId.value === edge.id ? 1 : (edge.enabled ? 0.45 : 0.25);
+  }
+  return edge.enabled ? 0.85 : 0.35;
+};
+const mapEdgeWidth = (edge) => {
+  let width = edge.state === 'down' ? 3 : 2;
+  if (mapHoveredEdgeId.value === edge.id) width += 1.4;
+  if (mapSelectedNodeKey.value && isEdgeConnectedToSelected(edge)) width += 1;
+  return width;
+};
+const mapNodeStroke = (node) => {
+  if (mapSelectedNodeKey.value === node.key) return '#0f172a';
+  if (mapHoveredNodeKey.value === node.key) return '#0f172a';
+  if (mapSelectedNodeKey.value && mapSelectedConnectedNodeKeys.value.has(node.key)) return '#334155';
+  return '#0f172a';
+};
+const mapNodeStrokeWidth = (node) => {
+  if (mapSelectedNodeKey.value === node.key) return 3;
+  if (mapHoveredNodeKey.value === node.key) return 2.4;
+  if (mapSelectedNodeKey.value && mapSelectedConnectedNodeKeys.value.has(node.key)) return 2;
+  return 1.2;
+};
+const mapNodeRadius = (node) => {
+  if (mapSelectedNodeKey.value === node.key) return 24;
+  if (mapHoveredNodeKey.value === node.key) return 22;
+  return 20;
+};
+const mapNodeOpacity = (node) => {
+  if (!mapSelectedNodeKey.value) return 1;
+  return mapSelectedConnectedNodeKeys.value.has(node.key) ? 1 : 0.35;
+};
+const updateMapTooltip = (event, title, lines) => {
+  if (!event) return;
+  const safeLines = Array.isArray(lines) ? lines.filter((line) => !!line) : [];
+  let x = (event.clientX || 0) + 14;
+  let y = (event.clientY || 0) + 14;
+  if (typeof window !== 'undefined') {
+    const maxX = Math.max(20, window.innerWidth - 320);
+    const maxY = Math.max(20, window.innerHeight - 180);
+    x = Math.min(x, maxX);
+    y = Math.min(y, maxY);
+  }
+  mapTooltip.value = {
+    visible: true,
+    x,
+    y,
+    title: title || '',
+    lines: safeLines,
+  };
+};
+const hideMapTooltip = () => {
+  mapTooltip.value.visible = false;
+};
+const onMapNodeMouseEnter = (node, event) => {
+  mapHoveredNodeKey.value = node.key;
+  updateMapTooltip(event, node.label, [
+    `IP: ${node.ip_address || '—'}`,
+    `S/N: ${node.serial_number || '—'}`,
+    `Статус: ${node.status || '—'}`,
+    `Последняя активность: ${fmtTime(node.last_seen)}`,
+  ]);
+};
+const onMapNodeMouseMove = (node, event) => {
+  updateMapTooltip(event, node.label, [
+    `IP: ${node.ip_address || '—'}`,
+    `S/N: ${node.serial_number || '—'}`,
+    `Статус: ${node.status || '—'}`,
+    `Последняя активность: ${fmtTime(node.last_seen)}`,
+  ]);
+};
+const onMapNodeMouseLeave = () => {
+  mapHoveredNodeKey.value = null;
+  if (!mapHoveredEdgeId.value) hideMapTooltip();
+};
+const onMapNodeClick = (node) => {
+  mapSelectedNodeKey.value = mapSelectedNodeKey.value === node.key ? null : node.key;
+};
+const onMapEdgeMouseEnter = (edge, event) => {
+  mapHoveredEdgeId.value = edge.id;
+  updateMapTooltip(event, `${edge.src_name} → ${edge.dst_name}`, [
+    `Состояние: ${stateLabel(edge.state)}`,
+    `RTT: ${formatNum(edge.latency_ms, 1)} ms`,
+    `Loss: ${formatNum(edge.packet_loss_pct, 1)} %`,
+    `Confidence: ${formatNum(edge.confidence_pct, 1)} %`,
+    `Outage 24ч: ${edge.outage_count_24h ?? 0}`,
+  ]);
+};
+const onMapEdgeMouseMove = (edge, event) => {
+  updateMapTooltip(event, `${edge.src_name} → ${edge.dst_name}`, [
+    `Состояние: ${stateLabel(edge.state)}`,
+    `RTT: ${formatNum(edge.latency_ms, 1)} ms`,
+    `Loss: ${formatNum(edge.packet_loss_pct, 1)} %`,
+    `Confidence: ${formatNum(edge.confidence_pct, 1)} %`,
+    `Outage 24ч: ${edge.outage_count_24h ?? 0}`,
+  ]);
+};
+const onMapEdgeMouseLeave = () => {
+  mapHoveredEdgeId.value = null;
+  if (!mapHoveredNodeKey.value) hideMapTooltip();
+};
+
+watch(
+  () => mapGraph.value.nodes.map((node) => node.key),
+  (keys) => {
+    if (mapSelectedNodeKey.value && !keys.includes(mapSelectedNodeKey.value)) {
+      mapSelectedNodeKey.value = null;
+    }
+    if (mapHoveredNodeKey.value && !keys.includes(mapHoveredNodeKey.value)) {
+      mapHoveredNodeKey.value = null;
+    }
+  }
+);
 
 const fmtTime = (value) => {
   if (!value) return '—';
@@ -1232,9 +1722,58 @@ const loadDerivedTab = async () => {
   }
 };
 
+const loadNetworkMap = async () => {
+  loadingMap.value = true;
+  try {
+    const res = await apiClient.get('network-map/current/');
+    const payload = res.data || {};
+    mapSnapshot.value = payload;
+    mapNodes.value = Array.isArray(payload.nodes) ? payload.nodes : [];
+    mapEdges.value = Array.isArray(payload.edges) ? payload.edges : [];
+    mapHoveredNodeKey.value = null;
+    mapHoveredEdgeId.value = null;
+    hideMapTooltip();
+  } catch (e) {
+    const detail = e?.response?.data?.detail || 'Не удалось загрузить автокарту';
+    toast.add({ severity: 'error', summary: 'Ошибка', detail, life: 4200 });
+  } finally {
+    loadingMap.value = false;
+  }
+};
+
+const rebuildNetworkMap = async () => {
+  loadingMap.value = true;
+  try {
+    const res = await apiClient.post('network-map/rebuild/', {
+      window_hours: mapWindowHours.value,
+      include_data: true,
+    });
+    const payload = res.data || {};
+    mapSnapshot.value = payload;
+    mapNodes.value = Array.isArray(payload.nodes) ? payload.nodes : [];
+    mapEdges.value = Array.isArray(payload.edges) ? payload.edges : [];
+    mapHoveredNodeKey.value = null;
+    mapHoveredEdgeId.value = null;
+    hideMapTooltip();
+    toast.add({
+      severity: 'success',
+      summary: 'Автокарта обновлена',
+      detail: `Узлов: ${payload.node_count || 0}, ребер: ${payload.edge_count || 0}`,
+      life: 2800,
+    });
+  } catch (e) {
+    const detail = e?.response?.data?.detail || e?.response?.data?.error || 'Не удалось пересобрать автокарту';
+    toast.add({ severity: 'error', summary: 'Ошибка', detail, life: 4200 });
+  } finally {
+    loadingMap.value = false;
+  }
+};
+
 const refreshActiveTab = async () => {
   if (activeTab.value === 'paths') {
     await loadPaths();
+  } else if (activeTab.value === 'automap') {
+    await loadNetworkMap();
   } else if (activeTab.value === 'matrix') {
     await loadMatrix();
   } else if (activeTab.value === 'scan') {
@@ -1458,6 +1997,7 @@ const openCellHistory = async (cell) => {
 
 watch(activeTab, async (tab) => {
   if (tab === 'paths') await loadPaths();
+  if (tab === 'automap') await loadNetworkMap();
   if (tab === 'matrix') await loadMatrix();
   if (tab === 'scan') await runNetworkScan();
   if (tab === 'incidents') await loadOutages();
@@ -1468,6 +2008,7 @@ onMounted(async () => {
   await Promise.all([loadDevices(), loadPaths(), loadScanSuggestions()]);
   autoTimer.value = setInterval(() => {
     if (activeTab.value === 'paths') loadPaths();
+    if (activeTab.value === 'automap') loadNetworkMap();
     if (activeTab.value === 'matrix') loadMatrix();
     if (activeTab.value === 'incidents') loadOutages();
     if (activeTab.value === 'derived_alerts') loadDerivedTab();
@@ -1571,6 +2112,81 @@ onBeforeUnmount(() => {
 .metric-card {
   background: #f8fafc;
   border: 1px solid #e2e8f0;
+}
+.map-summary-row {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+.map-summary-item {
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
+  border-radius: 10px;
+  padding: 0.65rem 0.75rem;
+  min-height: 4.25rem;
+}
+.summary-label {
+  color: #64748b;
+  font-size: 0.78rem;
+  margin-bottom: 0.24rem;
+}
+.summary-value {
+  color: #0f172a;
+  font-weight: 600;
+  font-size: 0.92rem;
+}
+.map-canvas-wrap {
+  position: relative;
+  width: 100%;
+  border-radius: 12px;
+  border: 1px solid #e2e8f0;
+  background:
+    radial-gradient(circle at 20% 18%, rgba(56, 189, 248, 0.08), transparent 36%),
+    radial-gradient(circle at 84% 78%, rgba(16, 185, 129, 0.08), transparent 32%),
+    #ffffff;
+  overflow: hidden;
+}
+.map-canvas {
+  width: 100%;
+  min-height: 34rem;
+  display: block;
+}
+.map-node-circle {
+  cursor: pointer;
+  transition: r 0.15s ease, stroke-width 0.15s ease, opacity 0.15s ease;
+}
+.map-node-short {
+  font-size: 0.72rem;
+  fill: #0f172a;
+  font-weight: 700;
+  pointer-events: none;
+}
+.map-node-label {
+  font-size: 0.7rem;
+  fill: #334155;
+  pointer-events: none;
+}
+.map-tooltip {
+  position: fixed;
+  z-index: 1000;
+  max-width: 19rem;
+  background: rgba(15, 23, 42, 0.95);
+  color: #f8fafc;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  border-radius: 10px;
+  box-shadow: 0 10px 24px rgba(2, 6, 23, 0.35);
+  padding: 0.52rem 0.65rem;
+  pointer-events: none;
+}
+.map-tooltip-title {
+  font-size: 0.78rem;
+  font-weight: 700;
+  margin-bottom: 0.2rem;
+}
+.map-tooltip-line {
+  font-size: 0.74rem;
+  color: #e2e8f0;
+  line-height: 1.24;
 }
 .network-monitoring :deep(.card) {
   border-radius: 12px;
@@ -1682,6 +2298,9 @@ onBeforeUnmount(() => {
     grid-column: 1 / -1;
     justify-content: flex-start;
   }
+  .map-summary-row {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
 }
 @media (max-width: 992px) {
   .item-template,
@@ -1715,10 +2334,22 @@ onBeforeUnmount(() => {
   .alert-filter {
     min-width: 100%;
   }
+  .map-summary-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .map-canvas {
+    min-height: 28rem;
+  }
 }
 @media (max-width: 640px) {
   .fail-recover-grid {
     grid-template-columns: 1fr;
+  }
+  .map-summary-row {
+    grid-template-columns: 1fr;
+  }
+  .map-canvas {
+    min-height: 24rem;
   }
 }
 </style>

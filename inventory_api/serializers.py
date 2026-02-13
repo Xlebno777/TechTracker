@@ -3,7 +3,8 @@ from .models import (
     Device, DeviceType, Location, UserProfile, ComputerSpecs,
     PrinterScannerSpecs, NetworkDeviceSpecs, Cartridge, CartridgeLog,
     Log, Metric, PrintJob, MonitoringSetting, RawMetric, TrackedVM, ComputedMetric, AgentStatus, DiagnosticReport,
-    NetworkPath, NetworkOutage, NetworkAlertRule
+    NetworkPath, NetworkOutage, NetworkAlertRule,
+    NetworkMapSnapshot, NetworkMapNode, NetworkMapEdge
 )
 from django.utils import timezone
 from django.contrib.auth.models import User, Group
@@ -447,6 +448,47 @@ class NetworkAlertRuleSerializer(serializers.ModelSerializer):
         model = NetworkAlertRule
         fields = '__all__'
         read_only_fields = ('id', 'created_at', 'updated_at')
+
+
+class NetworkMapNodeSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = NetworkMapNode
+        fields = [
+            'id', 'snapshot', 'device', 'device_name', 'serial_number',
+            'ip_address', 'device_type_name', 'status', 'last_seen',
+        ]
+        read_only_fields = fields
+
+
+class NetworkMapEdgeSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = NetworkMapEdge
+        fields = [
+            'id', 'snapshot', 'path', 'src_device', 'dst_device',
+            'src_name', 'dst_name', 'dst_ip', 'enabled', 'state',
+            'latency_ms', 'packet_loss_pct', 'confidence_pct',
+            'outage_count_24h', 'has_active_outage', 'last_checked_at',
+        ]
+        read_only_fields = fields
+
+
+class NetworkMapSnapshotSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = NetworkMapSnapshot
+        fields = [
+            'id', 'generated_at', 'source_window_hours',
+            'node_count', 'edge_count', 'build_duration_ms',
+            'status', 'error', 'is_current', 'created_at',
+        ]
+        read_only_fields = fields
+
+
+class NetworkMapSnapshotDetailSerializer(NetworkMapSnapshotSerializer):
+    nodes = NetworkMapNodeSerializer(many=True, read_only=True)
+    edges = NetworkMapEdgeSerializer(many=True, read_only=True)
+
+    class Meta(NetworkMapSnapshotSerializer.Meta):
+        fields = NetworkMapSnapshotSerializer.Meta.fields + ['nodes', 'edges']
 
 
 class RawMetricItemSerializer(serializers.Serializer):

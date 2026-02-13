@@ -34,6 +34,7 @@ router.register(r'diagnostics', views.DiagnosticReportViewSet, basename='diagnos
 router.register(r'network-paths', views.NetworkPathViewSet, basename='network-paths')
 router.register(r'network-outages', views.NetworkOutageViewSet, basename='network-outages')
 router.register(r'network-alert-rules', views.NetworkAlertRuleViewSet, basename='network-alert-rules')
+router.register(r'network-map', views.NetworkMapViewSet, basename='network-map')
 router.register(r'printjob', views.PrintJobViewSet)
 router.register(r'tracked-vms', views.TrackedVMViewSet)
 

@@ -28,7 +28,8 @@ from .models import (
     ComputerSpecs, PrinterScannerSpecs, NetworkDeviceSpecs,
     Cartridge, CartridgeLog, Log, Metric, PrintJob,
     MonitoringSetting, RawMetric, TrackedVM, ComputedMetric, AgentStatus, DiagnosticReport,
-    NetworkPath, NetworkOutage, NetworkAlertRule
+    NetworkPath, NetworkOutage, NetworkAlertRule,
+    NetworkMapSnapshot
 )
 from .serializers import (
     DeviceSerializer, DeviceCreateUpdateSerializer,
@@ -39,7 +40,7 @@ from .serializers import (
     MetricSerializer, PrintJobSerializer, RawMetricSerializer, RawMetricIngestSerializer,
     TrackedVMSerializer, TrackedVMSyncSerializer, ComputedMetricSerializer, AgentStatusSerializer, AgentStatusReportSerializer,
     DiagnosticReportSerializer, DiagnosticRunSerializer, NetworkPathSerializer, NetworkOutageSerializer,
-    NetworkAlertRuleSerializer
+    NetworkAlertRuleSerializer, NetworkMapSnapshotSerializer, NetworkMapSnapshotDetailSerializer
 )
 from .permissions import PrintJobPermission, PrinterAgentPermission, MetricsAgentPermission, VMStatusAgentPermission, AdminGroupPermission
 from .diagnostics import generate_diagnostic_report
@@ -50,6 +51,7 @@ from .network_alerts import (
     evaluate_network_alert_rules,
     get_network_derived_snapshot,
 )
+from .network_map_builder import build_network_map_snapshot
 from django.utils import timezone
 from datetime import timedelta
 
@@ -1400,6 +1402,80 @@ class NetworkAlertRuleViewSet(viewsets.ModelViewSet):
             overwrite = str(raw).strip().lower() in ('1', 'true', 'yes', 'y', 'on')
         stats = ensure_default_network_alert_rules(overwrite=overwrite)
         return Response(stats, status=status.HTTP_200_OK)
+
+
+class NetworkMapViewSet(viewsets.ReadOnlyModelViewSet):
+    queryset = NetworkMapSnapshot.objects.all()
+    serializer_class = NetworkMapSnapshotSerializer
+    permission_classes = [AdminGroupPermission]
+
+    filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
+    filterset_fields = ['status', 'is_current']
+    ordering_fields = ['id', 'generated_at', 'node_count', 'edge_count', 'build_duration_ms']
+    ordering = ['-generated_at', '-id']
+
+    @staticmethod
+    def _to_int(value, default):
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return default
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        if self.action in ('retrieve', 'current'):
+            qs = qs.prefetch_related('nodes', 'edges')
+        return qs
+
+    def get_serializer_class(self):
+        if self.action in ('retrieve', 'current'):
+            return NetworkMapSnapshotDetailSerializer
+        return NetworkMapSnapshotSerializer
+
+    @action(detail=False, methods=['get'], permission_classes=[AdminGroupPermission])
+    def current(self, request):
+        snapshot = (
+            self.get_queryset()
+            .filter(is_current=True)
+            .order_by('-generated_at', '-id')
+            .first()
+        )
+        if snapshot is None:
+            snapshot = self.get_queryset().order_by('-generated_at', '-id').first()
+        if snapshot is None:
+            return Response({"detail": "Network map snapshot not found."}, status=status.HTTP_404_NOT_FOUND)
+        serializer = self.get_serializer(snapshot)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=['get'], permission_classes=[AdminGroupPermission])
+    def history(self, request):
+        limit = self._to_int(request.query_params.get('limit'), 20)
+        limit = max(1, min(limit, 200))
+        qs = self.filter_queryset(super().get_queryset()).order_by('-generated_at', '-id')[:limit]
+        serializer = NetworkMapSnapshotSerializer(qs, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=['post'], permission_classes=[AdminGroupPermission])
+    def rebuild(self, request):
+        window_hours = self._to_int(request.data.get('window_hours'), 24)
+        keep_last = self._to_int(request.data.get('keep_last'), 720)
+        include_data_raw = request.data.get('include_data', True)
+        if isinstance(include_data_raw, str):
+            include_data = include_data_raw.strip().lower() in ('1', 'true', 'yes', 'on')
+        else:
+            include_data = bool(include_data_raw)
+
+        payload = build_network_map_snapshot(window_hours=window_hours, keep_last=keep_last)
+        if payload.get('status') != 'ok':
+            return Response(payload, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        if include_data:
+            snapshot = self.get_queryset().filter(id=payload.get('snapshot_id')).first()
+            if snapshot is not None:
+                serializer = self.get_serializer(snapshot)
+                return Response(serializer.data, status=status.HTTP_200_OK)
+
+        return Response(payload, status=status.HTTP_200_OK)
 
 
 def _normalize_vm_status(value):

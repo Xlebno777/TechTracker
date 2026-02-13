@@ -6,7 +6,8 @@ from .models import (
     Device, DeviceType, Location, UserProfile, ComputerSpecs, PrinterScannerSpecs,
     NetworkDeviceSpecs, Cartridge, CartridgeLog, Log, Metric,
     MonitoringSetting, RawMetric, TrackedVM, ComputedMetric, AgentStatus, DiagnosticReport,
-    NetworkPath, NetworkOutage, NetworkAlertRule
+    NetworkPath, NetworkOutage, NetworkAlertRule,
+    NetworkMapSnapshot, NetworkMapNode, NetworkMapEdge
 )
 
 @admin.register(DeviceType)
@@ -210,3 +211,27 @@ class NetworkAlertRuleAdmin(admin.ModelAdmin):
     list_display = ('code', 'name', 'metric_code', 'comparison', 'threshold_value', 'severity', 'enabled', 'order')
     list_filter = ('enabled', 'severity', 'window')
     search_fields = ('code', 'name', 'metric_code')
+
+
+@admin.register(NetworkMapSnapshot)
+class NetworkMapSnapshotAdmin(admin.ModelAdmin):
+    list_display = ('id', 'generated_at', 'status', 'is_current', 'node_count', 'edge_count', 'build_duration_ms')
+    list_filter = ('status', 'is_current')
+    search_fields = ('id',)
+
+
+@admin.register(NetworkMapNode)
+class NetworkMapNodeAdmin(admin.ModelAdmin):
+    list_display = ('id', 'snapshot', 'device_name', 'serial_number', 'ip_address', 'status', 'last_seen')
+    list_filter = ('status', 'snapshot')
+    search_fields = ('device_name', 'serial_number', 'ip_address')
+
+
+@admin.register(NetworkMapEdge)
+class NetworkMapEdgeAdmin(admin.ModelAdmin):
+    list_display = (
+        'id', 'snapshot', 'src_name', 'dst_name', 'dst_ip', 'state',
+        'latency_ms', 'packet_loss_pct', 'confidence_pct', 'has_active_outage'
+    )
+    list_filter = ('state', 'enabled', 'has_active_outage', 'snapshot')
+    search_fields = ('src_name', 'dst_name', 'dst_ip')

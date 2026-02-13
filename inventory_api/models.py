@@ -516,3 +516,92 @@ class NetworkAlertRule(models.Model):
 
     def __str__(self):
         return f"{self.code} ({self.metric_code} {self.comparison} {self.threshold_value})"
+
+
+class NetworkMapSnapshot(models.Model):
+    STATUS_CHOICES = [
+        ('ok', 'OK'),
+        ('error', 'Error'),
+    ]
+
+    generated_at = models.DateTimeField(default=timezone.now)
+    source_window_hours = models.PositiveIntegerField(default=24)
+    node_count = models.PositiveIntegerField(default=0)
+    edge_count = models.PositiveIntegerField(default=0)
+    build_duration_ms = models.PositiveIntegerField(null=True, blank=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='ok')
+    error = models.TextField(blank=True)
+    is_current = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Снимок сетевой карты"
+        verbose_name_plural = "Снимки сетевой карты"
+        ordering = ['-generated_at', '-id']
+        indexes = [
+            models.Index(fields=['is_current', '-generated_at']),
+            models.Index(fields=['status', '-generated_at']),
+        ]
+
+    def __str__(self):
+        return f"NetworkMapSnapshot #{self.id} ({self.status})"
+
+
+class NetworkMapNode(models.Model):
+    snapshot = models.ForeignKey(NetworkMapSnapshot, on_delete=models.CASCADE, related_name='nodes')
+    device = models.ForeignKey(Device, on_delete=models.SET_NULL, null=True, blank=True, related_name='network_map_nodes')
+    device_name = models.CharField(max_length=200)
+    serial_number = models.CharField(max_length=100, blank=True)
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
+    device_type_name = models.CharField(max_length=100, blank=True)
+    status = models.CharField(max_length=20, blank=True)
+    last_seen = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        verbose_name = "Узел сетевой карты"
+        verbose_name_plural = "Узлы сетевой карты"
+        ordering = ['device_name', 'id']
+        indexes = [
+            models.Index(fields=['snapshot', 'device_name']),
+            models.Index(fields=['snapshot', 'ip_address']),
+        ]
+
+    def __str__(self):
+        return f"{self.device_name} ({self.ip_address or 'no-ip'})"
+
+
+class NetworkMapEdge(models.Model):
+    STATE_CHOICES = [
+        ('unknown', 'Unknown'),
+        ('up', 'Up'),
+        ('down', 'Down'),
+        ('none', 'None'),
+    ]
+
+    snapshot = models.ForeignKey(NetworkMapSnapshot, on_delete=models.CASCADE, related_name='edges')
+    path = models.ForeignKey(NetworkPath, on_delete=models.SET_NULL, null=True, blank=True, related_name='network_map_edges')
+    src_device = models.ForeignKey(Device, on_delete=models.SET_NULL, null=True, blank=True, related_name='network_map_edges_src')
+    dst_device = models.ForeignKey(Device, on_delete=models.SET_NULL, null=True, blank=True, related_name='network_map_edges_dst')
+    src_name = models.CharField(max_length=200)
+    dst_name = models.CharField(max_length=200)
+    dst_ip = models.GenericIPAddressField(null=True, blank=True)
+    enabled = models.BooleanField(default=True)
+    state = models.CharField(max_length=20, choices=STATE_CHOICES, default='unknown')
+    latency_ms = models.FloatField(null=True, blank=True)
+    packet_loss_pct = models.FloatField(null=True, blank=True)
+    confidence_pct = models.FloatField(null=True, blank=True)
+    outage_count_24h = models.PositiveIntegerField(default=0)
+    has_active_outage = models.BooleanField(default=False)
+    last_checked_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        verbose_name = "Ребро сетевой карты"
+        verbose_name_plural = "Ребра сетевой карты"
+        ordering = ['src_name', 'dst_name', 'id']
+        indexes = [
+            models.Index(fields=['snapshot', 'state']),
+            models.Index(fields=['snapshot', 'src_device', 'dst_device']),
+        ]
+
+    def __str__(self):
+        return f"{self.src_name} -> {self.dst_name} ({self.state})"
