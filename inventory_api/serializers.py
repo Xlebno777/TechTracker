@@ -4,7 +4,8 @@ from .models import (
     PrinterScannerSpecs, NetworkDeviceSpecs, Cartridge, CartridgeLog,
     Log, Metric, PrintJob, MonitoringSetting, RawMetric, TrackedVM, ComputedMetric, AgentStatus, DiagnosticReport,
     NetworkPath, NetworkOutage, NetworkAlertRule,
-    NetworkMapSnapshot, NetworkMapNode, NetworkMapEdge
+    NetworkMapSnapshot, NetworkMapNode, NetworkMapEdge,
+    ForecastRun, ForecastPoint, StateEstimate
 )
 from django.utils import timezone
 from django.contrib.auth.models import User, Group
@@ -366,6 +367,58 @@ class DiagnosticReportSerializer(serializers.ModelSerializer):
 class DiagnosticRunSerializer(serializers.Serializer):
     serial = serializers.CharField(required=False, allow_blank=True)
     mode = serializers.ChoiceField(choices=['llm', 'rules'], required=False)
+
+
+class ForecastRunSerializer(serializers.ModelSerializer):
+    device_name = serializers.CharField(source='device.name', read_only=True)
+    device_serial = serializers.CharField(source='device.serial_number', read_only=True)
+
+    class Meta:
+        model = ForecastRun
+        fields = [
+            'id', 'device', 'device_name', 'device_serial',
+            'model_kind', 'horizon_set', 'status',
+            'started_at', 'finished_at',
+            'parameters', 'quality', 'notes',
+            'created_at', 'updated_at',
+        ]
+        read_only_fields = fields
+
+
+class ForecastPointSerializer(serializers.ModelSerializer):
+    device_name = serializers.CharField(source='device.name', read_only=True)
+    device_serial = serializers.CharField(source='device.serial_number', read_only=True)
+    run_model_kind = serializers.CharField(source='run.model_kind', read_only=True)
+    run_status = serializers.CharField(source='run.status', read_only=True)
+
+    class Meta:
+        model = ForecastPoint
+        fields = [
+            'id', 'run', 'run_model_kind', 'run_status',
+            'device', 'device_name', 'device_serial',
+            'metric_code', 'horizon', 'target_ts', 'model_kind',
+            'y_hat', 'p10', 'p50', 'p90', 'alpha',
+            'labels', 'created_at',
+        ]
+        read_only_fields = fields
+
+
+class StateEstimateSerializer(serializers.ModelSerializer):
+    device_name = serializers.CharField(source='device.name', read_only=True)
+    device_serial = serializers.CharField(source='device.serial_number', read_only=True)
+    run_model_kind = serializers.CharField(source='run.model_kind', read_only=True)
+    run_status = serializers.CharField(source='run.status', read_only=True)
+
+    class Meta:
+        model = StateEstimate
+        fields = [
+            'id', 'run', 'run_model_kind', 'run_status',
+            'device', 'device_name', 'device_serial',
+            'horizon', 'state',
+            'p_s0', 'p_s1', 'p_s2', 'confidence',
+            'evidence', 'timestamp', 'created_at',
+        ]
+        read_only_fields = fields
 
 
 class NetworkPathSerializer(serializers.ModelSerializer):

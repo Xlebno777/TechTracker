@@ -605,3 +605,115 @@ class NetworkMapEdge(models.Model):
 
     def __str__(self):
         return f"{self.src_name} -> {self.dst_name} ({self.state})"
+
+
+class ForecastRun(models.Model):
+    MODEL_KIND_CHOICES = [
+        ('sarima', 'SARIMA'),
+        ('lstm', 'LSTM'),
+        ('ensemble', 'Ensemble'),
+    ]
+    STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('running', 'Running'),
+        ('success', 'Success'),
+        ('failed', 'Failed'),
+    ]
+
+    device = models.ForeignKey(Device, on_delete=models.CASCADE, related_name='forecast_runs')
+    model_kind = models.CharField(max_length=20, choices=MODEL_KIND_CHOICES, default='ensemble')
+    horizon_set = models.CharField(max_length=100, default='24h,7d,30d')
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='success')
+    started_at = models.DateTimeField(null=True, blank=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+    parameters = models.JSONField(default=dict, blank=True)
+    quality = models.JSONField(default=dict, blank=True)
+    notes = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Запуск прогноза"
+        verbose_name_plural = "Запуски прогноза"
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['device', 'model_kind', '-created_at']),
+            models.Index(fields=['status', '-created_at']),
+        ]
+
+    def __str__(self):
+        return f"{self.device.name} {self.model_kind} ({self.status})"
+
+
+class ForecastPoint(models.Model):
+    HORIZON_CHOICES = [
+        ('24h', '24h'),
+        ('7d', '7d'),
+        ('30d', '30d'),
+    ]
+
+    run = models.ForeignKey(ForecastRun, on_delete=models.SET_NULL, null=True, blank=True, related_name='points')
+    device = models.ForeignKey(Device, on_delete=models.CASCADE, related_name='forecast_points')
+    metric_code = models.CharField(max_length=100)
+    horizon = models.CharField(max_length=20, choices=HORIZON_CHOICES)
+    target_ts = models.DateTimeField()
+    model_kind = models.CharField(max_length=20, choices=ForecastRun.MODEL_KIND_CHOICES, default='ensemble')
+    y_hat = models.FloatField()
+    p10 = models.FloatField(null=True, blank=True)
+    p50 = models.FloatField(null=True, blank=True)
+    p90 = models.FloatField(null=True, blank=True)
+    alpha = models.FloatField(null=True, blank=True)
+    labels = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Точка прогноза"
+        verbose_name_plural = "Точки прогноза"
+        ordering = ['-target_ts', '-id']
+        indexes = [
+            models.Index(fields=['device', 'metric_code', 'horizon', '-target_ts']),
+            models.Index(fields=['model_kind', 'horizon', '-target_ts']),
+            models.Index(fields=['run', '-target_ts']),
+        ]
+
+    def __str__(self):
+        return f"{self.device.name} {self.metric_code} {self.horizon} -> {self.y_hat}"
+
+
+class StateEstimate(models.Model):
+    HORIZON_CHOICES = [
+        ('24h', '24h'),
+        ('7d', '7d'),
+        ('30d', '30d'),
+    ]
+    STATE_CHOICES = [
+        ('s0', 'S0'),
+        ('s1', 'S1'),
+        ('s2', 'S2'),
+        ('unknown', 'Unknown'),
+    ]
+
+    run = models.ForeignKey(ForecastRun, on_delete=models.SET_NULL, null=True, blank=True, related_name='state_estimates')
+    device = models.ForeignKey(Device, on_delete=models.CASCADE, related_name='state_estimates')
+    horizon = models.CharField(max_length=20, choices=HORIZON_CHOICES)
+    state = models.CharField(max_length=20, choices=STATE_CHOICES, default='unknown')
+    p_s0 = models.FloatField(null=True, blank=True)
+    p_s1 = models.FloatField(null=True, blank=True)
+    p_s2 = models.FloatField(null=True, blank=True)
+    confidence = models.FloatField(null=True, blank=True)
+    evidence = models.JSONField(default=dict, blank=True)
+    timestamp = models.DateTimeField(default=timezone.now)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Оценка состояния сервера"
+        verbose_name_plural = "Оценки состояния сервера"
+        ordering = ['-timestamp', '-id']
+        indexes = [
+            models.Index(fields=['device', 'horizon', '-timestamp']),
+            models.Index(fields=['state', '-timestamp']),
+            models.Index(fields=['run', '-timestamp']),
+        ]
+
+    def __str__(self):
+        return f"{self.device.name} {self.horizon}: {self.state}"

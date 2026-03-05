@@ -29,7 +29,7 @@ from .models import (
     Cartridge, CartridgeLog, Log, Metric, PrintJob,
     MonitoringSetting, RawMetric, TrackedVM, ComputedMetric, AgentStatus, DiagnosticReport,
     NetworkPath, NetworkOutage, NetworkAlertRule,
-    NetworkMapSnapshot
+    NetworkMapSnapshot, ForecastRun, ForecastPoint, StateEstimate
 )
 from .serializers import (
     DeviceSerializer, DeviceCreateUpdateSerializer,
@@ -40,7 +40,8 @@ from .serializers import (
     MetricSerializer, PrintJobSerializer, RawMetricSerializer, RawMetricIngestSerializer,
     TrackedVMSerializer, TrackedVMSyncSerializer, ComputedMetricSerializer, AgentStatusSerializer, AgentStatusReportSerializer,
     DiagnosticReportSerializer, DiagnosticRunSerializer, NetworkPathSerializer, NetworkOutageSerializer,
-    NetworkAlertRuleSerializer, NetworkMapSnapshotSerializer, NetworkMapSnapshotDetailSerializer
+    NetworkAlertRuleSerializer, NetworkMapSnapshotSerializer, NetworkMapSnapshotDetailSerializer,
+    ForecastRunSerializer, ForecastPointSerializer, StateEstimateSerializer
 )
 from .permissions import PrintJobPermission, PrinterAgentPermission, MetricsAgentPermission, VMStatusAgentPermission, AdminGroupPermission
 from .diagnostics import generate_diagnostic_report
@@ -52,6 +53,7 @@ from .network_alerts import (
     get_network_derived_snapshot,
 )
 from .network_map_builder import build_network_map_snapshot
+from .forecasting.demo_seed import seed_demo_forecasts
 from django.utils import timezone
 from datetime import timedelta
 
@@ -944,6 +946,214 @@ class DiagnosticReportViewSet(viewsets.ReadOnlyModelViewSet):
         if not report:
             return Response({"detail": "No diagnostic report yet"}, status=status.HTTP_404_NOT_FOUND)
         return Response(DiagnosticReportSerializer(report).data, status=status.HTTP_200_OK)
+
+
+class ForecastRunViewSet(viewsets.ReadOnlyModelViewSet):
+    queryset = ForecastRun.objects.all().select_related('device')
+    serializer_class = ForecastRunSerializer
+    permission_classes = [IsAuthenticated, DjangoModelPermissions]
+
+    filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
+    filterset_fields = ['device', 'model_kind', 'status']
+    ordering_fields = ['created_at', 'started_at', 'finished_at', 'updated_at']
+    ordering = ['-created_at']
+
+    @action(detail=False, methods=['get'])
+    def latest(self, request):
+        serial = request.query_params.get('serial')
+        device_id = request.query_params.get('device')
+        model_kind = request.query_params.get('model_kind')
+
+        qs = self.filter_queryset(self.get_queryset())
+        if serial:
+            device = Device.objects.filter(serial_number=serial).first()
+            if not device:
+                return Response({"detail": "Device not found"}, status=status.HTTP_404_NOT_FOUND)
+            qs = qs.filter(device=device)
+        if device_id:
+            qs = qs.filter(device_id=device_id)
+        if model_kind:
+            qs = qs.filter(model_kind=model_kind)
+
+        row = qs.order_by('-created_at').first()
+        if not row:
+            return Response({"detail": "Forecast run not found"}, status=status.HTTP_404_NOT_FOUND)
+        return Response(self.get_serializer(row).data, status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=['post'], permission_classes=[AdminGroupPermission])
+    def seed_demo(self, request):
+        serial = request.data.get('serial')
+        runs_raw = request.data.get('runs', 1)
+        clear_raw = request.data.get('clear', False)
+        with_raw_raw = request.data.get('with_raw_history', True)
+        raw_history_days_raw = request.data.get('raw_history_days', 30)
+
+        try:
+            runs = int(runs_raw)
+        except (TypeError, ValueError):
+            runs = 1
+        runs = max(1, min(runs, 50))
+
+        if isinstance(clear_raw, str):
+            clear_existing = clear_raw.strip().lower() in ('1', 'true', 'yes', 'on')
+        else:
+            clear_existing = bool(clear_raw)
+
+        if isinstance(with_raw_raw, str):
+            with_raw_history = with_raw_raw.strip().lower() in ('1', 'true', 'yes', 'on')
+        else:
+            with_raw_history = bool(with_raw_raw)
+        try:
+            raw_history_days = max(1, int(raw_history_days_raw))
+        except (TypeError, ValueError):
+            raw_history_days = 30
+
+        payload = seed_demo_forecasts(
+            serial=serial,
+            runs=runs,
+            clear_existing=clear_existing,
+            with_raw_history=with_raw_history,
+            raw_history_days=raw_history_days,
+        )
+        return Response(payload, status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=['post'], permission_classes=[AdminGroupPermission])
+    def run_baseline(self, request):
+        serial = request.data.get('serial')
+        lookback_raw = request.data.get('lookback_days', 60)
+        freq = request.data.get('freq', '1h')
+        horizons_raw = request.data.get('horizons', '24h,7d,30d')
+        metric_codes_raw = request.data.get('metric_codes', '')
+        save_stl_raw = request.data.get('save_stl_components', True)
+
+        try:
+            lookback_days = max(1, int(lookback_raw))
+        except (TypeError, ValueError):
+            lookback_days = 60
+
+        if isinstance(horizons_raw, list):
+            horizons = [str(h).strip() for h in horizons_raw if str(h).strip()]
+        else:
+            horizons = [h.strip() for h in str(horizons_raw or '').split(',') if h.strip()]
+
+        if isinstance(metric_codes_raw, list):
+            metric_codes = [str(m).strip() for m in metric_codes_raw if str(m).strip()]
+        else:
+            metric_codes = [m.strip() for m in str(metric_codes_raw or '').split(',') if m.strip()]
+
+        if isinstance(save_stl_raw, str):
+            save_stl_components = save_stl_raw.strip().lower() in ('1', 'true', 'yes', 'on')
+        else:
+            save_stl_components = bool(save_stl_raw)
+
+        try:
+            from .forecasting.baseline_service import run_baseline_forecasts
+            payload = run_baseline_forecasts(
+                serial=serial,
+                lookback_days=lookback_days,
+                freq=str(freq or '1h'),
+                horizons=horizons or None,
+                metric_codes=metric_codes or None,
+                save_stl_components=save_stl_components,
+            )
+            return Response(payload, status=status.HTTP_200_OK)
+        except RuntimeError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        except Exception as exc:
+            return Response({"detail": f"baseline failed: {exc}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class ForecastPointViewSet(viewsets.ReadOnlyModelViewSet):
+    queryset = ForecastPoint.objects.all().select_related('device', 'run')
+    serializer_class = ForecastPointSerializer
+    permission_classes = [IsAuthenticated, DjangoModelPermissions]
+
+    filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
+    filterset_fields = ['device', 'metric_code', 'horizon', 'model_kind', 'run']
+    ordering_fields = ['target_ts', 'created_at', 'y_hat']
+    ordering = ['-target_ts', '-id']
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        since_hours = self.request.query_params.get('since_hours')
+        if since_hours:
+            try:
+                hours = int(since_hours)
+                if hours > 0:
+                    qs = qs.filter(target_ts__gte=timezone.now() - timedelta(hours=hours))
+            except ValueError:
+                pass
+        return qs
+
+    @action(detail=False, methods=['get'])
+    def latest(self, request):
+        serial = request.query_params.get('serial')
+        device_id = request.query_params.get('device')
+        metric_code = request.query_params.get('metric_code')
+        horizon = request.query_params.get('horizon')
+
+        qs = self.filter_queryset(self.get_queryset())
+        if serial:
+            device = Device.objects.filter(serial_number=serial).first()
+            if not device:
+                return Response({"detail": "Device not found"}, status=status.HTTP_404_NOT_FOUND)
+            qs = qs.filter(device=device)
+        if device_id:
+            qs = qs.filter(device_id=device_id)
+        if metric_code:
+            qs = qs.filter(metric_code=metric_code)
+        if horizon:
+            qs = qs.filter(horizon=horizon)
+
+        row = qs.order_by('-target_ts', '-id').first()
+        if not row:
+            return Response({"detail": "Forecast point not found"}, status=status.HTTP_404_NOT_FOUND)
+        return Response(self.get_serializer(row).data, status=status.HTTP_200_OK)
+
+
+class StateEstimateViewSet(viewsets.ReadOnlyModelViewSet):
+    queryset = StateEstimate.objects.all().select_related('device', 'run')
+    serializer_class = StateEstimateSerializer
+    permission_classes = [IsAuthenticated, DjangoModelPermissions]
+
+    filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
+    filterset_fields = ['device', 'horizon', 'state', 'run']
+    ordering_fields = ['timestamp', 'created_at', 'confidence']
+    ordering = ['-timestamp', '-id']
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        since_hours = self.request.query_params.get('since_hours')
+        if since_hours:
+            try:
+                hours = int(since_hours)
+                if hours > 0:
+                    qs = qs.filter(timestamp__gte=timezone.now() - timedelta(hours=hours))
+            except ValueError:
+                pass
+        return qs
+
+    @action(detail=False, methods=['get'])
+    def latest(self, request):
+        serial = request.query_params.get('serial')
+        device_id = request.query_params.get('device')
+        horizon = request.query_params.get('horizon')
+
+        qs = self.filter_queryset(self.get_queryset())
+        if serial:
+            device = Device.objects.filter(serial_number=serial).first()
+            if not device:
+                return Response({"detail": "Device not found"}, status=status.HTTP_404_NOT_FOUND)
+            qs = qs.filter(device=device)
+        if device_id:
+            qs = qs.filter(device_id=device_id)
+        if horizon:
+            qs = qs.filter(horizon=horizon)
+
+        row = qs.order_by('-timestamp', '-id').first()
+        if not row:
+            return Response({"detail": "State estimate not found"}, status=status.HTTP_404_NOT_FOUND)
+        return Response(self.get_serializer(row).data, status=status.HTTP_200_OK)
 
 
 class NetworkPathViewSet(viewsets.ModelViewSet):

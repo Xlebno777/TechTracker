@@ -254,3 +254,47 @@ Response (example):
   "recommendations": ["Check top processes", "Restart service X"]
 }
 ```
+
+## Forecasts and states (read-only)
+### Forecast runs
+- `GET /api/forecast-runs/?device=1&model_kind=ensemble&status=success&ordering=-created_at`
+- `GET /api/forecast-runs/latest/?serial=HOST-SERIAL&model_kind=ensemble`
+- `POST /api/forecast-runs/seed_demo/` (admin) -> generate synthetic forecast data for UI checks
+- `POST /api/forecast-runs/run_baseline/` (admin) -> run local STL + SARIMA baseline and save results
+
+### Forecast points
+- `GET /api/forecast-points/?device=1&metric_code=cpu_load_total&horizon=24h&ordering=-target_ts`
+- `GET /api/forecast-points/latest/?serial=HOST-SERIAL&metric_code=cpu_load_total&horizon=24h`
+
+Optional query params:
+- `since_hours` (for list, e.g. `since_hours=168`)
+
+### State estimates (S0/S1/S2)
+- `GET /api/state-estimates/?device=1&horizon=24h&state=s1&ordering=-timestamp`
+- `GET /api/state-estimates/latest/?serial=HOST-SERIAL&horizon=24h`
+
+Common horizons:
+- `24h`, `7d`, `30d`
+
+Example `seed_demo` body:
+```json
+{
+  "serial": "OPTIONAL-SERIAL",
+  "runs": 2,
+  "clear": true,
+  "with_raw_history": true,
+  "raw_history_days": 30
+}
+```
+
+Example `run_baseline` body:
+```json
+{
+  "serial": "OPTIONAL-SERIAL",
+  "lookback_days": 60,
+  "freq": "1h",
+  "horizons": "24h,7d,30d",
+  "metric_codes": "cpu_load_total,mem_usage_percent,net_bytes_sent,net_bytes_recv,ping_latency_gateway,system_temperature,storcli_drive_temperature,storcli_predictive_failure_count",
+  "save_stl_components": true
+}
+```

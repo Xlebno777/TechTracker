@@ -60,7 +60,7 @@ Installer:
 - Файл: server_printer_agent_installer.iss
 Если хочешь, могу сделать скрипты run-backend.ps1 и run-frontend.ps1, чтобы запуск был одной командой.
 
-Новые параметры агента:
+zНовые параметры агента:
 - RetentionDays (по умолчанию 365) — срок хранения сырых метрик
 - VmSyncInterval — частота обновления статуса Hyper-V ВМ
 - StorcliPath — путь до storcli64.exe или папки (например C:\Soft\storcli\Windows)

@@ -149,6 +149,45 @@
 - payload (JSON)
 - created_at
 
+## ForecastRun
+- id (PK)
+- device_id (FK -> Device)
+- model_kind (sarima/lstm/ensemble)
+- horizon_set (e.g., `24h,7d,30d`)
+- status (pending/running/success/failed)
+- started_at
+- finished_at
+- parameters (JSON)
+- quality (JSON)
+- notes
+- created_at, updated_at
+
+## ForecastPoint
+- id (PK)
+- run_id (FK -> ForecastRun, nullable)
+- device_id (FK -> Device)
+- metric_code
+- horizon (`24h`/`7d`/`30d`)
+- target_ts
+- model_kind (sarima/lstm/ensemble)
+- y_hat
+- p10, p50, p90 (nullable)
+- alpha (nullable)
+- labels (JSON)
+- created_at
+
+## StateEstimate
+- id (PK)
+- run_id (FK -> ForecastRun, nullable)
+- device_id (FK -> Device)
+- horizon (`24h`/`7d`/`30d`)
+- state (`s0`/`s1`/`s2`/`unknown`)
+- p_s0, p_s1, p_s2 (nullable)
+- confidence (nullable)
+- evidence (JSON)
+- timestamp
+- created_at
+
 ## NetworkPath
 - id (PK)
 - src_device_id (FK -> Device)
