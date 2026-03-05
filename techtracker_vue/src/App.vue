@@ -41,6 +41,10 @@
               <i class="pi pi-bolt"></i>
               <span>Умная диагностика</span>
             </router-link>
+            <router-link :to="{ name: 'MonitoringForecast' }" class="nav-sublink" active-class="active">
+              <i class="pi pi-chart-scatter"></i>
+              <span>Прогнозы и состояния</span>
+            </router-link>
           </div>
         </div>
 
@@ -122,7 +126,7 @@ const route = useRoute();
 const isNavCollapsed = ref(false);
 const isMonitoringMenuOpen = ref(true);
 
-const monitoringRoutes = ['Monitoring', 'MonitoringAnalysis', 'AiDiagnostics'];
+const monitoringRoutes = ['Monitoring', 'MonitoringAnalysis', 'AiDiagnostics', 'MonitoringForecast'];
 const isMonitoringRoute = computed(() => monitoringRoutes.includes(route.name));
 
 const triggerLayoutRefresh = () => {

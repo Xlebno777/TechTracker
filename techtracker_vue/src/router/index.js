@@ -10,6 +10,7 @@ import MonitoringRaw from '../components/MonitoringRaw.vue'
 import NetworkMonitoring from '../components/NetworkMonitoring.vue'
 import AgentDiagnostics from '../components/AgentDiagnostics.vue'
 import DiagnosticsAI from '../components/DiagnosticsAI.vue'
+import MonitoringForecast from '../components/MonitoringForecast.vue'
 import PrintersPage from '../components/PrintersPage.vue'
 
 
@@ -86,6 +87,12 @@ const routes = [
     meta: { requiresAuth: true, requiresAdmin: true }
   },
   {
+    path: '/monitoring-forecast',
+    name: 'MonitoringForecast',
+    component: MonitoringForecast,
+    meta: { requiresAuth: true, forbidUsers: true }
+  },
+  {
     path: '/admin/requests',
     name: 'AdminRequests',
     component: RequestList,
@@ -109,7 +116,7 @@ const router = createRouter({ // <-- router создаётся ЗДЕСЬ
 router.beforeEach((to, from, next) => {
   const hasToken = localStorage.getItem('auth_token') !== null;
 
-  if (to.name === 'DeviceTable' || to.name === 'DeviceCreate' || to.name === 'DeviceEdit' || to.name === 'RequestForm' || to.name === 'RequestList' || to.name === 'Printers' || to.name === 'Monitoring' || to.name === 'NetworkMonitoring' || to.name === 'MonitoringAnalysis' || to.name === 'AgentDiagnostics' || to.name === 'AiDiagnostics' || to.name === 'AdminRequests') {
+  if (to.name === 'DeviceTable' || to.name === 'DeviceCreate' || to.name === 'DeviceEdit' || to.name === 'RequestForm' || to.name === 'RequestList' || to.name === 'Printers' || to.name === 'Monitoring' || to.name === 'NetworkMonitoring' || to.name === 'MonitoringAnalysis' || to.name === 'AgentDiagnostics' || to.name === 'AiDiagnostics' || to.name === 'MonitoringForecast' || to.name === 'AdminRequests') {
     if (!hasToken) {
       next({ name: 'AuthPage' });
     } else {
