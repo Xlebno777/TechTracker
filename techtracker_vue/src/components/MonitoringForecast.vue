@@ -5,7 +5,7 @@
     <div class="flex flex-wrap justify-content-between align-items-start gap-3 mb-4">
       <div>
         <h2 class="text-2xl font-bold m-0 text-900">Прогнозы и состояния</h2>
-        <p class="text-500 m-0">SARIMA baseline и оценка состояний S0/S1/S2</p>
+        <p class="text-500 m-0">SARIMA прогноз и оценка состояний S0/S1/S2</p>
       </div>
       <div class="flex align-items-center gap-2">
         <Button icon="pi pi-refresh" label="Обновить" text @click="refreshAll" :loading="loading" />
@@ -13,9 +13,9 @@
     </div>
 
     <div class="card p-3 mb-3">
-      <div class="grid">
-        <div class="col-12 md:col-5">
-          <label class="block mb-2">Устройство</label>
+      <div class="filters-grid">
+        <div class="field-block">
+          <label>Устройство</label>
           <Dropdown
             v-model="selectedDeviceId"
             :options="deviceOptions"
@@ -26,16 +26,22 @@
             :loading="loadingDevices"
           />
         </div>
-        <div class="col-12 md:col-3">
-          <label class="block mb-2">Горизонт</label>
-          <Dropdown v-model="selectedHorizon" :options="horizonOptions" optionLabel="label" optionValue="value" class="w-full" />
+        <div class="field-block">
+          <label>Горизонт</label>
+          <Dropdown
+            v-model="selectedHorizon"
+            :options="horizonOptions"
+            optionLabel="label"
+            optionValue="value"
+            class="w-full"
+          />
         </div>
-        <div class="col-12 md:col-4">
-          <label class="block mb-2">Последний запуск</label>
+        <div class="field-block">
+          <label>Последний запуск</label>
           <div class="run-meta">
             <Tag :value="runStatusLabel(latestRun?.status)" :severity="runStatusSeverity(latestRun?.status)" />
             <span class="text-600 text-sm">
-              {{ latestRun ? `${(latestRun.model_kind || '').toUpperCase()} • ${formatDateTime(latestRun.created_at)}` : 'нет данных' }}
+              {{ latestRun ? `SARIMA • ${formatDateTime(latestRun.created_at)}` : 'Нет данных' }}
             </span>
           </div>
         </div>
@@ -65,70 +71,153 @@
           <span class="ml-2">Обновлено: {{ formatDateTime(latestState?.timestamp) }}</span>
         </div>
       </div>
-      <div class="text-700">
-        <strong>Confidence:</strong> {{ latestState?.confidence != null ? latestState.confidence.toFixed(3) : '—' }}
+      <div class="text-700 mb-2">
+        <strong>Уверенность:</strong> {{ latestState?.confidence != null ? latestState.confidence.toFixed(3) : '—' }}
       </div>
-      <div class="text-600 mt-2" v-if="latestState?.evidence">
-        <strong>Evidence:</strong>
-        <pre class="evidence-pre">{{ prettyJson(latestState.evidence) }}</pre>
+      <div v-if="topEvidence.length" class="factors-grid">
+        <div v-for="item in topEvidence" :key="item.metric_code" class="factor-card">
+          <div class="factor-title">{{ metricLabel(item.metric_code) }}</div>
+          <div class="factor-meta">
+            Прогноз: {{ formatNum(item.y_hat) }} {{ metricUnit(item.metric_code) || '' }}
+          </div>
+          <div class="factor-meta">
+            Порог: {{ formatNum(item.threshold) }}
+          </div>
+          <div class="risk-track">
+            <span class="risk-fill" :style="{ width: `${riskPercent(item.risk_component)}%` }"></span>
+          </div>
+          <div class="factor-risk">Вклад в риск: {{ riskPercent(item.risk_component).toFixed(1) }}%</div>
+        </div>
       </div>
-      <div v-else class="text-500">Данные по состоянию отсутствуют.</div>
+      <div v-else class="text-500">Факторы влияния пока недоступны.</div>
     </div>
 
     <div class="card p-3 mb-3">
-      <div class="flex flex-wrap align-items-end gap-3">
+      <div class="flex flex-wrap justify-content-between align-items-start gap-2 mb-2">
         <div>
-          <label class="block mb-2">Demo runs</label>
-          <InputNumber v-model="seedRuns" :min="1" :max="20" class="w-7rem" />
+          <h4 class="m-0">Разброс данных по метрике</h4>
+          <p class="text-500 m-0">Исторические точки + текущие точки SARIMA-прогноза</p>
         </div>
-        <div class="flex align-items-center gap-2">
-          <InputSwitch v-model="seedClear" />
-          <span class="text-600">Очистить старые demo</span>
+        <span class="text-500 text-sm">Точек: {{ scatterPointCount }}</span>
+      </div>
+
+      <div class="chart-controls">
+        <div class="field-block">
+          <label>Метрика</label>
+          <Dropdown
+            v-model="selectedMetricCode"
+            :options="metricOptions"
+            optionLabel="label"
+            optionValue="value"
+            class="w-full"
+            placeholder="Выберите метрику"
+          />
         </div>
-        <div class="flex align-items-center gap-2">
-          <InputSwitch v-model="seedWithRawHistory" />
-          <span class="text-600">Создать raw history</span>
+        <div class="field-block">
+          <label>Период на графике</label>
+          <Dropdown
+            v-model="chartWindowMinutes"
+            :options="chartWindowOptions"
+            optionLabel="label"
+            optionValue="value"
+            class="w-full"
+          />
         </div>
-        <div>
-          <label class="block mb-2">Raw history (days)</label>
-          <InputNumber v-model="seedRawDays" :min="1" :max="180" class="w-8rem" />
+        <div class="field-block action-button">
+          <Button
+            icon="pi pi-sync"
+            label="Обновить график"
+            severity="secondary"
+            class="w-full"
+            :loading="chartLoading"
+            @click="loadMetricScatter"
+          />
         </div>
-        <Button
-          icon="pi pi-database"
-          label="Сгенерировать тестовые данные"
-          severity="secondary"
-          :loading="seeding"
-          @click="seedDemo"
-        />
+      </div>
+
+      <div v-if="scatterPointCount > 0" class="chart-wrap mt-2">
+        <Chart type="scatter" :data="scatterChartData" :options="scatterChartOptions" class="scatter-chart" />
+      </div>
+      <div v-else class="text-500 mt-3">
+        Нет данных для выбранной метрики и периода.
       </div>
     </div>
 
     <div class="card p-3 mb-3">
-      <div class="flex flex-wrap align-items-end gap-3">
-        <div>
-          <label class="block mb-2">Lookback (days)</label>
-          <InputNumber v-model="baselineLookbackDays" :min="1" :max="365" class="w-8rem" />
+      <div class="actions-grid">
+        <div class="field-block">
+          <label>Количество demo-прогонов</label>
+          <InputNumber v-model="seedRuns" :min="1" :max="20" class="w-full" />
         </div>
-        <div>
-          <label class="block mb-2">Freq</label>
-          <Dropdown v-model="baselineFreq" :options="freqOptions" optionLabel="label" optionValue="value" class="w-8rem" />
+        <div class="field-block">
+          <label>Генерировать историю (дней)</label>
+          <InputNumber v-model="seedRawDays" :min="1" :max="180" class="w-full" />
         </div>
-        <div class="flex align-items-center gap-2">
-          <InputSwitch v-model="baselineSaveStl" />
-          <span class="text-600">Сохранять STL components</span>
+        <div class="field-block">
+          <label>Очистить старые demo</label>
+          <div class="switch-inline">
+            <InputSwitch v-model="seedClear" />
+            <span>{{ seedClear ? 'Да' : 'Нет' }}</span>
+          </div>
         </div>
-        <Button
-          icon="pi pi-play"
-          label="Запустить baseline прогноз"
-          :loading="runningBaseline"
-          @click="runBaseline"
-        />
+        <div class="field-block">
+          <label>Создать raw history</label>
+          <div class="switch-inline">
+            <InputSwitch v-model="seedWithRawHistory" />
+            <span>{{ seedWithRawHistory ? 'Да' : 'Нет' }}</span>
+          </div>
+        </div>
+        <div class="field-block action-button">
+          <Button
+            icon="pi pi-database"
+            label="Сгенерировать тестовые данные"
+            severity="secondary"
+            class="w-full"
+            :loading="seeding"
+            @click="seedDemo"
+          />
+        </div>
+      </div>
+    </div>
+
+    <div class="card p-3 mb-3">
+      <div class="actions-grid">
+        <div class="field-block">
+          <label>Период обучения (дней)</label>
+          <InputNumber v-model="baselineLookbackDays" :min="1" :max="365" class="w-full" />
+        </div>
+        <div class="field-block">
+          <label>Шаг агрегации</label>
+          <Dropdown
+            v-model="baselineFreq"
+            :options="freqOptions"
+            optionLabel="label"
+            optionValue="value"
+            class="w-full"
+          />
+        </div>
+        <div class="field-block">
+          <label>Сохранять STL-компоненты</label>
+          <div class="switch-inline">
+            <InputSwitch v-model="baselineSaveStl" />
+            <span>{{ baselineSaveStl ? 'Да' : 'Нет' }}</span>
+          </div>
+        </div>
+        <div class="field-block action-button">
+          <Button
+            icon="pi pi-play"
+            label="Запустить SARIMA прогноз"
+            class="w-full"
+            :loading="runningBaseline"
+            @click="runBaseline"
+          />
+        </div>
       </div>
     </div>
 
     <div class="card p-3">
       <div class="flex justify-content-between align-items-center mb-2">
-        <h4 class="m-0">Forecast points ({{ selectedHorizon }})</h4>
+        <h4 class="m-0">Точки прогноза ({{ selectedHorizon }})</h4>
         <span class="text-500 text-sm">Строк: {{ forecastPoints.length }}</span>
       </div>
       <DataTable
@@ -141,35 +230,39 @@
         responsiveLayout="scroll"
         class="table-compact"
       >
-        <Column field="metric_code" header="Metric" sortable />
-        <Column field="horizon" header="Horizon" sortable />
-        <Column field="model_kind" header="Model" sortable />
-        <Column field="target_ts" header="Target time" sortable>
+        <Column field="metric_code" header="Метрика" sortable>
+          <template #body="{ data }">
+            {{ metricLabel(data.metric_code) }}
+          </template>
+        </Column>
+        <Column field="horizon" header="Горизонт" sortable />
+        <Column field="model_kind" header="Модель" sortable />
+        <Column field="target_ts" header="Время цели" sortable>
           <template #body="{ data }">
             {{ formatDateTime(data.target_ts) }}
           </template>
         </Column>
-        <Column field="y_hat" header="y_hat" sortable>
+        <Column field="y_hat" header="Прогноз (y_hat)" sortable>
           <template #body="{ data }">
             {{ formatNum(data.y_hat) }}
           </template>
         </Column>
-        <Column field="p10" header="p10">
+        <Column field="p10" header="Нижняя граница (p10)">
           <template #body="{ data }">
             {{ formatNum(data.p10) }}
           </template>
         </Column>
-        <Column field="p50" header="p50">
+        <Column field="p50" header="Середина (p50)">
           <template #body="{ data }">
             {{ formatNum(data.p50) }}
           </template>
         </Column>
-        <Column field="p90" header="p90">
+        <Column field="p90" header="Верхняя граница (p90)">
           <template #body="{ data }">
             {{ formatNum(data.p90) }}
           </template>
         </Column>
-        <Column field="alpha" header="alpha">
+        <Column field="alpha" header="Уровень интервала (alpha)">
           <template #body="{ data }">
             {{ formatNum(data.alpha, 3) }}
           </template>
@@ -190,6 +283,7 @@ import Tag from 'primevue/tag';
 import Toast from 'primevue/toast';
 import InputNumber from 'primevue/inputnumber';
 import InputSwitch from 'primevue/inputswitch';
+import Chart from 'primevue/chart';
 import { useToast } from 'primevue/usetoast';
 
 const toast = useToast();
@@ -208,6 +302,7 @@ const forecastPoints = ref([]);
 const loading = ref(false);
 const seeding = ref(false);
 const runningBaseline = ref(false);
+const chartLoading = ref(false);
 
 const seedRuns = ref(1);
 const seedClear = ref(true);
@@ -218,17 +313,44 @@ const baselineLookbackDays = ref(60);
 const baselineFreq = ref('1h');
 const baselineSaveStl = ref(true);
 
+const selectedMetricCode = ref('cpu_load_total');
+const chartWindowMinutes = ref(7 * 24 * 60);
+const rawScatterPoints = ref([]);
+
 const horizonOptions = [
-  { label: '24h', value: '24h' },
-  { label: '7d', value: '7d' },
-  { label: '30d', value: '30d' },
+  { label: '24 часа', value: '24h' },
+  { label: '7 дней', value: '7d' },
+  { label: '30 дней', value: '30d' },
 ];
 
 const freqOptions = [
-  { label: '1h', value: '1h' },
-  { label: '30min', value: '30min' },
-  { label: '15min', value: '15min' },
+  { label: '1 час', value: '1h' },
+  { label: '30 минут', value: '30min' },
+  { label: '15 минут', value: '15min' },
 ];
+
+const chartWindowOptions = [
+  { label: '24 часа', value: 24 * 60 },
+  { label: '7 дней', value: 7 * 24 * 60 },
+  { label: '30 дней', value: 30 * 24 * 60 },
+  { label: '90 дней', value: 90 * 24 * 60 },
+];
+
+const metricOptions = [
+  { label: 'Загрузка CPU', value: 'cpu_load_total', unit: '%' },
+  { label: 'Использование памяти', value: 'mem_usage_percent', unit: '%' },
+  { label: 'Трафик исходящий', value: 'net_bytes_sent', unit: 'KB/s' },
+  { label: 'Трафик входящий', value: 'net_bytes_recv', unit: 'KB/s' },
+  { label: 'Ping до шлюза', value: 'ping_latency_gateway', unit: 'ms' },
+  { label: 'Температура системы', value: 'system_temperature', unit: 'C' },
+  { label: 'Температура диска RAID', value: 'storcli_drive_temperature', unit: 'C' },
+  { label: 'Predictive Failure Count', value: 'storcli_predictive_failure_count', unit: 'count' },
+];
+
+const metricMap = metricOptions.reduce((acc, item) => {
+  acc[item.value] = item;
+  return acc;
+}, {});
 
 const unwrap = (res) => (Array.isArray(res.data) ? res.data : (res.data?.results || []));
 
@@ -247,6 +369,14 @@ const selectedDevice = computed(() => (
 
 const selectedSerial = computed(() => selectedDevice.value?.serial || '');
 
+const selectedMetricMeta = computed(() => metricMap[selectedMetricCode.value] || null);
+const selectedMetricUnit = computed(() => selectedMetricMeta.value?.unit || '');
+
+const topEvidence = computed(() => {
+  const items = latestState.value?.evidence?.top_components;
+  return Array.isArray(items) ? items : [];
+});
+
 const stateCards = computed(() => {
   const state = latestState.value || {};
   return [
@@ -256,13 +386,111 @@ const stateCards = computed(() => {
   ];
 });
 
+const forecastScatterPoints = computed(() => (
+  forecastPoints.value
+    .filter((row) => row.metric_code === selectedMetricCode.value)
+    .map((row) => ({
+      x: Number(new Date(row.target_ts).getTime()),
+      y: Number(row.y_hat),
+    }))
+    .filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y))
+));
+
+const scatterPointCount = computed(() => rawScatterPoints.value.length);
+
+const scatterChartData = computed(() => ({
+  datasets: [
+    {
+      label: 'Исторические точки',
+      data: rawScatterPoints.value,
+      borderColor: 'rgba(14, 165, 233, 0.9)',
+      backgroundColor: 'rgba(14, 165, 233, 0.45)',
+      pointRadius: 2.4,
+      pointHoverRadius: 4,
+      showLine: false,
+    },
+    {
+      label: 'SARIMA-прогноз',
+      data: forecastScatterPoints.value,
+      borderColor: 'rgba(249, 115, 22, 1)',
+      backgroundColor: 'rgba(249, 115, 22, 0.95)',
+      pointRadius: 4.2,
+      pointHoverRadius: 5.5,
+      pointStyle: 'triangle',
+      showLine: false,
+    },
+  ],
+}));
+
+const scatterChartOptions = computed(() => ({
+  maintainAspectRatio: false,
+  animation: false,
+  parsing: false,
+  interaction: {
+    mode: 'nearest',
+    intersect: false,
+  },
+  plugins: {
+    legend: {
+      display: true,
+      labels: {
+        boxWidth: 16,
+      },
+    },
+    tooltip: {
+      callbacks: {
+        title: (items) => (items.length ? formatDateTime(items[0].parsed.x) : ''),
+        label: (ctx) => {
+          const unit = selectedMetricUnit.value ? ` ${selectedMetricUnit.value}` : '';
+          return `${ctx.dataset.label}: ${formatNum(ctx.parsed.y)}${unit}`;
+        },
+      },
+    },
+  },
+  scales: {
+    x: {
+      type: 'linear',
+      grid: { color: 'rgba(148, 163, 184, 0.2)' },
+      ticks: {
+        maxTicksLimit: 9,
+        callback: (value) => formatAxisTick(Number(value)),
+      },
+      title: {
+        display: true,
+        text: 'Время',
+      },
+    },
+    y: {
+      beginAtZero: true,
+      max: selectedMetricUnit.value === '%' ? 100 : undefined,
+      grid: { color: 'rgba(148, 163, 184, 0.2)' },
+      title: {
+        display: true,
+        text: selectedMetricUnit.value ? `Значение (${selectedMetricUnit.value})` : 'Значение',
+      },
+    },
+  },
+}));
+
 const formatDateTime = (value) => {
   if (!value) return '—';
   try {
     return new Intl.DateTimeFormat('ru-RU', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(value));
   } catch {
-    return value;
+    return String(value);
   }
+};
+
+const formatAxisTick = (value) => {
+  if (!Number.isFinite(value)) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return new Intl.DateTimeFormat('ru-RU', {
+    day: '2-digit',
+    month: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(date);
 };
 
 const formatNum = (value, digits = 2) => {
@@ -275,20 +503,18 @@ const formatPercent = (value) => {
   return `${(Number(value) * 100).toFixed(1)}%`;
 };
 
-const prettyJson = (value) => {
-  try {
-    return JSON.stringify(value || {}, null, 2);
-  } catch {
-    return String(value);
-  }
+const riskPercent = (value) => {
+  const n = Number(value);
+  if (Number.isNaN(n)) return 0;
+  return Math.max(0, Math.min(100, n * 100));
 };
 
 const runStatusLabel = (value) => {
-  if (value === 'success') return 'Success';
-  if (value === 'failed') return 'Failed';
-  if (value === 'running') return 'Running';
-  if (value === 'pending') return 'Pending';
-  return 'N/A';
+  if (value === 'success') return 'Успешно';
+  if (value === 'failed') return 'Ошибка';
+  if (value === 'running') return 'Выполняется';
+  if (value === 'pending') return 'В очереди';
+  return 'Нет данных';
 };
 
 const runStatusSeverity = (value) => {
@@ -302,7 +528,7 @@ const stateLabel = (value) => {
   if (value === 's0') return 'S0';
   if (value === 's1') return 'S1';
   if (value === 's2') return 'S2';
-  return 'Unknown';
+  return 'Неизвестно';
 };
 
 const stateSeverity = (value) => {
@@ -311,6 +537,9 @@ const stateSeverity = (value) => {
   if (value === 's2') return 'danger';
   return 'secondary';
 };
+
+const metricLabel = (code) => metricMap[code]?.label || code;
+const metricUnit = (code) => metricMap[code]?.unit || '';
 
 const loadDevices = async () => {
   loadingDevices.value = true;
@@ -325,7 +554,7 @@ const loadDevices = async () => {
     } else if (!devices.value.length) {
       selectedDeviceId.value = null;
     }
-  } catch (e) {
+  } catch {
     devices.value = [];
     selectedDeviceId.value = null;
     toast.add({ severity: 'error', summary: 'Ошибка', detail: 'Не удалось загрузить список устройств', life: 3500 });
@@ -338,7 +567,7 @@ const loadLatestRun = async () => {
   latestRun.value = null;
   if (!selectedSerial.value) return;
   try {
-    const res = await apiClient.get(`forecast-runs/latest/?serial=${encodeURIComponent(selectedSerial.value)}`);
+    const res = await apiClient.get(`forecast-runs/latest/?serial=${encodeURIComponent(selectedSerial.value)}&model_kind=sarima`);
     latestRun.value = res.data;
   } catch {
     latestRun.value = null;
@@ -375,11 +604,37 @@ const loadForecastPoints = async () => {
   }
 };
 
+const loadMetricScatter = async () => {
+  rawScatterPoints.value = [];
+  if (!selectedDeviceId.value || !selectedMetricCode.value) return;
+  chartLoading.value = true;
+  try {
+    const params = new URLSearchParams();
+    params.set('device', String(selectedDeviceId.value));
+    params.set('code', selectedMetricCode.value);
+    params.set('since_minutes', String(chartWindowMinutes.value));
+    params.set('ordering', 'timestamp');
+    params.set('limit', '5000');
+    const res = await apiClient.get(`metrics-raw/?${params.toString()}`);
+    rawScatterPoints.value = unwrap(res)
+      .map((row) => ({
+        x: Number(new Date(row.timestamp).getTime()),
+        y: Number(row.value),
+      }))
+      .filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y));
+  } catch {
+    rawScatterPoints.value = [];
+    toast.add({ severity: 'error', summary: 'Ошибка', detail: 'Не удалось загрузить точки для графика', life: 3500 });
+  } finally {
+    chartLoading.value = false;
+  }
+};
+
 const loadAll = async () => {
   loading.value = true;
   try {
     await loadLatestRun();
-    await Promise.all([loadLatestState(), loadForecastPoints()]);
+    await Promise.all([loadLatestState(), loadForecastPoints(), loadMetricScatter()]);
   } finally {
     loading.value = false;
   }
@@ -401,11 +656,16 @@ const seedDemo = async () => {
     };
     if (selectedSerial.value) payload.serial = selectedSerial.value;
     const res = await apiClient.post('forecast-runs/seed_demo/', payload);
-    toast.add({ severity: 'success', summary: 'Готово', detail: `Тестовые данные созданы (${res.data.created_points || 0} points)`, life: 3000 });
+    toast.add({
+      severity: 'success',
+      summary: 'Готово',
+      detail: `Тестовые данные созданы (${res.data.created_points || 0} точек прогноза)`,
+      life: 3200,
+    });
     await refreshAll();
   } catch (e) {
     const detail = e?.response?.data?.detail || 'Не удалось сгенерировать тестовые данные';
-    toast.add({ severity: 'error', summary: 'Ошибка', detail, life: 4000 });
+    toast.add({ severity: 'error', summary: 'Ошибка', detail, life: 4200 });
   } finally {
     seeding.value = false;
   }
@@ -422,29 +682,38 @@ const runBaseline = async () => {
     };
     if (selectedSerial.value) payload.serial = selectedSerial.value;
     const res = await apiClient.post('forecast-runs/run_baseline/', payload);
-    const failed = res?.data?.failed_runs || 0;
+    const failed = Number(res?.data?.failed_runs || 0);
     if (failed > 0) {
-      toast.add({ severity: 'warn', summary: 'Внимание', detail: `Baseline завершён с ошибками: ${failed}`, life: 3500 });
+      toast.add({
+        severity: 'warn',
+        summary: 'Внимание',
+        detail: `SARIMA прогноз завершен с ошибками: ${failed}`,
+        life: 3800,
+      });
     } else {
-      toast.add({ severity: 'success', summary: 'Готово', detail: 'Baseline прогноз выполнен', life: 3000 });
+      toast.add({ severity: 'success', summary: 'Готово', detail: 'SARIMA прогноз выполнен', life: 3000 });
     }
     await loadAll();
   } catch (e) {
-    const detail = e?.response?.data?.detail || 'Не удалось выполнить baseline прогноз';
+    const detail = e?.response?.data?.detail || 'Не удалось выполнить SARIMA прогноз';
     toast.add({ severity: 'error', summary: 'Ошибка', detail, life: 4500 });
   } finally {
     runningBaseline.value = false;
   }
 };
 
-watch(selectedDeviceId, (value) => {
-  if (value) localStorage.setItem(DEVICE_STORAGE_KEY, String(value));
+watch(selectedDeviceId, () => {
+  if (selectedDeviceId.value) localStorage.setItem(DEVICE_STORAGE_KEY, String(selectedDeviceId.value));
   else localStorage.removeItem(DEVICE_STORAGE_KEY);
   loadAll();
 });
 
 watch(selectedHorizon, () => {
   loadAll();
+});
+
+watch([selectedMetricCode, chartWindowMinutes], () => {
+  loadMetricScatter();
 });
 
 onMounted(async () => {
@@ -454,14 +723,63 @@ onMounted(async () => {
 </script>
 
 <style scoped>
+.filters-grid {
+  display: grid;
+  grid-template-columns: minmax(260px, 2fr) minmax(180px, 1fr) minmax(250px, 1.3fr);
+  gap: 1rem;
+  align-items: end;
+}
+
+.actions-grid,
+.chart-controls {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 0.9rem;
+  align-items: end;
+}
+
+.field-block label {
+  display: block;
+  margin-bottom: 0.35rem;
+  color: #475569;
+  font-size: 0.86rem;
+  font-weight: 600;
+}
+
+.switch-inline {
+  min-height: 2.6rem;
+  border: 1px solid #d9e2ec;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.5rem 0.65rem;
+  color: #334155;
+  background: #fff;
+}
+
+.action-button {
+  display: flex;
+  align-items: end;
+}
+
+.run-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  min-height: 2.25rem;
+}
+
 .state-card {
   border: 1px solid #e2e8f0;
   min-height: 8rem;
 }
+
 .state-card.active {
   border-color: #0ea5e9;
   box-shadow: 0 0 0 1px rgba(14, 165, 233, 0.2);
 }
+
 .state-title-row {
   display: flex;
   justify-content: space-between;
@@ -469,29 +787,81 @@ onMounted(async () => {
   gap: 0.75rem;
   margin-bottom: 0.4rem;
 }
+
 .state-title {
   font-weight: 700;
   color: #0f172a;
 }
+
 .state-text {
   font-size: 0.9rem;
 }
-.run-meta {
-  display: flex;
-  align-items: center;
-  gap: 0.6rem;
-  min-height: 2.25rem;
+
+.factors-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0.8rem;
 }
-.evidence-pre {
-  margin: 0.35rem 0 0;
-  padding: 0.65rem;
-  border-radius: 8px;
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
-  max-height: 14rem;
-  overflow: auto;
-  white-space: pre-wrap;
+
+.factor-card {
+  border: 1px solid #dbe6f2;
+  border-radius: 10px;
+  background: #f8fbff;
+  padding: 0.7rem;
+}
+
+.factor-title {
+  font-size: 0.92rem;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.factor-meta {
   font-size: 0.82rem;
+  color: #475569;
+  margin-top: 0.2rem;
+}
+
+.risk-track {
+  margin-top: 0.45rem;
+  height: 7px;
+  border-radius: 999px;
+  background: #dbeafe;
+  overflow: hidden;
+}
+
+.risk-fill {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, #22c55e, #f59e0b, #ef4444);
+}
+
+.factor-risk {
+  margin-top: 0.35rem;
+  font-size: 0.77rem;
+  color: #64748b;
+}
+
+.chart-wrap {
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  background: #ffffff;
+  padding: 0.7rem;
+}
+
+.scatter-chart {
+  height: 21rem;
+}
+
+@media (max-width: 1180px) {
+  .filters-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 760px) {
+  .scatter-chart {
+    height: 16rem;
+  }
 }
 </style>
-

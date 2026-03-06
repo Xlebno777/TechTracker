@@ -87,3 +87,13 @@ ServerAgent installer:
   - NETWORK_PROBE_AUTOSTART=1
   - NETWORK_PROBE_AUTO_INTERVAL_SEC=60
   - NETWORK_PROBE_LOCK_KEY=4829137
+
+4) Рекомендованные библиотеки для прогноза (актуально)
+
+Для локального preprocessing + SARIMA baseline в backend добавлены:
+- numpy==2.3.4 — численные операции и массивы.
+- pandas==2.3.3 — временные ряды, ресемплинг и подготовка данных.
+- statsmodels==0.14.5 — SARIMA/STL и доверительные интервалы прогноза.
+
+Установка/обновление:
+pip install -r requirements.txt

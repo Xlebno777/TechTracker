@@ -42,6 +42,9 @@ THRESHOLDS = {
 }
 
 
+FORECAST_ALPHA = 0.2
+
+
 def _ensure_dependencies():
     # Local import check so server still runs if these deps are not installed.
     try:
@@ -51,6 +54,63 @@ def _ensure_dependencies():
         raise RuntimeError(
             "Baseline SARIMA dependencies are missing. Install pandas and statsmodels."
         ) from exc
+
+
+def _is_percent_metric(metric_code: str) -> bool:
+    raw = (metric_code or "").strip().lower()
+    if raw in {"cpu_load_total", "mem_usage_percent"}:
+        return True
+    return "percent" in raw or raw.endswith("_pct") or raw.endswith("_percentage")
+
+
+def _metric_bounds(metric_code: str):
+    raw = (metric_code or "").strip().lower()
+    if "temp" in raw or "temperature" in raw:
+        return 0.0, None
+    if _is_percent_metric(raw):
+        return 0.0, 100.0
+    # For this system all telemetry values are non-negative by physical constraints.
+    return 0.0, None
+
+
+def _clamp_metric_value(metric_code: str, value: float | None):
+    if value is None:
+        return None
+    min_v, max_v = _metric_bounds(metric_code)
+    out = float(value)
+    if min_v is not None:
+        out = max(min_v, out)
+    if max_v is not None:
+        out = min(max_v, out)
+    return out
+
+
+def _sanitize_prediction(metric_code: str, y_hat: float, p10: float, p50: float, p90: float):
+    y = _clamp_metric_value(metric_code, y_hat)
+    low = _clamp_metric_value(metric_code, p10)
+    med = _clamp_metric_value(metric_code, p50)
+    high = _clamp_metric_value(metric_code, p90)
+
+    if low is None:
+        low = med if med is not None else y
+    if high is None:
+        high = med if med is not None else y
+    if med is None:
+        med = y
+
+    if low is None:
+        low = 0.0
+    if high is None:
+        high = low
+    if med is None:
+        med = low
+
+    if low > high:
+        low, high = high, low
+    med = min(max(med, low), high)
+    y = med if y is None else min(max(y, low), high)
+
+    return float(y), float(low), float(med), float(high)
 
 
 def _estimate_state(points_by_metric):
@@ -163,7 +223,7 @@ def run_baseline_forecasts(
                 quality["metrics_processed"] += 1
 
                 max_steps = max(horizon_to_steps(h, freq) for h in horizons)
-                mean, lower, upper = forecast_with_intervals(fitted, steps=max_steps, alpha=0.2)
+                mean, lower, upper = forecast_with_intervals(fitted, steps=max_steps, alpha=FORECAST_ALPHA)
 
                 if save_stl_components and len(pre.cleaned) > 0:
                     last_ts = pre.cleaned.index[-1].to_pydatetime()
@@ -203,9 +263,13 @@ def run_baseline_forecasts(
                     idx = steps - 1
                     if idx >= len(mean):
                         continue
-                    y_hat = float(mean.iloc[idx])
-                    p10 = float(lower.iloc[idx])
-                    p90 = float(upper.iloc[idx])
+                    y_hat, p10, p50, p90 = _sanitize_prediction(
+                        metric_code=metric_code,
+                        y_hat=float(mean.iloc[idx]),
+                        p10=float(lower.iloc[idx]),
+                        p50=float(mean.iloc[idx]),
+                        p90=float(upper.iloc[idx]),
+                    )
                     target_ts = now + horizon_to_timedelta(horizon)
                     per_horizon_values[horizon][metric_code] = y_hat
                     points_batch.append(
@@ -217,10 +281,10 @@ def run_baseline_forecasts(
                             target_ts=target_ts,
                             model_kind="sarima",
                             y_hat=y_hat,
-                            p10=min(p10, p90),
-                            p50=y_hat,
-                            p90=max(p10, p90),
-                            alpha=1.0,
+                            p10=p10,
+                            p50=p50,
+                            p90=p90,
+                            alpha=FORECAST_ALPHA,
                             labels={
                                 "freq": freq,
                                 "order": list(order),
