@@ -98,7 +98,11 @@
           <h4 class="m-0">Разброс данных по метрике</h4>
           <p class="text-500 m-0">Исторические точки + текущие точки SARIMA-прогноза</p>
         </div>
-        <span class="text-500 text-sm">Точек: {{ scatterPointCount }}</span>
+        <div class="freshness-stack text-500 text-sm">
+          <span>Точек: {{ scatterPointCount }}</span>
+          <span>Свежесть raw: {{ rawFreshnessLabel }}</span>
+          <span>Период: последние {{ chartWindowLabel }}</span>
+        </div>
       </div>
 
       <div class="chart-controls">
@@ -218,21 +222,69 @@
     <div class="card p-3">
       <div class="flex justify-content-between align-items-center mb-2">
         <h4 class="m-0">Точки прогноза ({{ selectedHorizon }})</h4>
-        <span class="text-500 text-sm">Строк: {{ forecastPoints.length }}</span>
+        <span class="text-500 text-sm">Строк: {{ filteredForecastPoints.length }} / {{ forecastPoints.length }}</span>
+      </div>
+      <div class="risk-legend mb-2">
+        <span class="legend-title">Легенда риска:</span>
+        <span class="legend-chip legend-low">Низкий: p90/порог &lt; 70%</span>
+        <span class="legend-chip legend-medium">Средний: 70%-85%</span>
+        <span class="legend-chip legend-high">Высокий: 85%-100%</span>
+        <span class="legend-chip legend-critical">Критический: ≥ 100%</span>
+      </div>
+      <div class="table-toolbar mb-2">
+        <div class="table-mode-switch" role="group" aria-label="Режим таблицы">
+          <Button
+            label="Все метрики"
+            size="small"
+            :outlined="tableMode !== 'all'"
+            :severity="tableMode === 'all' ? 'primary' : 'secondary'"
+            @click="tableMode = 'all'"
+          />
+          <Button
+            label="Только рискованные"
+            size="small"
+            :outlined="tableMode !== 'risky'"
+            :severity="tableMode === 'risky' ? 'primary' : 'secondary'"
+            @click="tableMode = 'risky'"
+          />
+        </div>
+        <div class="table-freshness text-500 text-sm">
+          <span>Свежесть прогноза: {{ forecastFreshnessLabel }}</span>
+          <span>Срез данных: последние {{ chartWindowLabel }}</span>
+        </div>
       </div>
       <DataTable
-        :value="forecastPoints"
+        :value="filteredForecastPoints"
         dataKey="id"
         :loading="loading"
-        paginator
-        :rows="15"
+        :rowClass="forecastRowClass"
+        scrollable
+        scrollHeight="29rem"
+        :virtualScrollerOptions="tableVirtualScrollerOptions"
         stripedRows
         responsiveLayout="scroll"
         class="table-compact"
       >
         <Column field="metric_code" header="Метрика" sortable>
           <template #body="{ data }">
-            {{ metricLabel(data.metric_code) }}
+            <span :title="riskTooltip(data)">{{ metricLabel(data.metric_code) }}</span>
+          </template>
+        </Column>
+        <Column header="Тренд">
+          <template #body="{ data }">
+            <div class="sparkline-cell" :title="sparklineTooltip(data.metric_code)">
+              <Chart
+                type="line"
+                :data="sparklineData(data.metric_code)"
+                :options="sparklineOptions"
+                class="sparkline-chart"
+              />
+            </div>
+          </template>
+        </Column>
+        <Column header="Ед. изм.">
+          <template #body="{ data }">
+            {{ metricUnit(data.metric_code) || '—' }}
           </template>
         </Column>
         <Column field="horizon" header="Горизонт" sortable />
@@ -244,7 +296,7 @@
         </Column>
         <Column field="y_hat" header="Прогноз (y_hat)" sortable>
           <template #body="{ data }">
-            {{ formatNum(data.y_hat) }}
+            <span class="risk-cell" :class="riskCellClass(data)">{{ formatNum(data.y_hat) }}</span>
           </template>
         </Column>
         <Column field="p10" header="Нижняя граница (p10)">
@@ -259,7 +311,14 @@
         </Column>
         <Column field="p90" header="Верхняя граница (p90)">
           <template #body="{ data }">
-            {{ formatNum(data.p90) }}
+            <span class="risk-cell" :class="riskCellClass(data)">{{ formatNum(data.p90) }}</span>
+          </template>
+        </Column>
+        <Column header="Риск по p90">
+          <template #body="{ data }">
+            <span :title="riskTooltip(data)">
+              <Tag :value="riskLabel(data)" :severity="riskSeverity(data)" />
+            </span>
           </template>
         </Column>
         <Column field="alpha" header="Уровень интервала (alpha)">
@@ -316,6 +375,14 @@ const baselineSaveStl = ref(true);
 const selectedMetricCode = ref('cpu_load_total');
 const chartWindowMinutes = ref(7 * 24 * 60);
 const rawScatterPoints = ref([]);
+const metricTrendMap = ref({});
+const tableMode = ref('all');
+
+const tableVirtualScrollerOptions = {
+  itemSize: 52,
+};
+
+const MAX_SPARKLINE_POINTS = 34;
 
 const horizonOptions = [
   { label: '24 часа', value: '24h' },
@@ -352,7 +419,41 @@ const metricMap = metricOptions.reduce((acc, item) => {
   return acc;
 }, {});
 
+const riskThresholdMap = {
+  cpu_load_total: 90,
+  mem_usage_percent: 92,
+  ping_latency_gateway: 150,
+  system_temperature: 80,
+  storcli_drive_temperature: 58,
+  storcli_predictive_failure_count: 1,
+};
+
 const unwrap = (res) => (Array.isArray(res.data) ? res.data : (res.data?.results || []));
+
+const sparklineOptions = {
+  responsive: true,
+  maintainAspectRatio: false,
+  animation: false,
+  parsing: false,
+  plugins: {
+    legend: { display: false },
+    tooltip: { enabled: false },
+  },
+  elements: {
+    line: {
+      tension: 0.35,
+      borderWidth: 1.6,
+    },
+    point: {
+      radius: 0,
+      hoverRadius: 0,
+    },
+  },
+  scales: {
+    x: { display: false, grid: { display: false } },
+    y: { display: false, grid: { display: false } },
+  },
+};
 
 const deviceOptions = computed(() => (
   devices.value.map((d) => ({
@@ -371,6 +472,10 @@ const selectedSerial = computed(() => selectedDevice.value?.serial || '');
 
 const selectedMetricMeta = computed(() => metricMap[selectedMetricCode.value] || null);
 const selectedMetricUnit = computed(() => selectedMetricMeta.value?.unit || '');
+const chartWindowLabel = computed(() => {
+  const found = chartWindowOptions.find((item) => item.value === chartWindowMinutes.value);
+  return found?.label || `${chartWindowMinutes.value} мин`;
+});
 
 const topEvidence = computed(() => {
   const items = latestState.value?.evidence?.top_components;
@@ -397,6 +502,17 @@ const forecastScatterPoints = computed(() => (
 ));
 
 const scatterPointCount = computed(() => rawScatterPoints.value.length);
+const latestRawTimestamp = computed(() => {
+  if (!rawScatterPoints.value.length) return null;
+  const maxTs = rawScatterPoints.value.reduce((acc, point) => Math.max(acc, Number(point.x) || 0), 0);
+  return maxTs > 0 ? maxTs : null;
+});
+
+const rawFreshnessLabel = computed(() => relativeFreshness(latestRawTimestamp.value));
+const forecastFreshnessLabel = computed(() => {
+  const base = latestRun.value?.created_at || latestState.value?.timestamp || null;
+  return relativeFreshness(base);
+});
 
 const scatterChartData = computed(() => ({
   datasets: [
@@ -540,6 +656,192 @@ const stateSeverity = (value) => {
 
 const metricLabel = (code) => metricMap[code]?.label || code;
 const metricUnit = (code) => metricMap[code]?.unit || '';
+const metricThreshold = (code) => riskThresholdMap[code] || null;
+const metricColor = (code) => {
+  if (code === 'cpu_load_total') return '#f97316';
+  if (code === 'mem_usage_percent') return '#0ea5e9';
+  if (code === 'net_bytes_sent' || code === 'net_bytes_recv') return '#22c55e';
+  if (code === 'ping_latency_gateway') return '#8b5cf6';
+  if (code === 'system_temperature' || code === 'storcli_drive_temperature') return '#ef4444';
+  if (code === 'storcli_predictive_failure_count') return '#e11d48';
+  return '#64748b';
+};
+
+const riskRatioByRow = (row) => {
+  const thr = metricThreshold(row?.metric_code);
+  const upper = Number(row?.p90);
+  if (!thr || !Number.isFinite(upper) || thr <= 0) return null;
+  return upper / thr;
+};
+
+const riskLevelByRow = (row) => {
+  const ratio = riskRatioByRow(row);
+  if (ratio === null) return 'none';
+  if (ratio >= 1) return 'critical';
+  if (ratio >= 0.85) return 'high';
+  if (ratio >= 0.7) return 'medium';
+  return 'low';
+};
+
+const riskLabel = (row) => {
+  const level = riskLevelByRow(row);
+  if (level === 'critical') return 'Критический';
+  if (level === 'high') return 'Высокий';
+  if (level === 'medium') return 'Средний';
+  if (level === 'low') return 'Низкий';
+  return 'Н/Д';
+};
+
+const riskSeverity = (row) => {
+  const level = riskLevelByRow(row);
+  if (level === 'critical') return 'danger';
+  if (level === 'high') return 'warning';
+  if (level === 'medium') return 'info';
+  if (level === 'low') return 'success';
+  return 'secondary';
+};
+
+const riskCellClass = (row) => {
+  const level = riskLevelByRow(row);
+  if (level === 'critical') return 'risk-cell-critical';
+  if (level === 'high') return 'risk-cell-high';
+  if (level === 'medium') return 'risk-cell-medium';
+  if (level === 'low') return 'risk-cell-low';
+  return 'risk-cell-none';
+};
+
+const riskTooltip = (row) => {
+  const thr = metricThreshold(row?.metric_code);
+  const upper = Number(row?.p90);
+  if (!thr || !Number.isFinite(upper)) {
+    return `Метрика: ${metricLabel(row?.metric_code)}. Порог риска не задан.`;
+  }
+  const ratioPct = (upper / thr) * 100;
+  return `Формула: p90 / порог = ${formatNum(upper, 2)} / ${formatNum(thr, 2)} = ${formatNum(ratioPct, 1)}%`;
+};
+
+const filteredForecastPoints = computed(() => {
+  if (tableMode.value === 'all') return forecastPoints.value;
+  return forecastPoints.value.filter((row) => {
+    const level = riskLevelByRow(row);
+    return level === 'medium' || level === 'high' || level === 'critical';
+  });
+});
+
+const forecastRowClass = (row) => {
+  const level = riskLevelByRow(row);
+  if (level === 'critical') return 'row-risk-critical';
+  if (level === 'high') return 'row-risk-high';
+  if (level === 'medium') return 'row-risk-medium';
+  return '';
+};
+
+const downsampleSeries = (rows, maxPoints = MAX_SPARKLINE_POINTS) => {
+  if (rows.length <= maxPoints) return rows;
+  const step = Math.ceil(rows.length / maxPoints);
+  const sampled = [];
+  for (let i = 0; i < rows.length; i += step) {
+    sampled.push(rows[i]);
+  }
+  if (sampled[sampled.length - 1] !== rows[rows.length - 1]) {
+    sampled.push(rows[rows.length - 1]);
+  }
+  return sampled.slice(-maxPoints);
+};
+
+const emptySparklineData = {
+  labels: [''],
+  datasets: [
+    {
+      data: [null],
+      borderColor: 'rgba(148,163,184,0.6)',
+      backgroundColor: 'rgba(148,163,184,0.15)',
+      fill: false,
+    },
+  ],
+};
+
+const sparklineData = (metricCode) => metricTrendMap.value[metricCode]?.data || emptySparklineData;
+const sparklineTooltip = (metricCode) => {
+  const entry = metricTrendMap.value[metricCode];
+  if (!entry || !entry.count) return `${metricLabel(metricCode)}: нет данных за выбранный период`;
+  return `${metricLabel(metricCode)}: ${entry.count} точек, последнее значение ${formatNum(entry.lastValue)} ${metricUnit(metricCode)}`;
+};
+
+const loadMetricTrendSeries = async () => {
+  metricTrendMap.value = {};
+  if (!selectedDeviceId.value) return;
+  const codes = [...new Set(forecastPoints.value.map((item) => item.metric_code).filter(Boolean))];
+  if (!codes.length) return;
+
+  const entries = await Promise.all(codes.map(async (metricCode) => {
+    const params = new URLSearchParams();
+    params.set('device', String(selectedDeviceId.value));
+    params.set('code', metricCode);
+    params.set('since_minutes', String(chartWindowMinutes.value));
+    params.set('ordering', 'timestamp');
+    params.set('limit', '5000');
+
+    try {
+      const res = await apiClient.get(`metrics-raw/?${params.toString()}`);
+      const rows = unwrap(res)
+        .map((row) => ({
+          timestamp: row.timestamp,
+          value: Number(row.value),
+        }))
+        .filter((row) => Number.isFinite(Number(new Date(row.timestamp).getTime())) && Number.isFinite(row.value));
+
+      const sampled = downsampleSeries(rows);
+      const labels = sampled.map((row) => formatAxisTick(Number(new Date(row.timestamp).getTime())));
+      const values = sampled.map((row) => row.value);
+      return [
+        metricCode,
+        {
+          count: rows.length,
+          lastValue: rows.length ? rows[rows.length - 1].value : null,
+          latestTs: rows.length ? rows[rows.length - 1].timestamp : null,
+          data: {
+            labels,
+            datasets: [
+              {
+                data: values,
+                borderColor: metricColor(metricCode),
+                backgroundColor: `${metricColor(metricCode)}22`,
+                fill: false,
+              },
+            ],
+          },
+        },
+      ];
+    } catch {
+      return [
+        metricCode,
+        {
+          count: 0,
+          lastValue: null,
+          latestTs: null,
+          data: emptySparklineData,
+        },
+      ];
+    }
+  }));
+
+  metricTrendMap.value = Object.fromEntries(entries);
+};
+
+const relativeFreshness = (value) => {
+  if (!value) return 'нет данных';
+  const ts = typeof value === 'number' ? value : Number(new Date(value).getTime());
+  if (!Number.isFinite(ts) || ts <= 0) return 'нет данных';
+  const diffMin = Math.max(0, Math.round((Date.now() - ts) / 60000));
+  if (diffMin <= 1) return 'только что';
+  if (diffMin < 60) return `${diffMin} мин назад`;
+  const hours = Math.floor(diffMin / 60);
+  const mins = diffMin % 60;
+  if (hours < 24) return `${hours} ч ${mins} мин назад`;
+  const days = Math.floor(hours / 24);
+  return `${days} д ${hours % 24} ч назад`;
+};
 
 const loadDevices = async () => {
   loadingDevices.value = true;
@@ -635,6 +937,7 @@ const loadAll = async () => {
   try {
     await loadLatestRun();
     await Promise.all([loadLatestState(), loadForecastPoints(), loadMetricScatter()]);
+    await loadMetricTrendSeries();
   } finally {
     loading.value = false;
   }
@@ -714,6 +1017,7 @@ watch(selectedHorizon, () => {
 
 watch([selectedMetricCode, chartWindowMinutes], () => {
   loadMetricScatter();
+  loadMetricTrendSeries();
 });
 
 onMounted(async () => {
@@ -736,6 +1040,13 @@ onMounted(async () => {
   grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
   gap: 0.9rem;
   align-items: end;
+}
+
+.freshness-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.15rem;
 }
 
 .field-block label {
@@ -853,9 +1164,131 @@ onMounted(async () => {
   height: 21rem;
 }
 
+.risk-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  align-items: center;
+}
+
+.legend-title {
+  color: #475569;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.legend-chip {
+  border-radius: 999px;
+  font-size: 0.76rem;
+  font-weight: 600;
+  padding: 0.2rem 0.6rem;
+  border: 1px solid transparent;
+}
+
+.legend-low {
+  color: #166534;
+  background: #dcfce7;
+  border-color: #86efac;
+}
+
+.legend-medium {
+  color: #92400e;
+  background: #fef3c7;
+  border-color: #fcd34d;
+}
+
+.legend-high {
+  color: #9a3412;
+  background: #ffedd5;
+  border-color: #fdba74;
+}
+
+.legend-critical {
+  color: #991b1b;
+  background: #fee2e2;
+  border-color: #fca5a5;
+}
+
+.table-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.65rem;
+}
+
+.table-mode-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.table-freshness {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.8rem;
+}
+
+.sparkline-cell {
+  min-width: 126px;
+  max-width: 150px;
+}
+
+.sparkline-chart {
+  height: 2.15rem;
+}
+
+.risk-cell {
+  display: inline-block;
+  border-radius: 8px;
+  padding: 0.1rem 0.45rem;
+  font-weight: 600;
+}
+
+.risk-cell-critical {
+  color: #991b1b;
+  background: #fee2e2;
+}
+
+.risk-cell-high {
+  color: #9a3412;
+  background: #ffedd5;
+}
+
+.risk-cell-medium {
+  color: #92400e;
+  background: #fef3c7;
+}
+
+.risk-cell-low {
+  color: #166534;
+  background: #dcfce7;
+}
+
+.risk-cell-none {
+  color: #475569;
+  background: #e2e8f0;
+}
+
+:deep(.row-risk-critical > td) {
+  background: rgba(254, 226, 226, 0.65) !important;
+}
+
+:deep(.row-risk-high > td) {
+  background: rgba(255, 237, 213, 0.58) !important;
+}
+
+:deep(.row-risk-medium > td) {
+  background: rgba(254, 243, 199, 0.55) !important;
+}
+
 @media (max-width: 1180px) {
   .filters-grid {
     grid-template-columns: 1fr;
+  }
+
+  .freshness-stack {
+    align-items: flex-start;
   }
 }
 
