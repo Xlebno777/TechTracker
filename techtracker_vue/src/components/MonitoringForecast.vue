@@ -273,12 +273,16 @@
         <Column header="Тренд">
           <template #body="{ data }">
             <div class="sparkline-cell" :title="sparklineTooltip(data.metric_code)">
-              <Chart
-                type="line"
-                :data="sparklineData(data.metric_code)"
-                :options="sparklineOptions"
-                class="sparkline-chart"
-              />
+              <svg class="sparkline-svg" viewBox="0 0 120 28" preserveAspectRatio="none" aria-hidden="true">
+                <path class="sparkline-axis" d="M0 26.5 L120 26.5" />
+                <path
+                  v-if="sparklinePath(data.metric_code)"
+                  :d="sparklinePath(data.metric_code)"
+                  :stroke="metricColor(data.metric_code)"
+                  class="sparkline-line"
+                />
+              </svg>
+              <span v-if="!sparklinePath(data.metric_code)" class="sparkline-empty">—</span>
             </div>
           </template>
         </Column>
@@ -383,6 +387,8 @@ const tableVirtualScrollerOptions = {
 };
 
 const MAX_SPARKLINE_POINTS = 34;
+const SPARKLINE_WIDTH = 120;
+const SPARKLINE_HEIGHT = 28;
 
 const horizonOptions = [
   { label: '24 часа', value: '24h' },
@@ -429,31 +435,6 @@ const riskThresholdMap = {
 };
 
 const unwrap = (res) => (Array.isArray(res.data) ? res.data : (res.data?.results || []));
-
-const sparklineOptions = {
-  responsive: true,
-  maintainAspectRatio: false,
-  animation: false,
-  parsing: false,
-  plugins: {
-    legend: { display: false },
-    tooltip: { enabled: false },
-  },
-  elements: {
-    line: {
-      tension: 0.35,
-      borderWidth: 1.6,
-    },
-    point: {
-      radius: 0,
-      hoverRadius: 0,
-    },
-  },
-  scales: {
-    x: { display: false, grid: { display: false } },
-    y: { display: false, grid: { display: false } },
-  },
-};
 
 const deviceOptions = computed(() => (
   devices.value.map((d) => ({
@@ -749,19 +730,23 @@ const downsampleSeries = (rows, maxPoints = MAX_SPARKLINE_POINTS) => {
   return sampled.slice(-maxPoints);
 };
 
-const emptySparklineData = {
-  labels: [''],
-  datasets: [
-    {
-      data: [null],
-      borderColor: 'rgba(148,163,184,0.6)',
-      backgroundColor: 'rgba(148,163,184,0.15)',
-      fill: false,
-    },
-  ],
+const buildSparklinePath = (values) => {
+  if (!Array.isArray(values) || values.length < 2) return '';
+  const minV = Math.min(...values);
+  const maxV = Math.max(...values);
+  const isFlat = maxV === minV;
+  const range = isFlat ? 1 : (maxV - minV);
+
+  return values.map((value, index) => {
+    const x = values.length === 1 ? 0 : (index / (values.length - 1)) * SPARKLINE_WIDTH;
+    const y = isFlat
+      ? SPARKLINE_HEIGHT / 2
+      : SPARKLINE_HEIGHT - ((value - minV) / range) * (SPARKLINE_HEIGHT - 3) - 1.5;
+    return `${index === 0 ? 'M' : 'L'}${x.toFixed(2)} ${y.toFixed(2)}`;
+  }).join(' ');
 };
 
-const sparklineData = (metricCode) => metricTrendMap.value[metricCode]?.data || emptySparklineData;
+const sparklinePath = (metricCode) => metricTrendMap.value[metricCode]?.path || '';
 const sparklineTooltip = (metricCode) => {
   const entry = metricTrendMap.value[metricCode];
   if (!entry || !entry.count) return `${metricLabel(metricCode)}: нет данных за выбранный период`;
@@ -792,7 +777,6 @@ const loadMetricTrendSeries = async () => {
         .filter((row) => Number.isFinite(Number(new Date(row.timestamp).getTime())) && Number.isFinite(row.value));
 
       const sampled = downsampleSeries(rows);
-      const labels = sampled.map((row) => formatAxisTick(Number(new Date(row.timestamp).getTime())));
       const values = sampled.map((row) => row.value);
       return [
         metricCode,
@@ -800,17 +784,7 @@ const loadMetricTrendSeries = async () => {
           count: rows.length,
           lastValue: rows.length ? rows[rows.length - 1].value : null,
           latestTs: rows.length ? rows[rows.length - 1].timestamp : null,
-          data: {
-            labels,
-            datasets: [
-              {
-                data: values,
-                borderColor: metricColor(metricCode),
-                backgroundColor: `${metricColor(metricCode)}22`,
-                fill: false,
-              },
-            ],
-          },
+          path: buildSparklinePath(values),
         },
       ];
     } catch {
@@ -820,7 +794,7 @@ const loadMetricTrendSeries = async () => {
           count: 0,
           lastValue: null,
           latestTs: null,
-          data: emptySparklineData,
+          path: '',
         },
       ];
     }
@@ -1232,10 +1206,34 @@ onMounted(async () => {
 .sparkline-cell {
   min-width: 126px;
   max-width: 150px;
+  height: 2.2rem;
+  display: flex;
+  align-items: center;
 }
 
-.sparkline-chart {
-  height: 2.15rem;
+.sparkline-svg {
+  width: 100%;
+  height: 100%;
+}
+
+.sparkline-axis {
+  stroke: rgba(148, 163, 184, 0.35);
+  stroke-width: 1;
+  fill: none;
+}
+
+.sparkline-line {
+  stroke-width: 1.8;
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.sparkline-empty {
+  color: #94a3b8;
+  font-weight: 600;
+  font-size: 0.9rem;
+  line-height: 1;
 }
 
 .risk-cell {
