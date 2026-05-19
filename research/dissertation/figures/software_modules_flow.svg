@@ -1,0 +1,194 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080">
+<defs>
+  <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+    <feDropShadow dx="0" dy="6" stdDeviation="7" flood-color="#172033" flood-opacity="0.10"/>
+  </filter>
+  <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#8fa1b7"/></marker>
+  <marker id="arrow-green" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#0fa376"/></marker>
+</defs>
+<rect width="1920" height="1080" fill="#f6f8fb"/>
+
+<text x="80" y="68" font-family="Arial, DejaVu Sans, sans-serif" font-size="38" font-weight="800" fill="#1f2937" text-anchor="start">
+<tspan x="80" dy="0">Структурно-функциональная схема программной реализации TechTracker</tspan>
+</text>
+<text x="82" y="108" font-family="Arial, DejaVu Sans, sans-serif" font-size="22" font-weight="400" fill="#5f6f86" text-anchor="start">
+<tspan x="82" dy="0">Как взаимодействуют интерфейс, backend, модели прогнозирования, БД и модуль СППР</tspan>
+</text>
+<rect x="80" y="155" width="320" height="115" rx="16" fill="#eaf3ff" stroke="#2479ca" stroke-width="2" filter="url(#shadow)"/>
+<rect x="80" y="155" width="9" height="115" rx="4.5" fill="#2479ca"/>
+<text x="240.0" y="186" font-family="Arial, DejaVu Sans, sans-serif" font-size="23" font-weight="700" fill="#1f2937" text-anchor="middle">
+<tspan x="240.0" dy="0">Vue UI</tspan>
+</text>
+<text x="240.0" y="223.0" font-family="Arial, DejaVu Sans, sans-serif" font-size="17" font-weight="400" fill="#5f6f86" text-anchor="middle">
+<tspan x="240.0" dy="0">экраны прогнозов, риска,</tspan>
+<tspan x="240.0" dy="20.74">СППР, настроек и отчётов</tspan>
+</text>
+<rect x="500" y="155" width="360" height="115" rx="16" fill="#ffffff" stroke="#2479ca" stroke-width="2" filter="url(#shadow)"/>
+<rect x="500" y="155" width="9" height="115" rx="4.5" fill="#2479ca"/>
+<text x="680.0" y="186" font-family="Arial, DejaVu Sans, sans-serif" font-size="23" font-weight="700" fill="#1f2937" text-anchor="middle">
+<tspan x="680.0" dy="0">Django REST API</tspan>
+</text>
+<text x="680.0" y="223.0" font-family="Arial, DejaVu Sans, sans-serif" font-size="17" font-weight="400" fill="#5f6f86" text-anchor="middle">
+<tspan x="680.0" dy="0">единая точка доступа, запуск</tspan>
+<tspan x="680.0" dy="20.74">сервисов, авторизация</tspan>
+</text>
+<rect x="1460" y="155" width="360" height="115" rx="16" fill="#e8f8f1" stroke="#0fa376" stroke-width="2" filter="url(#shadow)"/>
+<rect x="1460" y="155" width="9" height="115" rx="4.5" fill="#0fa376"/>
+<text x="1640.0" y="186" font-family="Arial, DejaVu Sans, sans-serif" font-size="23" font-weight="700" fill="#1f2937" text-anchor="middle">
+<tspan x="1640.0" dy="0">Удалённый LSTM-ПК</tspan>
+</text>
+<text x="1640.0" y="223.0" font-family="Arial, DejaVu Sans, sans-serif" font-size="17" font-weight="400" fill="#5f6f86" text-anchor="middle">
+<tspan x="1640.0" dy="0">FastAPI + PyTorch, GPU,</tspan>
+<tspan x="1640.0" dy="20.74">VPN/Tailscale</tspan>
+</text>
+<rect x="70" y="330" width="1780" height="515" rx="24" fill="#ffffff" stroke="#d9e2ec" stroke-width="2"/>
+<text x="105" y="375" font-family="Arial, DejaVu Sans, sans-serif" font-size="28" font-weight="800" fill="#1f2937" text-anchor="start">
+<tspan x="105" dy="0">Backend-модули обработки и принятия решений</tspan>
+</text>
+<rect x="95" y="430" width="210" height="125" rx="16" fill="#e8f8fb" stroke="#3aa6b9" stroke-width="2" filter="url(#shadow)"/>
+<rect x="95" y="430" width="9" height="125" rx="4.5" fill="#3aa6b9"/>
+<text x="200.0" y="461" font-family="Arial, DejaVu Sans, sans-serif" font-size="20" font-weight="700" fill="#1f2937" text-anchor="middle">
+<tspan x="200.0" dy="0">Сбор метрик</tspan>
+</text>
+<text x="200.0" y="498.0" font-family="Arial, DejaVu Sans, sans-serif" font-size="15" font-weight="400" fill="#5f6f86" text-anchor="middle">
+<tspan x="200.0" dy="0">серверные и демо-</tspan>
+<tspan x="200.0" dy="18.3">данные</tspan>
+<tspan x="200.0" dy="18.3">CPU, RAM, сеть,</tspan>
+<tspan x="200.0" dy="18.3">температура</tspan>
+</text>
+<rect x="345" y="430" width="210" height="125" rx="16" fill="#e8f8fb" stroke="#3aa6b9" stroke-width="2" filter="url(#shadow)"/>
+<rect x="345" y="430" width="9" height="125" rx="4.5" fill="#3aa6b9"/>
+<text x="450.0" y="461" font-family="Arial, DejaVu Sans, sans-serif" font-size="20" font-weight="700" fill="#1f2937" text-anchor="middle">
+<tspan x="450.0" dy="0">Предобработка</tspan>
+</text>
+<text x="450.0" y="498.0" font-family="Arial, DejaVu Sans, sans-serif" font-size="15" font-weight="400" fill="#5f6f86" text-anchor="middle">
+<tspan x="450.0" dy="0">очистка, физические</tspan>
+<tspan x="450.0" dy="18.3">границы, агрегация 1h</tspan>
+</text>
+<rect x="595" y="430" width="210" height="125" rx="16" fill="#e8f8f1" stroke="#0fa376" stroke-width="2" filter="url(#shadow)"/>
+<rect x="595" y="430" width="9" height="125" rx="4.5" fill="#0fa376"/>
+<text x="700.0" y="461" font-family="Arial, DejaVu Sans, sans-serif" font-size="20" font-weight="700" fill="#1f2937" text-anchor="middle">
+<tspan x="700.0" dy="0">Forecast manager</tspan>
+</text>
+<text x="700.0" y="498.0" font-family="Arial, DejaVu Sans, sans-serif" font-size="15" font-weight="400" fill="#5f6f86" text-anchor="middle">
+<tspan x="700.0" dy="0">запуск SARIMA и LSTM</tspan>
+<tspan x="700.0" dy="18.3">по выбранным</tspan>
+<tspan x="700.0" dy="18.3">горизонтам</tspan>
+</text>
+<rect x="845" y="430" width="210" height="125" rx="16" fill="#fff3e8" stroke="#ef8237" stroke-width="2" filter="url(#shadow)"/>
+<rect x="845" y="430" width="9" height="125" rx="4.5" fill="#ef8237"/>
+<text x="950.0" y="461" font-family="Arial, DejaVu Sans, sans-serif" font-size="20" font-weight="700" fill="#1f2937" text-anchor="middle">
+<tspan x="950.0" dy="0">Оркестр прогноза</tspan>
+</text>
+<text x="950.0" y="498.0" font-family="Arial, DejaVu Sans, sans-serif" font-size="15" font-weight="400" fill="#5f6f86" text-anchor="middle">
+<tspan x="950.0" dy="0">веса SARIMA/LSTM,</tspan>
+<tspan x="950.0" dy="18.3">p10/p50/p90 по часам</tspan>
+</text>
+<rect x="1095" y="430" width="210" height="125" rx="16" fill="#e8f8f1" stroke="#0fa376" stroke-width="2" filter="url(#shadow)"/>
+<rect x="1095" y="430" width="9" height="125" rx="4.5" fill="#0fa376"/>
+<text x="1200.0" y="461" font-family="Arial, DejaVu Sans, sans-serif" font-size="20" font-weight="700" fill="#1f2937" text-anchor="middle">
+<tspan x="1200.0" dy="0">State inference</tspan>
+</text>
+<text x="1200.0" y="498.0" font-family="Arial, DejaVu Sans, sans-serif" font-size="15" font-weight="400" fill="#5f6f86" text-anchor="middle">
+<tspan x="1200.0" dy="0">вероятности S0/S1/S2</tspan>
+<tspan x="1200.0" dy="18.3">confidence и evidence</tspan>
+</text>
+<rect x="1345" y="430" width="210" height="125" rx="16" fill="#fff0f0" stroke="#e04848" stroke-width="2" filter="url(#shadow)"/>
+<rect x="1345" y="430" width="9" height="125" rx="4.5" fill="#e04848"/>
+<text x="1450.0" y="461" font-family="Arial, DejaVu Sans, sans-serif" font-size="20" font-weight="700" fill="#1f2937" text-anchor="middle">
+<tspan x="1450.0" dy="0">Risk assessment</tspan>
+</text>
+<text x="1450.0" y="498.0" font-family="Arial, DejaVu Sans, sans-serif" font-size="15" font-weight="400" fill="#5f6f86" text-anchor="middle">
+<tspan x="1450.0" dy="0">пороговый риск,</tspan>
+<tspan x="1450.0" dy="18.3">Weibull и Markov S2</tspan>
+</text>
+<rect x="1595" y="430" width="210" height="125" rx="16" fill="#fff3e8" stroke="#ef8237" stroke-width="2" filter="url(#shadow)"/>
+<rect x="1595" y="430" width="9" height="125" rx="4.5" fill="#ef8237"/>
+<text x="1700.0" y="461" font-family="Arial, DejaVu Sans, sans-serif" font-size="20" font-weight="700" fill="#1f2937" text-anchor="middle">
+<tspan x="1700.0" dy="0">СППР</tspan>
+</text>
+<text x="1700.0" y="498.0" font-family="Arial, DejaVu Sans, sans-serif" font-size="15" font-weight="400" fill="#5f6f86" text-anchor="middle">
+<tspan x="1700.0" dy="0">альтернативы, AHP,</tspan>
+<tspan x="1700.0" dy="18.3">ожидаемые потери ΔR</tspan>
+</text>
+<rect x="595" y="640" width="210" height="110" rx="16" fill="#eaf3ff" stroke="#2479ca" stroke-width="2" filter="url(#shadow)"/>
+<rect x="595" y="640" width="9" height="110" rx="4.5" fill="#2479ca"/>
+<text x="700.0" y="671" font-family="Arial, DejaVu Sans, sans-serif" font-size="20" font-weight="700" fill="#1f2937" text-anchor="middle">
+<tspan x="700.0" dy="0">SARIMA</tspan>
+</text>
+<text x="700.0" y="708.0" font-family="Arial, DejaVu Sans, sans-serif" font-size="15" font-weight="400" fill="#5f6f86" text-anchor="middle">
+<tspan x="700.0" dy="0">локальный baseline</tspan>
+<tspan x="700.0" dy="18.3">STL + сезонность</tspan>
+</text>
+<rect x="845" y="640" width="210" height="110" rx="16" fill="#e8f8f1" stroke="#0fa376" stroke-width="2" filter="url(#shadow)"/>
+<rect x="845" y="640" width="9" height="110" rx="4.5" fill="#0fa376"/>
+<text x="950.0" y="671" font-family="Arial, DejaVu Sans, sans-serif" font-size="20" font-weight="700" fill="#1f2937" text-anchor="middle">
+<tspan x="950.0" dy="0">LSTM client</tspan>
+</text>
+<text x="950.0" y="708.0" font-family="Arial, DejaVu Sans, sans-serif" font-size="15" font-weight="400" fill="#5f6f86" text-anchor="middle">
+<tspan x="950.0" dy="0">очередь задач, retry,</tspan>
+<tspan x="950.0" dy="18.3">API-токен, job_id</tspan>
+</text>
+<rect x="1595" y="640" width="210" height="110" rx="16" fill="#eaf3ff" stroke="#2479ca" stroke-width="2" filter="url(#shadow)"/>
+<rect x="1595" y="640" width="9" height="110" rx="4.5" fill="#2479ca"/>
+<text x="1700.0" y="671" font-family="Arial, DejaVu Sans, sans-serif" font-size="20" font-weight="700" fill="#1f2937" text-anchor="middle">
+<tspan x="1700.0" dy="0">Оценка и отчёты</tspan>
+</text>
+<text x="1700.0" y="708.0" font-family="Arial, DejaVu Sans, sans-serif" font-size="15" font-weight="400" fill="#5f6f86" text-anchor="middle">
+<tspan x="1700.0" dy="0">RMSE, MAE, Pinball,</tspan>
+<tspan x="1700.0" dy="18.3">PICP80, PDF/CSV</tspan>
+</text>
+<rect x="335" y="900" width="1250" height="115" rx="16" fill="#e8f8fb" stroke="#3aa6b9" stroke-width="2" filter="url(#shadow)"/>
+<rect x="335" y="900" width="9" height="115" rx="4.5" fill="#3aa6b9"/>
+<text x="960.0" y="931" font-family="Arial, DejaVu Sans, sans-serif" font-size="25" font-weight="700" fill="#1f2937" text-anchor="middle">
+<tspan x="960.0" dy="0">PostgreSQL</tspan>
+</text>
+<text x="960.0" y="968.0" font-family="Arial, DejaVu Sans, sans-serif" font-size="19" font-weight="400" fill="#5f6f86" text-anchor="middle">
+<tspan x="960.0" dy="0">устройства, сырые метрики, прогнозные точки, состояния, риск, DecisionRun, настройки,</tspan>
+<tspan x="960.0" dy="23.18">очередь LSTM, отчёты оценки</tspan>
+</text>
+<polyline points="400,212 500,212" fill="none" stroke="#2479ca" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-green)"/>
+<rect x="422" y="184" width="80" height="32" rx="9" fill="#ffffff" stroke="#d9e2ec"/>
+<text x="462.0" y="206" font-family="Arial, DejaVu Sans, sans-serif" font-size="17" font-weight="700" fill="#2479ca" text-anchor="middle">
+<tspan x="462.0" dy="0">REST</tspan>
+</text>
+<polyline points="500,232 400,232" fill="none" stroke="#8fa1b7" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)" stroke-dasharray="10 8"/>
+<rect x="408" y="244" width="110" height="32" rx="9" fill="#ffffff" stroke="#d9e2ec"/>
+<text x="463.0" y="266" font-family="Arial, DejaVu Sans, sans-serif" font-size="17" font-weight="700" fill="#5f6f86" text-anchor="middle">
+<tspan x="463.0" dy="0">ответ UI</tspan>
+</text>
+<polyline points="680,270 680,330" fill="none" stroke="#8fa1b7" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<polyline points="305,492 345,492" fill="none" stroke="#8fa1b7" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<polyline points="555,492 595,492" fill="none" stroke="#8fa1b7" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<polyline points="805,492 845,492" fill="none" stroke="#8fa1b7" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<polyline points="1055,492 1095,492" fill="none" stroke="#8fa1b7" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<polyline points="1305,492 1345,492" fill="none" stroke="#8fa1b7" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<polyline points="1555,492 1595,492" fill="none" stroke="#8fa1b7" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<polyline points="700,555 700,640" fill="none" stroke="#8fa1b7" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<polyline points="700,555 700,600 950,600 950,640" fill="none" stroke="#8fa1b7" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<polyline points="805,695 835,695 835,565 845,565" fill="none" stroke="#8fa1b7" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<polyline points="950,640 950,555" fill="none" stroke="#8fa1b7" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<polyline points="1055,695 1325,695 1325,212 1460,212" fill="none" stroke="#0fa376" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-green)"/>
+<rect x="1215" y="174" width="110" height="32" rx="9" fill="#ffffff" stroke="#d9e2ec"/>
+<text x="1270.0" y="196" font-family="Arial, DejaVu Sans, sans-serif" font-size="17" font-weight="700" fill="#0fa376" text-anchor="middle">
+<tspan x="1270.0" dy="0">LSTM API</tspan>
+</text>
+<polyline points="1460,238 1338,238 1338,718 1055,718" fill="none" stroke="#8fa1b7" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)" stroke-dasharray="10 8"/>
+<rect x="1168" y="742" width="121" height="32" rx="9" fill="#ffffff" stroke="#d9e2ec"/>
+<text x="1228.5" y="764" font-family="Arial, DejaVu Sans, sans-serif" font-size="17" font-weight="700" fill="#5f6f86" text-anchor="middle">
+<tspan x="1228.5" dy="0">результат</tspan>
+</text>
+<polyline points="1700,555 1700,640" fill="none" stroke="#8fa1b7" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<polyline points="960,845 960,900" fill="none" stroke="#8fa1b7" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)" stroke-dasharray="10 8"/>
+<rect x="993" y="860" width="165" height="32" rx="9" fill="#ffffff" stroke="#d9e2ec"/>
+<text x="1075.5" y="882" font-family="Arial, DejaVu Sans, sans-serif" font-size="17" font-weight="700" fill="#5f6f86" text-anchor="middle">
+<tspan x="1075.5" dy="0">чтение/запись</tspan>
+</text>
+<polyline points="1700,750 1700,870 1120,870 1120,900" fill="none" stroke="#8fa1b7" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)" stroke-dasharray="10 8"/>
+<polyline points="450,555 450,870 800,870 800,900" fill="none" stroke="#8fa1b7" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)" stroke-dasharray="10 8"/>
+<rect x="80" y="1030" width="1760" height="36" rx="12" fill="#ffffff" stroke="#d9e2ec"/>
+<text x="960" y="1054" font-family="Arial, DejaVu Sans, sans-serif" font-size="19" font-weight="700" fill="#5f6f86" text-anchor="middle">
+<tspan x="960" dy="0">Принцип реализации: интерфейс работает только с Django API; тяжёлый LSTM-расчёт вынесен на отдельный ПК и связан с</tspan>
+<tspan x="960" dy="22.8">backend через очередь задач.</tspan>
+</text>
+</svg>

@@ -717,3 +717,444 @@ class StateEstimate(models.Model):
 
     def __str__(self):
         return f"{self.device.name} {self.horizon}: {self.state}"
+
+
+class StateInferenceProfile(models.Model):
+    name = models.CharField(max_length=200)
+    version = models.PositiveIntegerField(default=1)
+    is_active = models.BooleanField(default=True)
+    notes = models.TextField(blank=True)
+
+    thresholds = models.JSONField(default=dict, blank=True)
+    forecast_metric_controls = models.JSONField(default=dict, blank=True)
+    orchestrator_controls = models.JSONField(default=dict, blank=True)
+
+    risk_ratio_baseline = models.FloatField(default=0.75)
+    risk_ratio_scale = models.FloatField(default=0.75)
+    medium_risk_level = models.FloatField(default=0.40)
+    critical_risk_level = models.FloatField(default=0.85)
+    overall_hint_weight = models.FloatField(default=0.25)
+    softmax_temperature = models.FloatField(default=1.0)
+    score_weights = models.JSONField(default=dict, blank=True)
+
+    s0_bias = models.FloatField(default=0.15)
+    s0_effective_weight = models.FloatField(default=0.85)
+    s0_avg_weight = models.FloatField(default=0.45)
+    s0_medium_weight = models.FloatField(default=0.35)
+    s0_critical_weight = models.FloatField(default=0.55)
+
+    s1_bias = models.FloatField(default=0.10)
+    s1_avg_weight = models.FloatField(default=0.90)
+    s1_medium_weight = models.FloatField(default=0.45)
+    s1_markov_weight = models.FloatField(default=0.10)
+
+    s2_bias = models.FloatField(default=0.05)
+    s2_effective_power = models.FloatField(default=1.60)
+    s2_critical_weight = models.FloatField(default=0.30)
+    s2_medium_weight = models.FloatField(default=0.15)
+    s2_markov_weight = models.FloatField(default=0.10)
+
+    confidence_max = models.FloatField(default=0.98)
+    confidence_base = models.FloatField(default=0.36)
+    confidence_component_weight = models.FloatField(default=0.08)
+    confidence_feature_weight = models.FloatField(default=0.07)
+    confidence_margin_weight = models.FloatField(default=0.35)
+    confidence_component_cap = models.PositiveIntegerField(default=5)
+
+    created_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='state_inference_profiles_created',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Профиль модели состояния"
+        verbose_name_plural = "Профили модели состояния"
+        ordering = ['-is_active', '-updated_at', '-id']
+        indexes = [
+            models.Index(fields=['is_active', '-updated_at']),
+        ]
+        constraints = [
+            models.UniqueConstraint(fields=['name', 'version'], name='uniq_state_inference_profile_name_version'),
+        ]
+
+    def __str__(self):
+        return f"{self.name} v{self.version}"
+
+
+class LSTMRemoteQueueJob(models.Model):
+    STATUS_CHOICES = [
+        ('queued', 'Queued'),
+        ('submitting', 'Submitting'),
+        ('submitted', 'Submitted'),
+        ('polling', 'Polling'),
+        ('retry_wait', 'RetryWait'),
+        ('success', 'Success'),
+        ('failed', 'Failed'),
+    ]
+
+    forecast_run = models.OneToOneField(
+        ForecastRun,
+        on_delete=models.CASCADE,
+        related_name='lstm_remote_job',
+    )
+    device = models.ForeignKey(
+        Device,
+        on_delete=models.CASCADE,
+        related_name='lstm_remote_jobs',
+    )
+
+    request_id = models.CharField(max_length=120, unique=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='queued')
+    remote_job_id = models.CharField(max_length=120, blank=True, null=True)
+
+    request_payload = models.JSONField(default=dict, blank=True)
+    submit_response = models.JSONField(default=dict, blank=True)
+    remote_snapshot = models.JSONField(default=dict, blank=True)
+    last_error = models.TextField(blank=True)
+
+    attempts_submit = models.PositiveIntegerField(default=0)
+    attempts_poll = models.PositiveIntegerField(default=0)
+    retry_count = models.PositiveIntegerField(default=0)
+    max_retries = models.PositiveIntegerField(default=5)
+    next_retry_at = models.DateTimeField(default=timezone.now)
+    locked_until = models.DateTimeField(null=True, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Задание очереди LSTM remote"
+        verbose_name_plural = "Задания очереди LSTM remote"
+        ordering = ['next_retry_at', 'id']
+        indexes = [
+            models.Index(fields=['status', 'next_retry_at']),
+            models.Index(fields=['device', '-created_at']),
+            models.Index(fields=['remote_job_id']),
+        ]
+
+    def __str__(self):
+        return f"run={self.forecast_run_id} status={self.status} request_id={self.request_id}"
+
+
+class DecisionAction(models.Model):
+    code = models.CharField(max_length=80, unique=True)
+    name = models.CharField(max_length=200)
+    description = models.TextField(blank=True)
+    is_active = models.BooleanField(default=True)
+    constraints_json = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Альтернатива СППР"
+        verbose_name_plural = "Альтернативы СППР"
+        ordering = ['name']
+        indexes = [
+            models.Index(fields=['code']),
+            models.Index(fields=['is_active']),
+        ]
+
+    def __str__(self):
+        return f"{self.name} ({self.code})"
+
+
+class DecisionCriterion(models.Model):
+    code = models.CharField(max_length=80, unique=True)
+    name = models.CharField(max_length=200)
+    description = models.TextField(blank=True)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Критерий СППР"
+        verbose_name_plural = "Критерии СППР"
+        ordering = ['name']
+        indexes = [
+            models.Index(fields=['code']),
+            models.Index(fields=['is_active']),
+        ]
+
+    def __str__(self):
+        return f"{self.name} ({self.code})"
+
+
+class DecisionPolicy(models.Model):
+    SCOPE_CHOICES = [
+        ('global', 'Global'),
+        ('device_type', 'DeviceType'),
+        ('device', 'Device'),
+    ]
+    HORIZON_CHOICES = [
+        ('24h', '24h'),
+        ('7d', '7d'),
+        ('30d', '30d'),
+    ]
+
+    name = models.CharField(max_length=200)
+    version = models.PositiveIntegerField(default=1)
+    is_active = models.BooleanField(default=True)
+    scope = models.CharField(max_length=20, choices=SCOPE_CHOICES, default='global')
+    device_type = models.ForeignKey(DeviceType, on_delete=models.SET_NULL, null=True, blank=True, related_name='decision_policies')
+    device = models.ForeignKey(Device, on_delete=models.SET_NULL, null=True, blank=True, related_name='decision_policies')
+    horizon = models.CharField(max_length=20, choices=HORIZON_CHOICES, default='24h')
+    previous_version = models.ForeignKey(
+        'self',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='next_versions',
+    )
+    notes = models.TextField(blank=True)
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='decision_policies_created')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Политика СППР"
+        verbose_name_plural = "Политики СППР"
+        ordering = ['-updated_at']
+        indexes = [
+            models.Index(fields=['scope', 'horizon', 'is_active']),
+            models.Index(fields=['device_type', 'horizon', 'is_active']),
+            models.Index(fields=['device', 'horizon', 'is_active']),
+        ]
+        constraints = [
+            models.UniqueConstraint(fields=['name', 'version'], name='uniq_decision_policy_name_version'),
+        ]
+
+    def __str__(self):
+        return f"{self.name} v{self.version} ({self.scope}, {self.horizon})"
+
+
+class DecisionPolicyLoss(models.Model):
+    policy = models.ForeignKey(DecisionPolicy, on_delete=models.CASCADE, related_name='loss_rows')
+    action = models.ForeignKey(DecisionAction, on_delete=models.CASCADE, related_name='policy_losses')
+
+    loss_s0 = models.FloatField(default=0.0)
+    loss_s1 = models.FloatField(default=0.0)
+    loss_s2 = models.FloatField(default=0.0)
+
+    fixed_cost = models.FloatField(default=0.0)
+    downtime_minutes = models.FloatField(default=0.0)
+    ops_effort = models.FloatField(default=0.0)
+    notes = models.TextField(blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Матрица потерь СППР"
+        verbose_name_plural = "Матрицы потерь СППР"
+        ordering = ['policy_id', 'action_id']
+        constraints = [
+            models.UniqueConstraint(fields=['policy', 'action'], name='uniq_decision_policy_action'),
+        ]
+
+    def __str__(self):
+        return f"policy={self.policy_id} action={self.action.code}"
+
+
+class DecisionPolicyAHPPairwise(models.Model):
+    policy = models.ForeignKey(DecisionPolicy, on_delete=models.CASCADE, related_name='ahp_pairwise')
+    criterion_i = models.ForeignKey(DecisionCriterion, on_delete=models.CASCADE, related_name='ahp_as_i')
+    criterion_j = models.ForeignKey(DecisionCriterion, on_delete=models.CASCADE, related_name='ahp_as_j')
+    value = models.FloatField(default=1.0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "AHP парное сравнение"
+        verbose_name_plural = "AHP парные сравнения"
+        ordering = ['policy_id', 'criterion_i_id', 'criterion_j_id']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['policy', 'criterion_i', 'criterion_j'],
+                name='uniq_decision_policy_ahp_pair',
+            ),
+        ]
+
+    def __str__(self):
+        return f"policy={self.policy_id} {self.criterion_i.code}/{self.criterion_j.code}={self.value}"
+
+
+class DecisionRun(models.Model):
+    STATUS_CHOICES = [
+        ('success', 'Success'),
+        ('failed', 'Failed'),
+    ]
+    MODE_CHOICES = [
+        ('bayes', 'Bayes'),
+        ('advanced', 'Bayes+AHP'),
+    ]
+
+    device = models.ForeignKey(Device, on_delete=models.CASCADE, related_name='decision_runs')
+    policy = models.ForeignKey(DecisionPolicy, on_delete=models.SET_NULL, null=True, blank=True, related_name='decision_runs')
+    horizon = models.CharField(max_length=20, default='24h')
+    mode = models.CharField(max_length=20, choices=MODE_CHOICES, default='bayes')
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='success')
+
+    risk_snapshot = models.JSONField(default=dict, blank=True)
+    recommended_action = models.ForeignKey(
+        DecisionAction,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='recommended_runs',
+    )
+    explanation = models.JSONField(default=dict, blank=True)
+
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='decision_runs_created')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Запуск СППР"
+        verbose_name_plural = "Запуски СППР"
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['device', 'horizon', '-created_at']),
+            models.Index(fields=['mode', '-created_at']),
+        ]
+
+    def __str__(self):
+        return f"run#{self.id} {self.device.name} {self.mode} ({self.status})"
+
+
+class DecisionRunScore(models.Model):
+    run = models.ForeignKey(DecisionRun, on_delete=models.CASCADE, related_name='scores')
+    action = models.ForeignKey(DecisionAction, on_delete=models.CASCADE, related_name='run_scores')
+    expected_loss = models.FloatField(default=0.0)
+    bayes_utility = models.FloatField(default=0.0)
+    ahp_utility = models.FloatField(default=0.0)
+    final_score = models.FloatField(default=0.0)
+    rank = models.PositiveIntegerField(default=1)
+    is_recommended = models.BooleanField(default=False)
+    explanation = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Оценка альтернативы СППР"
+        verbose_name_plural = "Оценки альтернатив СППР"
+        ordering = ['run_id', 'rank', 'id']
+        constraints = [
+            models.UniqueConstraint(fields=['run', 'action'], name='uniq_decision_run_action'),
+        ]
+
+    def __str__(self):
+        return f"run={self.run_id} action={self.action.code} rank={self.rank}"
+
+
+class DecisionRunAHP(models.Model):
+    run = models.OneToOneField(DecisionRun, on_delete=models.CASCADE, related_name='ahp')
+    weights = models.JSONField(default=dict, blank=True)
+    lambda_max = models.FloatField(default=0.0)
+    ci = models.FloatField(default=0.0)
+    cr = models.FloatField(default=0.0)
+    is_consistent = models.BooleanField(default=False)
+    matrix = models.JSONField(default=list, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "AHP результат запуска СППР"
+        verbose_name_plural = "AHP результаты запусков СППР"
+
+    def __str__(self):
+        return f"run={self.run_id} CR={self.cr:.4f}"
+
+
+class DecisionRunUtility(models.Model):
+    run = models.ForeignKey(DecisionRun, on_delete=models.CASCADE, related_name='criterion_utilities')
+    action = models.ForeignKey(DecisionAction, on_delete=models.CASCADE, related_name='criterion_utilities')
+    criterion = models.ForeignKey(DecisionCriterion, on_delete=models.CASCADE, related_name='run_utilities')
+    utility = models.FloatField(default=0.0)
+    evidence = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Локальная полезность критерия"
+        verbose_name_plural = "Локальные полезности критериев"
+        ordering = ['run_id', 'action_id', 'criterion_id']
+        constraints = [
+            models.UniqueConstraint(fields=['run', 'action', 'criterion'], name='uniq_decision_run_action_criterion'),
+        ]
+
+    def __str__(self):
+        return f"run={self.run_id} action={self.action.code} criterion={self.criterion.code}"
+
+
+class DecisionFeedback(models.Model):
+    STATE_CHOICES = [
+        ('s0', 'S0'),
+        ('s1', 'S1'),
+        ('s2', 'S2'),
+        ('unknown', 'Unknown'),
+    ]
+
+    run = models.OneToOneField(DecisionRun, on_delete=models.CASCADE, related_name='feedback')
+    actual_action = models.ForeignKey(DecisionAction, on_delete=models.SET_NULL, null=True, blank=True, related_name='feedback_items')
+    outcome_state = models.CharField(max_length=20, choices=STATE_CHOICES, default='unknown')
+    outage_minutes = models.FloatField(default=0.0)
+    incident_cost = models.FloatField(default=0.0)
+    notes = models.TextField(blank=True)
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='decision_feedback_created')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Обратная связь СППР"
+        verbose_name_plural = "Обратная связь СППР"
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"feedback run={self.run_id} outcome={self.outcome_state}"
+
+
+class ApplicationUpdateJob(models.Model):
+    STATUS_CHOICES = [
+        ('queued', 'Queued'),
+        ('running', 'Running'),
+        ('completed', 'Completed'),
+        ('failed', 'Failed'),
+        ('skipped', 'Skipped'),
+    ]
+
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='queued')
+    current_version = models.CharField(max_length=50, blank=True)
+    target_version = models.CharField(max_length=50, blank=True)
+    release_channel = models.CharField(max_length=50, default='single')
+    manifest_url = models.TextField(blank=True)
+    git_ref = models.CharField(max_length=200, blank=True)
+    release_notes = models.JSONField(default=list, blank=True)
+    parameters = models.JSONField(default=dict, blank=True)
+    log = models.TextField(blank=True)
+    error = models.TextField(blank=True)
+    pid = models.IntegerField(null=True, blank=True)
+    created_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='application_update_jobs_created',
+    )
+    started_at = models.DateTimeField(null=True, blank=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Задание обновления приложения"
+        verbose_name_plural = "Задания обновления приложения"
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['status', '-created_at']),
+            models.Index(fields=['target_version', '-created_at']),
+        ]
+
+    def __str__(self):
+        target = self.target_version or "latest"
+        return f"update#{self.id} {target} ({self.status})"

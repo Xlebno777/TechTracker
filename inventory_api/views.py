@@ -4,8 +4,16 @@ import io
 import ipaddress
 import re
 import uuid
+import json
+import csv
+import shutil
+import os
+import secrets
+import time as pytime
+from pathlib import Path
 from collections import defaultdict
-from django.http import HttpResponse
+from urllib.parse import urlsplit
+from django.http import HttpResponse, StreamingHttpResponse, FileResponse
 from django.core.files.base import ContentFile
 from PIL import Image
 
@@ -22,6 +30,7 @@ from django.db.utils import ProgrammingError
 from django.db.models import Q
 from django_filters.rest_framework import DjangoFilterBackend
 from django.core.management import call_command
+from django.conf import settings
 
 from .models import (
     Device, DeviceType, Location, UserProfile,
@@ -29,7 +38,9 @@ from .models import (
     Cartridge, CartridgeLog, Log, Metric, PrintJob,
     MonitoringSetting, RawMetric, TrackedVM, ComputedMetric, AgentStatus, DiagnosticReport,
     NetworkPath, NetworkOutage, NetworkAlertRule,
-    NetworkMapSnapshot, ForecastRun, ForecastPoint, StateEstimate
+    NetworkMapSnapshot, ForecastRun, ForecastPoint, StateEstimate, StateInferenceProfile, LSTMRemoteQueueJob,
+    DecisionAction, DecisionCriterion, DecisionPolicy, DecisionPolicyLoss, DecisionRun,
+    ApplicationUpdateJob,
 )
 from .serializers import (
     DeviceSerializer, DeviceCreateUpdateSerializer,
@@ -41,7 +52,11 @@ from .serializers import (
     TrackedVMSerializer, TrackedVMSyncSerializer, ComputedMetricSerializer, AgentStatusSerializer, AgentStatusReportSerializer,
     DiagnosticReportSerializer, DiagnosticRunSerializer, NetworkPathSerializer, NetworkOutageSerializer,
     NetworkAlertRuleSerializer, NetworkMapSnapshotSerializer, NetworkMapSnapshotDetailSerializer,
-    ForecastRunSerializer, ForecastPointSerializer, StateEstimateSerializer
+    ForecastRunSerializer, ForecastPointSerializer, StateEstimateSerializer, StateInferenceProfileSerializer, LSTMRemoteQueueJobSerializer,
+    DecisionActionSerializer, DecisionCriterionSerializer, DecisionPolicySerializer, DecisionRunSerializer,
+    DecisionPolicyLossSerializer,
+    DecisionRecommendationRequestSerializer, DecisionAHPMatrixUpsertSerializer, DecisionFeedbackCreateSerializer,
+    ApplicationUpdateJobSerializer,
 )
 from .permissions import PrintJobPermission, PrinterAgentPermission, MetricsAgentPermission, VMStatusAgentPermission, AdminGroupPermission
 from .diagnostics import generate_diagnostic_report
@@ -54,8 +69,10 @@ from .network_alerts import (
 )
 from .network_map_builder import build_network_map_snapshot
 from .forecasting.demo_seed import seed_demo_forecasts
+from .release_management import check_for_update, get_current_release_info, launch_update_worker
 from django.utils import timezone
-from datetime import timedelta
+from django.utils.dateparse import parse_date, parse_datetime
+from datetime import timedelta, datetime
 
 
 def _normalize_ip(value):
@@ -101,6 +118,27 @@ def _get_pc_device_type():
         return device_type
     device_type, _ = DeviceType.objects.get_or_create(name='ПК')
     return device_type
+
+
+def _parse_query_datetime(value, *, end_of_day=False):
+    if value in (None, ""):
+        return None
+    dt_value = None
+    if isinstance(value, datetime):
+        dt_value = value
+    else:
+        raw = str(value).strip()
+        if not raw:
+            return None
+        dt_value = parse_datetime(raw)
+        if dt_value is None:
+            parsed_date = parse_date(raw)
+            if parsed_date is None:
+                return None
+            dt_value = datetime.combine(parsed_date, datetime.max.time() if end_of_day else datetime.min.time())
+    if timezone.is_naive(dt_value):
+        dt_value = timezone.make_aware(dt_value, timezone.get_current_timezone())
+    return dt_value
 
 
 def _normalize_mac(value):
@@ -761,6 +799,8 @@ class RawMetricViewSet(viewsets.ReadOnlyModelViewSet):
     def get_queryset(self):
         qs = super().get_queryset()
         since_minutes = self.request.query_params.get('since_minutes')
+        date_from = _parse_query_datetime(self.request.query_params.get('date_from'))
+        date_to = _parse_query_datetime(self.request.query_params.get('date_to'), end_of_day=True)
         if since_minutes:
             try:
                 minutes = int(since_minutes)
@@ -768,6 +808,10 @@ class RawMetricViewSet(viewsets.ReadOnlyModelViewSet):
                     qs = qs.filter(timestamp__gte=timezone.now() - timedelta(minutes=minutes))
             except ValueError:
                 pass
+        if date_from is not None:
+            qs = qs.filter(timestamp__gte=date_from)
+        if date_to is not None:
+            qs = qs.filter(timestamp__lte=date_to)
         return qs
 
     def list(self, request, *args, **kwargs):
@@ -958,6 +1002,221 @@ class ForecastRunViewSet(viewsets.ReadOnlyModelViewSet):
     ordering_fields = ['created_at', 'started_at', 'finished_at', 'updated_at']
     ordering = ['-created_at']
 
+    def _find_run(self, run_id: int | None, serial: str | None, model_kind: str):
+        qs = ForecastRun.objects.filter(model_kind=model_kind).select_related("device")
+        if run_id:
+            return qs.filter(id=run_id).first()
+        if serial:
+            return qs.filter(device__serial_number=serial).order_by("-created_at").first()
+        return None
+
+    def _find_queue_job(self, lstm_run_id: int | None, serial: str | None):
+        qs = LSTMRemoteQueueJob.objects.all().select_related("device", "forecast_run")
+        if lstm_run_id:
+            return qs.filter(forecast_run_id=lstm_run_id).order_by("-created_at").first()
+        if serial:
+            return qs.filter(device__serial_number=serial).order_by("-created_at").first()
+        return None
+
+    def _normalize_lstm_status(self, lstm_run: ForecastRun | None, queue_job: LSTMRemoteQueueJob | None):
+        queue_status = str(getattr(queue_job, "status", "") or "").lower()
+        if queue_status == "success":
+            return "completed"
+        if queue_status == "failed":
+            return "failed"
+        if queue_status in ("queued", "retry_wait"):
+            return "queued"
+        if queue_status in ("submitting", "submitted", "polling"):
+            return "running"
+
+        run_status = str(getattr(lstm_run, "status", "") or "").lower()
+        if run_status == "success":
+            return "completed"
+        if run_status == "failed":
+            return "failed"
+        if run_status in ("pending",):
+            return "queued"
+        if run_status in ("running",):
+            return "running"
+        return "none"
+
+    def _run_brief(self, run: ForecastRun | None):
+        if not run:
+            return None
+        return {
+            "id": run.id,
+            "model_kind": run.model_kind,
+            "status": run.status,
+            "created_at": run.created_at.isoformat() if run.created_at else None,
+            "started_at": run.started_at.isoformat() if run.started_at else None,
+            "finished_at": run.finished_at.isoformat() if run.finished_at else None,
+            "horizon_set": run.horizon_set,
+            "quality": run.quality if isinstance(run.quality, dict) else {},
+            "parameters": run.parameters if isinstance(run.parameters, dict) else {},
+        }
+
+    def _queue_brief(self, queue_job: LSTMRemoteQueueJob | None):
+        if not queue_job:
+            return None
+        return {
+            "id": queue_job.id,
+            "status": queue_job.status,
+            "remote_job_id": queue_job.remote_job_id,
+            "retry_count": queue_job.retry_count,
+            "attempts_submit": queue_job.attempts_submit,
+            "attempts_poll": queue_job.attempts_poll,
+            "last_error": queue_job.last_error,
+            "updated_at": queue_job.updated_at.isoformat() if queue_job.updated_at else None,
+        }
+
+    def _build_stream_snapshot(
+        self,
+        *,
+        mode: str,
+        sarima_run: ForecastRun | None,
+        lstm_run: ForecastRun | None,
+        ensemble_run: ForecastRun | None,
+        queue_job: LSTMRemoteQueueJob | None,
+        started_at: float,
+        poll_error: str | None = None,
+    ):
+        now_iso = timezone.now().isoformat()
+        elapsed_sec = max(0.0, pytime.monotonic() - started_at)
+        lstm_status = self._normalize_lstm_status(lstm_run, queue_job)
+
+        if mode == "full":
+            steps = [
+                {"key": "sarima", "title": "SARIMA baseline", "description": "Локальная предобработка и SARIMA."},
+                {"key": "lstm", "title": "Удаленный LSTM", "description": "Очередь, удаленный расчет и импорт результата."},
+                {"key": "ensemble", "title": "Интеграция итогового прогноза", "description": "Сборка оркестра SARIMA+LSTM."},
+            ]
+
+            if sarima_run is None:
+                current_key = "sarima"
+                status = "queued"
+            elif sarima_run.status in ("pending", "running"):
+                current_key = "sarima"
+                status = "running"
+            elif sarima_run.status == "failed":
+                current_key = "sarima"
+                status = "failed"
+            elif lstm_status in ("none", "queued", "running"):
+                current_key = "lstm"
+                status = "running"
+            elif lstm_status == "failed":
+                current_key = "lstm"
+                status = "failed"
+            elif ensemble_run is None:
+                current_key = "ensemble"
+                status = "running"
+            elif ensemble_run.status in ("pending", "running"):
+                current_key = "ensemble"
+                status = "running"
+            elif ensemble_run.status == "failed":
+                current_key = "ensemble"
+                status = "failed"
+            else:
+                current_key = "ensemble"
+                status = "completed"
+
+            if status == "completed":
+                final_run = ensemble_run or lstm_run or sarima_run
+            elif status == "failed":
+                final_run = ensemble_run if current_key == "ensemble" else (lstm_run if current_key == "lstm" else sarima_run)
+            else:
+                final_run = None
+
+        elif mode == "lstm":
+            steps = [
+                {"key": "lstm", "title": "Удаленный LSTM", "description": "Очередь, удаленный расчет и импорт результата."},
+            ]
+            current_key = "lstm"
+            if lstm_status in ("queued", "running"):
+                status = "running"
+            elif lstm_status == "failed":
+                status = "failed"
+            elif lstm_status == "completed":
+                status = "completed"
+            else:
+                status = "queued"
+            final_run = lstm_run if status in ("completed", "failed") else None
+
+        else:
+            steps = [
+                {"key": "sarima", "title": "SARIMA baseline", "description": "Локальная предобработка и SARIMA."},
+            ]
+            current_key = "sarima"
+            if sarima_run is None:
+                status = "queued"
+            elif sarima_run.status in ("pending", "running"):
+                status = "running"
+            elif sarima_run.status == "failed":
+                status = "failed"
+            else:
+                status = "completed"
+            final_run = sarima_run if status in ("completed", "failed") else None
+
+        current_index = 1
+        for idx, item in enumerate(steps, start=1):
+            if item["key"] == current_key:
+                current_index = idx
+                break
+
+        final_quality = {}
+        if final_run and isinstance(final_run.quality, dict):
+            final_quality = final_run.quality
+        sarima_quality = sarima_run.quality if sarima_run and isinstance(sarima_run.quality, dict) else {}
+        lstm_quality = lstm_run.quality if lstm_run and isinstance(lstm_run.quality, dict) else {}
+        summary = {
+            "duration_sec": elapsed_sec,
+            "metrics_processed": (
+                final_quality.get("metrics_processed")
+                or sarima_quality.get("metrics_processed")
+                or lstm_quality.get("metrics_processed")
+                or (lstm_quality.get("remote_quality") or {}).get("metrics_processed")
+            ),
+            "history_points_total": (
+                final_quality.get("history_points_total")
+                or sarima_quality.get("history_points_total")
+                or lstm_quality.get("history_points_total")
+                or (lstm_quality.get("remote_quality") or {}).get("history_points_total")
+            ),
+            "points_created": (
+                final_quality.get("points_created")
+                or sarima_quality.get("points_created")
+                or lstm_quality.get("points_created")
+            ),
+            "states_created": (
+                final_quality.get("states_created")
+                or sarima_quality.get("states_created")
+                or lstm_quality.get("states_created")
+            ),
+            "horizon_set": getattr(final_run, "horizon_set", None),
+        }
+
+        return {
+            "mode": mode,
+            "status": status,
+            "timestamp": now_iso,
+            "current_step": {
+                "key": current_key,
+                "index": current_index,
+                "total": len(steps),
+            },
+            "steps": steps,
+            "runs": {
+                "sarima": self._run_brief(sarima_run),
+                "lstm": self._run_brief(lstm_run),
+                "ensemble": self._run_brief(ensemble_run),
+            },
+            "queue_job": self._queue_brief(queue_job),
+            "summary": summary,
+            "poll_error": poll_error,
+        }
+
+    def _stream_message(self, payload: dict):
+        return f"{json.dumps(payload, ensure_ascii=False)}\n"
+
     @action(detail=False, methods=['get'])
     def latest(self, request):
         serial = request.query_params.get('serial')
@@ -980,6 +1239,120 @@ class ForecastRunViewSet(viewsets.ReadOnlyModelViewSet):
             return Response({"detail": "Forecast run not found"}, status=status.HTTP_404_NOT_FOUND)
         return Response(self.get_serializer(row).data, status=status.HTTP_200_OK)
 
+    @action(detail=False, methods=['get'], permission_classes=[AdminGroupPermission], url_path='workflow_stream')
+    def workflow_stream(self, request):
+        mode = str(request.query_params.get("mode") or "full").strip().lower()
+        if mode not in ("full", "lstm", "sarima"):
+            mode = "full"
+
+        serial = str(request.query_params.get("serial") or "").strip() or None
+        try:
+            sarima_run_id = int(request.query_params.get("sarima_run_id")) if request.query_params.get("sarima_run_id") else None
+        except (TypeError, ValueError):
+            sarima_run_id = None
+        try:
+            lstm_run_id = int(request.query_params.get("lstm_run_id")) if request.query_params.get("lstm_run_id") else None
+        except (TypeError, ValueError):
+            lstm_run_id = None
+        try:
+            ensemble_run_id = int(request.query_params.get("ensemble_run_id")) if request.query_params.get("ensemble_run_id") else None
+        except (TypeError, ValueError):
+            ensemble_run_id = None
+
+        try:
+            poll_interval_sec = max(1.0, float(request.query_params.get("poll_interval_sec", 2.0)))
+        except (TypeError, ValueError):
+            poll_interval_sec = 2.0
+        try:
+            max_wait_sec = max(5.0, float(request.query_params.get("max_wait_sec", 600.0)))
+        except (TypeError, ValueError):
+            max_wait_sec = 600.0
+
+        if not serial and not any([sarima_run_id, lstm_run_id, ensemble_run_id]):
+            return Response(
+                {"detail": "serial or run_id parameters are required for workflow_stream"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        def event_generator():
+            started = pytime.monotonic()
+            while True:
+                poll_error = None
+                try:
+                    if mode == "full":
+                        from .forecasting.orchestration_service import poll_orchestrated_forecasts
+                        poll_orchestrated_forecasts(
+                            run_id=lstm_run_id,
+                            serial=serial,
+                            limit=20,
+                            poll_interval_sec=poll_interval_sec,
+                        )
+                    elif mode == "lstm":
+                        from .forecasting.lstm_remote_service import poll_lstm_remote_runs
+                        poll_lstm_remote_runs(
+                            run_id=lstm_run_id,
+                            serial=serial,
+                            limit=20,
+                            poll_interval_sec=poll_interval_sec,
+                        )
+                except Exception as exc:
+                    poll_error = str(exc)
+
+                sarima_run = self._find_run(sarima_run_id, serial, "sarima")
+                lstm_run = self._find_run(lstm_run_id, serial, "lstm")
+
+                ensemble_from_lstm = None
+                if lstm_run and isinstance(lstm_run.parameters, dict):
+                    ensemble_from_lstm = lstm_run.parameters.get("ensemble_run_id")
+                resolved_ensemble_id = ensemble_run_id or ensemble_from_lstm
+                ensemble_run = self._find_run(
+                    int(resolved_ensemble_id) if resolved_ensemble_id else None,
+                    serial,
+                    "ensemble",
+                )
+                queue_job = self._find_queue_job(lstm_run.id if lstm_run else lstm_run_id, serial)
+
+                snapshot = self._build_stream_snapshot(
+                    mode=mode,
+                    sarima_run=sarima_run,
+                    lstm_run=lstm_run,
+                    ensemble_run=ensemble_run,
+                    queue_job=queue_job,
+                    started_at=started,
+                    poll_error=poll_error,
+                )
+
+                if poll_error:
+                    snapshot["event"] = "poll_error"
+                else:
+                    snapshot["event"] = "progress"
+
+                yield self._stream_message(snapshot)
+
+                if snapshot["status"] in ("completed", "failed"):
+                    done_payload = dict(snapshot)
+                    done_payload["event"] = "done"
+                    yield self._stream_message(done_payload)
+                    break
+
+                if (pytime.monotonic() - started) >= max_wait_sec:
+                    timeout_payload = dict(snapshot)
+                    timeout_payload["event"] = "timeout"
+                    timeout_payload["status"] = "timeout"
+                    timeout_payload["summary"] = {
+                        **(timeout_payload.get("summary") or {}),
+                        "duration_sec": pytime.monotonic() - started,
+                    }
+                    yield self._stream_message(timeout_payload)
+                    break
+
+                pytime.sleep(poll_interval_sec)
+
+        response = StreamingHttpResponse(event_generator(), content_type="application/x-ndjson; charset=utf-8")
+        response["Cache-Control"] = "no-cache"
+        response["X-Accel-Buffering"] = "no"
+        return response
+
     @action(detail=False, methods=['post'], permission_classes=[AdminGroupPermission])
     def seed_demo(self, request):
         serial = request.data.get('serial')
@@ -987,6 +1360,24 @@ class ForecastRunViewSet(viewsets.ReadOnlyModelViewSet):
         clear_raw = request.data.get('clear', False)
         with_raw_raw = request.data.get('with_raw_history', True)
         raw_history_days_raw = request.data.get('raw_history_days', 30)
+        history_start_date_raw = request.data.get('history_start_date')
+        history_end_date_raw = request.data.get('history_end_date')
+        profile_code = str(request.data.get('profile_code') or 'office_weekday').strip().lower() or 'office_weekday'
+        schedule_config = {
+            'workday_start': request.data.get('workday_start'),
+            'workday_end': request.data.get('workday_end'),
+            'lunch_start': request.data.get('lunch_start'),
+            'lunch_end': request.data.get('lunch_end'),
+            'backup_start': request.data.get('backup_start'),
+            'backup_end': request.data.get('backup_end'),
+            'workdays': request.data.get('workdays'),
+            'backup_days': request.data.get('backup_days'),
+        }
+        scenario_config = {
+            'degraded_metric_codes': request.data.get('degraded_metric_codes'),
+            'degradation_strength': request.data.get('degradation_strength'),
+            'bad_mode_persistence': request.data.get('bad_mode_persistence'),
+        }
 
         try:
             runs = int(runs_raw)
@@ -1008,12 +1399,27 @@ class ForecastRunViewSet(viewsets.ReadOnlyModelViewSet):
         except (TypeError, ValueError):
             raw_history_days = 30
 
+        history_start_at = None
+        history_end_at = None
+        start_date = parse_date(str(history_start_date_raw)) if history_start_date_raw else None
+        end_date = parse_date(str(history_end_date_raw)) if history_end_date_raw else None
+        tz = timezone.get_current_timezone()
+        if start_date:
+            history_start_at = timezone.make_aware(datetime.combine(start_date, datetime.min.time()), tz)
+        if end_date:
+            history_end_at = timezone.make_aware(datetime.combine(end_date, datetime.min.time().replace(hour=23, minute=45)), tz)
+
         payload = seed_demo_forecasts(
             serial=serial,
             runs=runs,
             clear_existing=clear_existing,
             with_raw_history=with_raw_history,
             raw_history_days=raw_history_days,
+            history_start_at=history_start_at,
+            history_end_at=history_end_at,
+            profile_code=profile_code,
+            schedule_config=schedule_config,
+            scenario_config=scenario_config,
         )
         return Response(payload, status=status.HTTP_200_OK)
 
@@ -1025,6 +1431,7 @@ class ForecastRunViewSet(viewsets.ReadOnlyModelViewSet):
         horizons_raw = request.data.get('horizons', '24h,7d,30d')
         metric_codes_raw = request.data.get('metric_codes', '')
         save_stl_raw = request.data.get('save_stl_components', True)
+        seasonality_mode = request.data.get('seasonality_mode')
 
         try:
             lookback_days = max(1, int(lookback_raw))
@@ -1055,12 +1462,305 @@ class ForecastRunViewSet(viewsets.ReadOnlyModelViewSet):
                 horizons=horizons or None,
                 metric_codes=metric_codes or None,
                 save_stl_components=save_stl_components,
+                seasonality_mode=seasonality_mode,
             )
             return Response(payload, status=status.HTTP_200_OK)
         except RuntimeError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
         except Exception as exc:
             return Response({"detail": f"baseline failed: {exc}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @action(detail=False, methods=['post'], permission_classes=[AdminGroupPermission])
+    def run_lstm_remote(self, request):
+        serial = request.data.get('serial')
+        lookback_raw = request.data.get('lookback_days', 60)
+        freq = request.data.get('freq', '1h')
+        horizons_raw = request.data.get('horizons', '24h,7d,30d')
+        metric_codes_raw = request.data.get('metric_codes', '')
+        model_options_raw = request.data.get('lstm_options')
+        no_wait_raw = request.data.get('no_wait', False)
+        poll_interval_raw = request.data.get('poll_interval_sec', 2.0)
+        max_wait_raw = request.data.get('max_wait_sec', 120.0)
+        max_retries_raw = request.data.get('max_retries', 5)
+
+        try:
+            lookback_days = max(1, int(lookback_raw))
+        except (TypeError, ValueError):
+            lookback_days = 60
+
+        if isinstance(horizons_raw, list):
+            horizons = [str(h).strip() for h in horizons_raw if str(h).strip()]
+        else:
+            horizons = [h.strip() for h in str(horizons_raw or '').split(',') if h.strip()]
+
+        if isinstance(metric_codes_raw, list):
+            metric_codes = [str(m).strip() for m in metric_codes_raw if str(m).strip()]
+        else:
+            metric_codes = [m.strip() for m in str(metric_codes_raw or '').split(',') if m.strip()]
+
+        if isinstance(no_wait_raw, str):
+            no_wait = no_wait_raw.strip().lower() in ('1', 'true', 'yes', 'on')
+        else:
+            no_wait = bool(no_wait_raw)
+
+        try:
+            poll_interval_sec = max(0.5, float(poll_interval_raw))
+        except (TypeError, ValueError):
+            poll_interval_sec = 2.0
+        try:
+            max_wait_sec = max(1.0, float(max_wait_raw))
+        except (TypeError, ValueError):
+            max_wait_sec = 120.0
+        try:
+            max_retries = max(0, int(max_retries_raw))
+        except (TypeError, ValueError):
+            max_retries = 5
+
+        model_options = model_options_raw if isinstance(model_options_raw, dict) else None
+
+        try:
+            from .forecasting.lstm_remote_service import run_lstm_remote_forecasts
+            payload = run_lstm_remote_forecasts(
+                serial=serial,
+                lookback_days=lookback_days,
+                freq=str(freq or '1h'),
+                horizons=horizons or None,
+                metric_codes=metric_codes or None,
+                wait_for_result=not no_wait,
+                poll_interval_sec=poll_interval_sec,
+                max_wait_sec=max_wait_sec,
+                max_retries=max_retries,
+                model_options=model_options,
+            )
+            return Response(payload, status=status.HTTP_200_OK)
+        except RuntimeError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        except Exception as exc:
+            return Response({"detail": f"lstm remote failed: {exc}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @action(detail=False, methods=['post'], permission_classes=[AdminGroupPermission])
+    def poll_lstm_remote(self, request):
+        run_id_raw = request.data.get('run_id')
+        serial = request.data.get('serial')
+        limit_raw = request.data.get('limit', 20)
+        poll_interval_raw = request.data.get('poll_interval_sec', 10.0)
+
+        run_id = None
+        if run_id_raw not in (None, ''):
+            try:
+                run_id = int(run_id_raw)
+            except (TypeError, ValueError):
+                return Response({"detail": "Invalid run_id"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            limit = max(1, int(limit_raw))
+        except (TypeError, ValueError):
+            limit = 20
+        try:
+            poll_interval_sec = max(1.0, float(poll_interval_raw))
+        except (TypeError, ValueError):
+            poll_interval_sec = 10.0
+
+        try:
+            from .forecasting.lstm_remote_service import poll_lstm_remote_runs
+            payload = poll_lstm_remote_runs(
+                run_id=run_id,
+                serial=serial,
+                limit=limit,
+                poll_interval_sec=poll_interval_sec,
+            )
+            return Response(payload, status=status.HTTP_200_OK)
+        except RuntimeError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        except Exception as exc:
+            return Response({"detail": f"lstm remote poll failed: {exc}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @action(detail=False, methods=['get'], permission_classes=[AdminGroupPermission])
+    def orchestrator_defaults(self, request):
+        try:
+            from .forecasting.orchestration_service import _default_ensemble_beta, _default_ensemble_weights
+            from .forecasting.state_inference_service import get_active_state_inference_profile_config, get_orchestrator_controls_config
+            profile_config = get_active_state_inference_profile_config()
+            return Response({
+                "ensemble_beta": _default_ensemble_beta(),
+                "ensemble_weights": _default_ensemble_weights(),
+                "orchestrator_controls": get_orchestrator_controls_config(config=profile_config),
+            }, status=status.HTTP_200_OK)
+        except Exception as exc:
+            return Response({"detail": f"orchestrator defaults failed: {exc}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @action(detail=False, methods=['post'], permission_classes=[AdminGroupPermission])
+    def run_orchestrated(self, request):
+        serial = request.data.get('serial')
+        sarima_lookback_raw = request.data.get('sarima_lookback_days', request.data.get('lookback_days', 60))
+        lstm_lookback_raw = request.data.get('lstm_lookback_days', request.data.get('lookback_days', 60))
+        sarima_freq = request.data.get('sarima_freq', request.data.get('freq', '1h'))
+        lstm_freq = request.data.get('lstm_freq', request.data.get('freq', '1h'))
+        sarima_seasonality_mode = request.data.get('sarima_seasonality_mode', request.data.get('seasonality_mode'))
+        horizons_raw = request.data.get('horizons', '24h,7d,30d')
+        metric_codes_raw = request.data.get('metric_codes', '')
+        save_stl_raw = request.data.get('save_stl_components', True)
+        wait_raw = request.data.get('wait_for_lstm', False)
+        poll_interval_raw = request.data.get('poll_interval_sec', 2.0)
+        max_wait_raw = request.data.get('max_wait_sec', 120.0)
+        max_retries_raw = request.data.get('max_retries', 5)
+        ensemble_beta_raw = request.data.get('ensemble_beta')
+        ensemble_sarima_weight_raw = request.data.get('ensemble_sarima_weight')
+        ensemble_lstm_weight_raw = request.data.get('ensemble_lstm_weight')
+        lstm_options_raw = request.data.get('lstm_options')
+
+        try:
+            sarima_lookback_days = max(1, int(sarima_lookback_raw))
+        except (TypeError, ValueError):
+            sarima_lookback_days = 60
+        try:
+            lstm_lookback_days = max(1, int(lstm_lookback_raw))
+        except (TypeError, ValueError):
+            lstm_lookback_days = 60
+
+        if isinstance(horizons_raw, list):
+            horizons = [str(h).strip() for h in horizons_raw if str(h).strip()]
+        else:
+            horizons = [h.strip() for h in str(horizons_raw or '').split(',') if h.strip()]
+
+        if isinstance(metric_codes_raw, list):
+            metric_codes = [str(m).strip() for m in metric_codes_raw if str(m).strip()]
+        else:
+            metric_codes = [m.strip() for m in str(metric_codes_raw or '').split(',') if m.strip()]
+
+        if isinstance(save_stl_raw, str):
+            save_stl_components = save_stl_raw.strip().lower() in ('1', 'true', 'yes', 'on')
+        else:
+            save_stl_components = bool(save_stl_raw)
+
+        if isinstance(wait_raw, str):
+            wait_for_lstm = wait_raw.strip().lower() in ('1', 'true', 'yes', 'on')
+        else:
+            wait_for_lstm = bool(wait_raw)
+
+        try:
+            poll_interval_sec = max(0.5, float(poll_interval_raw))
+        except (TypeError, ValueError):
+            poll_interval_sec = 2.0
+        try:
+            max_wait_sec = max(1.0, float(max_wait_raw))
+        except (TypeError, ValueError):
+            max_wait_sec = 120.0
+        try:
+            max_retries = max(0, int(max_retries_raw))
+        except (TypeError, ValueError):
+            max_retries = 5
+        try:
+            ensemble_beta = max(0.0, float(ensemble_beta_raw)) if ensemble_beta_raw not in (None, '') else None
+        except (TypeError, ValueError):
+            ensemble_beta = None
+        try:
+            ensemble_sarima_weight = max(0.0, float(ensemble_sarima_weight_raw)) if ensemble_sarima_weight_raw not in (None, '') else None
+        except (TypeError, ValueError):
+            ensemble_sarima_weight = None
+        try:
+            ensemble_lstm_weight = max(0.0, float(ensemble_lstm_weight_raw)) if ensemble_lstm_weight_raw not in (None, '') else None
+        except (TypeError, ValueError):
+            ensemble_lstm_weight = None
+
+        lstm_model_options = lstm_options_raw if isinstance(lstm_options_raw, dict) else None
+
+        ensemble_weights = None
+        if ensemble_sarima_weight is not None or ensemble_lstm_weight is not None:
+            ensemble_weights = {
+                "sarima": ensemble_sarima_weight if ensemble_sarima_weight is not None else 0.5,
+                "lstm": ensemble_lstm_weight if ensemble_lstm_weight is not None else 0.5,
+            }
+
+        try:
+            from .forecasting.orchestration_service import run_orchestrated_forecasts
+            payload = run_orchestrated_forecasts(
+                serial=serial,
+                sarima_lookback_days=sarima_lookback_days,
+                lstm_lookback_days=lstm_lookback_days,
+                sarima_freq=str(sarima_freq or '1h'),
+                lstm_freq=str(lstm_freq or '1h'),
+                horizons=horizons or None,
+                metric_codes=metric_codes or None,
+                save_stl_components=save_stl_components,
+                sarima_seasonality_mode=sarima_seasonality_mode,
+                wait_for_lstm=wait_for_lstm,
+                poll_interval_sec=poll_interval_sec,
+                max_wait_sec=max_wait_sec,
+                max_retries=max_retries,
+                ensemble_weights=ensemble_weights,
+                ensemble_beta=ensemble_beta,
+                lstm_model_options=lstm_model_options,
+            )
+            return Response(payload, status=status.HTTP_200_OK)
+        except RuntimeError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        except Exception as exc:
+            return Response({"detail": f"orchestrated forecast failed: {exc}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @action(detail=False, methods=['post'], permission_classes=[AdminGroupPermission])
+    def poll_orchestrated(self, request):
+        run_id_raw = request.data.get('run_id')
+        serial = request.data.get('serial')
+        limit_raw = request.data.get('limit', 20)
+        poll_interval_raw = request.data.get('poll_interval_sec', 10.0)
+
+        run_id = None
+        if run_id_raw not in (None, ''):
+            try:
+                run_id = int(run_id_raw)
+            except (TypeError, ValueError):
+                return Response({"detail": "Invalid run_id"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            limit = max(1, int(limit_raw))
+        except (TypeError, ValueError):
+            limit = 20
+        try:
+            poll_interval_sec = max(1.0, float(poll_interval_raw))
+        except (TypeError, ValueError):
+            poll_interval_sec = 10.0
+
+        try:
+            from .forecasting.orchestration_service import poll_orchestrated_forecasts
+            payload = poll_orchestrated_forecasts(
+                run_id=run_id,
+                serial=serial,
+                limit=limit,
+                poll_interval_sec=poll_interval_sec,
+            )
+            return Response(payload, status=status.HTTP_200_OK)
+        except RuntimeError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        except Exception as exc:
+            return Response({"detail": f"orchestrated poll failed: {exc}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class LSTMRemoteQueueJobViewSet(viewsets.ReadOnlyModelViewSet):
+    queryset = LSTMRemoteQueueJob.objects.all().select_related('forecast_run', 'device')
+    serializer_class = LSTMRemoteQueueJobSerializer
+    permission_classes = [IsAuthenticated, DjangoModelPermissions]
+
+    filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
+    filterset_fields = ['forecast_run', 'device', 'status']
+    ordering_fields = ['created_at', 'updated_at', 'next_retry_at', 'retry_count', 'attempts_submit', 'attempts_poll']
+    ordering = ['next_retry_at', '-id']
+
+    @action(detail=False, methods=['get'])
+    def latest(self, request):
+        serial = request.query_params.get('serial')
+        run_id = request.query_params.get('run_id')
+
+        qs = self.filter_queryset(self.get_queryset())
+        if serial:
+            qs = qs.filter(device__serial_number=serial)
+        if run_id:
+            qs = qs.filter(forecast_run_id=run_id)
+
+        row = qs.order_by('-created_at').first()
+        if not row:
+            return Response({"detail": "Queue job not found"}, status=status.HTTP_404_NOT_FOUND)
+        return Response(self.get_serializer(row).data, status=status.HTTP_200_OK)
 
 
 class ForecastPointViewSet(viewsets.ReadOnlyModelViewSet):
@@ -1076,6 +1776,8 @@ class ForecastPointViewSet(viewsets.ReadOnlyModelViewSet):
     def get_queryset(self):
         qs = super().get_queryset()
         since_hours = self.request.query_params.get('since_hours')
+        date_from = _parse_query_datetime(self.request.query_params.get('date_from'))
+        date_to = _parse_query_datetime(self.request.query_params.get('date_to'), end_of_day=True)
         if since_hours:
             try:
                 hours = int(since_hours)
@@ -1083,6 +1785,10 @@ class ForecastPointViewSet(viewsets.ReadOnlyModelViewSet):
                     qs = qs.filter(target_ts__gte=timezone.now() - timedelta(hours=hours))
             except ValueError:
                 pass
+        if date_from is not None:
+            qs = qs.filter(target_ts__gte=date_from)
+        if date_to is not None:
+            qs = qs.filter(target_ts__lte=date_to)
         return qs
 
     @action(detail=False, methods=['get'])
@@ -1124,6 +1830,9 @@ class StateEstimateViewSet(viewsets.ReadOnlyModelViewSet):
     def get_queryset(self):
         qs = super().get_queryset()
         since_hours = self.request.query_params.get('since_hours')
+        date_from = _parse_query_datetime(self.request.query_params.get('date_from'))
+        date_to = _parse_query_datetime(self.request.query_params.get('date_to'), end_of_day=True)
+        model_kind = self.request.query_params.get('model_kind')
         if since_hours:
             try:
                 hours = int(since_hours)
@@ -1131,6 +1840,12 @@ class StateEstimateViewSet(viewsets.ReadOnlyModelViewSet):
                     qs = qs.filter(timestamp__gte=timezone.now() - timedelta(hours=hours))
             except ValueError:
                 pass
+        if date_from is not None:
+            qs = qs.filter(timestamp__gte=date_from)
+        if date_to is not None:
+            qs = qs.filter(timestamp__lte=date_to)
+        if model_kind:
+            qs = qs.filter(run__model_kind=model_kind)
         return qs
 
     @action(detail=False, methods=['get'])
@@ -1150,10 +1865,1501 @@ class StateEstimateViewSet(viewsets.ReadOnlyModelViewSet):
         if horizon:
             qs = qs.filter(horizon=horizon)
 
-        row = qs.order_by('-timestamp', '-id').first()
+        row = qs.order_by('-run__created_at', '-created_at', '-id').first()
         if not row:
             return Response({"detail": "State estimate not found"}, status=status.HTTP_404_NOT_FOUND)
         return Response(self.get_serializer(row).data, status=status.HTTP_200_OK)
+
+
+class StateInferenceProfileViewSet(viewsets.ModelViewSet):
+    queryset = StateInferenceProfile.objects.all().select_related('created_by')
+    serializer_class = StateInferenceProfileSerializer
+    permission_classes = [AdminGroupPermission]
+    filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
+    filterset_fields = ['is_active', 'version']
+    ordering_fields = ['is_active', 'updated_at', 'created_at', 'version', 'name']
+    ordering = ['-is_active', '-updated_at', '-id']
+
+    def perform_create(self, serializer):
+        instance = serializer.save(
+            created_by=self.request.user if getattr(self.request.user, 'is_authenticated', False) else None,
+        )
+        if instance.is_active:
+            StateInferenceProfile.objects.exclude(id=instance.id).filter(is_active=True).update(is_active=False)
+
+    def perform_update(self, serializer):
+        instance = serializer.save()
+        if instance.is_active:
+            StateInferenceProfile.objects.exclude(id=instance.id).filter(is_active=True).update(is_active=False)
+
+    @action(detail=False, methods=['get'], permission_classes=[AdminGroupPermission], url_path='active')
+    def active(self, request):
+        from .forecasting.state_inference_service import build_default_state_inference_profile_payload
+
+        row = (
+            self.get_queryset()
+            .filter(is_active=True)
+            .order_by('-updated_at', '-id')
+            .first()
+        )
+        if row is not None:
+            return Response(self.get_serializer(row).data, status=status.HTTP_200_OK)
+
+        payload = build_default_state_inference_profile_payload()
+        payload.update({
+            "id": None,
+            "created_by": None,
+            "created_by_username": None,
+            "created_at": None,
+            "updated_at": None,
+            "is_fallback_default": True,
+        })
+        return Response(payload, status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=['get'], permission_classes=[AdminGroupPermission], url_path='defaults')
+    def defaults(self, request):
+        from .forecasting.state_inference_service import build_default_state_inference_profile_payload
+
+        return Response(build_default_state_inference_profile_payload(), status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=['post'], permission_classes=[AdminGroupPermission], url_path='bootstrap_defaults')
+    def bootstrap_defaults(self, request):
+        from .forecasting.state_inference_service import ensure_default_state_inference_profile
+
+        profile = ensure_default_state_inference_profile(
+            created_by=request.user if getattr(request.user, 'is_authenticated', False) else None,
+        )
+        return Response(self.get_serializer(profile).data, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['post'], permission_classes=[AdminGroupPermission], url_path='activate')
+    def activate(self, request, pk=None):
+        profile = self.get_object()
+        with transaction.atomic():
+            StateInferenceProfile.objects.exclude(id=profile.id).filter(is_active=True).update(is_active=False)
+            if not profile.is_active:
+                profile.is_active = True
+                profile.save(update_fields=['is_active', 'updated_at'])
+        return Response(self.get_serializer(profile).data, status=status.HTTP_200_OK)
+
+
+class DissertationEvaluationViewSet(viewsets.ViewSet):
+    permission_classes = [AdminGroupPermission]
+
+    @staticmethod
+    def _base_dir() -> Path:
+        base = Path(getattr(settings, "BASE_DIR", Path.cwd())) / "research" / "evaluation"
+        base.mkdir(parents=True, exist_ok=True)
+        return base.resolve()
+
+    @staticmethod
+    def _to_int(value, default, min_value=None, max_value=None):
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            parsed = default
+        if min_value is not None:
+            parsed = max(min_value, parsed)
+        if max_value is not None:
+            parsed = min(max_value, parsed)
+        return parsed
+
+    @staticmethod
+    def _parse_csv(raw, fallback):
+        if raw is None:
+            return list(fallback)
+        if isinstance(raw, list):
+            out = [str(v).strip() for v in raw if str(v).strip()]
+            return out or list(fallback)
+        out = [chunk.strip() for chunk in str(raw).split(",") if chunk.strip()]
+        return out or list(fallback)
+
+    @staticmethod
+    def _to_bool(value, default=False):
+        if value is None:
+            return bool(default)
+        if isinstance(value, bool):
+            return value
+        text = str(value).strip().lower()
+        if text in ("1", "true", "yes", "y", "on"):
+            return True
+        if text in ("0", "false", "no", "n", "off"):
+            return False
+        return bool(default)
+
+    def _run_dir(self, run_id: str) -> Path:
+        if not re.match(r"^run_[A-Za-z0-9_-]+$", str(run_id or "")):
+            raise RuntimeError("Invalid run_id format")
+        base = self._base_dir()
+        run_dir = (base / run_id).resolve()
+        if not str(run_dir).startswith(str(base)):
+            raise RuntimeError("Invalid run path")
+        if not run_dir.exists() or not run_dir.is_dir():
+            raise RuntimeError("Run directory not found")
+        return run_dir
+
+    @staticmethod
+    def _read_json(path: Path):
+        return json.loads(path.read_text(encoding="utf-8"))
+
+    def _load_manifest(self, run_dir: Path):
+        manifest_path = run_dir / "manifest.json"
+        if not manifest_path.exists():
+            raise RuntimeError("manifest.json not found")
+        return self._read_json(manifest_path)
+
+    @staticmethod
+    def _to_float(value):
+        try:
+            out = float(value)
+        except (TypeError, ValueError):
+            return None
+        if out != out:
+            return None
+        return out
+
+    def _read_csv_rows(self, path: Path, limit: int = 5000):
+        if not path.exists() or not path.is_file():
+            return []
+        rows = []
+        try:
+            with path.open("r", encoding="utf-8", newline="") as fh:
+                reader = csv.DictReader(fh)
+                for idx, row in enumerate(reader):
+                    if idx >= limit:
+                        break
+                    rows.append(dict(row))
+        except Exception:
+            return []
+        return rows
+
+    def _build_chart_data_from_artifacts(self, manifest: dict, run_dir: Path):
+        existing = manifest.get("chart_data")
+        chart_data = dict(existing) if isinstance(existing, dict) else {}
+
+        artifacts = manifest.get("artifacts") if isinstance(manifest, dict) else {}
+        if not isinstance(artifacts, dict):
+            artifacts = {}
+
+        def _artifact_path(key: str, fallback: str):
+            raw = artifacts.get(key)
+            if raw:
+                path = Path(str(raw)).resolve()
+                if str(path).startswith(str(run_dir)) and path.exists():
+                    return path
+            fallback_path = (run_dir / fallback).resolve()
+            if str(fallback_path).startswith(str(run_dir)) and fallback_path.exists():
+                return fallback_path
+            return None
+
+        model_h_path = _artifact_path("forecast_metrics_by_model_horizon_csv", "forecast_metrics_by_model_horizon.csv")
+        bucket_path = _artifact_path("forecast_metrics_by_bucket_csv", "forecast_metrics_by_bucket.csv")
+        variant_h_path = _artifact_path("forecast_metrics_by_variant_horizon_csv", "forecast_metrics_by_variant_horizon.csv")
+        prob_h_path = _artifact_path(
+            "forecast_prob_metrics_by_model_horizon_csv",
+            "forecast_prob_metrics_by_model_horizon.csv",
+        )
+        interval_h_path = _artifact_path(
+            "forecast_interval_calibration_by_model_horizon_csv",
+            "forecast_interval_calibration_by_model_horizon.csv",
+        )
+        dm_tests_path = _artifact_path("forecast_dm_tests_csv", "forecast_dm_tests.csv")
+        bootstrap_ci_path = _artifact_path("forecast_bootstrap_ci_csv", "forecast_bootstrap_ci.csv")
+        delta_h_path = _artifact_path("decision_delta_r_by_horizon_csv", "decision_delta_r_by_horizon.csv")
+
+        model_rows = self._read_csv_rows(model_h_path) if model_h_path else []
+        bucket_rows = self._read_csv_rows(bucket_path) if bucket_path else []
+        variant_rows = self._read_csv_rows(variant_h_path) if variant_h_path else []
+        prob_rows = self._read_csv_rows(prob_h_path) if prob_h_path else []
+        interval_rows = self._read_csv_rows(interval_h_path) if interval_h_path else []
+        dm_rows = self._read_csv_rows(dm_tests_path) if dm_tests_path else []
+        bootstrap_rows = self._read_csv_rows(bootstrap_ci_path) if bootstrap_ci_path else []
+        delta_rows = self._read_csv_rows(delta_h_path) if delta_h_path else []
+
+        normalized_model_rows = []
+        for row in model_rows:
+            normalized_model_rows.append({
+                "model_kind": row.get("model_kind"),
+                "horizon": row.get("horizon"),
+                "samples": self._to_int(row.get("samples"), default=0, min_value=0),
+                "mean_error": self._to_float(row.get("mean_error")),
+                "mae": self._to_float(row.get("mae")),
+                "rmse": self._to_float(row.get("rmse")),
+                "mape": self._to_float(row.get("mape")),
+                "smape": self._to_float(row.get("smape")),
+                "mase": self._to_float(row.get("mase")),
+                "rmsse": self._to_float(row.get("rmsse")),
+                "pinball_q10": self._to_float(row.get("pinball_q10")),
+                "pinball_q50": self._to_float(row.get("pinball_q50")),
+                "pinball_q90": self._to_float(row.get("pinball_q90")),
+                "pinball_avg": self._to_float(row.get("pinball_avg")),
+                "picp80": self._to_float(row.get("picp80")),
+                "ace80": self._to_float(row.get("ace80")),
+                "miw": self._to_float(row.get("miw")),
+                "winkler80": self._to_float(row.get("winkler80")),
+            })
+
+        normalized_variant_rows = []
+        for row in variant_rows:
+            normalized_variant_rows.append({
+                "variant_key": row.get("variant_key"),
+                "variant_label": row.get("variant_label"),
+                "model_kind": row.get("model_kind"),
+                "horizon": row.get("horizon"),
+                "samples": self._to_int(row.get("samples"), default=0, min_value=0),
+                "mean_error": self._to_float(row.get("mean_error")),
+                "mae": self._to_float(row.get("mae")),
+                "rmse": self._to_float(row.get("rmse")),
+                "mape": self._to_float(row.get("mape")),
+                "smape": self._to_float(row.get("smape")),
+                "mase": self._to_float(row.get("mase")),
+                "rmsse": self._to_float(row.get("rmsse")),
+                "pinball_q10": self._to_float(row.get("pinball_q10")),
+                "pinball_q50": self._to_float(row.get("pinball_q50")),
+                "pinball_q90": self._to_float(row.get("pinball_q90")),
+                "pinball_avg": self._to_float(row.get("pinball_avg")),
+                "picp80": self._to_float(row.get("picp80")),
+                "ace80": self._to_float(row.get("ace80")),
+                "miw": self._to_float(row.get("miw")),
+                "winkler80": self._to_float(row.get("winkler80")),
+            })
+
+        normalized_bucket_rows = []
+        for row in bucket_rows:
+            normalized_bucket_rows.append({
+                "model_kind": row.get("model_kind"),
+                "horizon": row.get("horizon"),
+                "metric_code": row.get("metric_code"),
+                "samples": self._to_int(row.get("samples"), default=0, min_value=0),
+                "mean_error": self._to_float(row.get("mean_error")),
+                "mae": self._to_float(row.get("mae")),
+                "rmse": self._to_float(row.get("rmse")),
+                "mape": self._to_float(row.get("mape")),
+                "smape": self._to_float(row.get("smape")),
+                "mase": self._to_float(row.get("mase")),
+                "rmsse": self._to_float(row.get("rmsse")),
+                "pinball_q10": self._to_float(row.get("pinball_q10")),
+                "pinball_q50": self._to_float(row.get("pinball_q50")),
+                "pinball_q90": self._to_float(row.get("pinball_q90")),
+                "pinball_avg": self._to_float(row.get("pinball_avg")),
+                "picp80": self._to_float(row.get("picp80")),
+                "ace80": self._to_float(row.get("ace80")),
+                "miw": self._to_float(row.get("miw")),
+                "winkler80": self._to_float(row.get("winkler80")),
+            })
+
+        normalized_prob_rows = []
+        for row in prob_rows:
+            normalized_prob_rows.append({
+                "model_kind": row.get("model_kind"),
+                "horizon": row.get("horizon"),
+                "samples": self._to_int(row.get("samples"), default=0, min_value=0),
+                "mean_error": self._to_float(row.get("mean_error")),
+                "smape": self._to_float(row.get("smape")),
+                "mase": self._to_float(row.get("mase")),
+                "rmsse": self._to_float(row.get("rmsse")),
+                "pinball_q10": self._to_float(row.get("pinball_q10")),
+                "pinball_q50": self._to_float(row.get("pinball_q50")),
+                "pinball_q90": self._to_float(row.get("pinball_q90")),
+                "pinball_avg": self._to_float(row.get("pinball_avg")),
+            })
+
+        normalized_interval_rows = []
+        for row in interval_rows:
+            normalized_interval_rows.append({
+                "model_kind": row.get("model_kind"),
+                "horizon": row.get("horizon"),
+                "samples": self._to_int(row.get("samples"), default=0, min_value=0),
+                "picp80": self._to_float(row.get("picp80")),
+                "ace80": self._to_float(row.get("ace80")),
+                "miw": self._to_float(row.get("miw")),
+                "winkler80": self._to_float(row.get("winkler80")),
+            })
+
+        normalized_delta_rows = []
+        for row in delta_rows:
+            normalized_delta_rows.append({
+                "horizon": row.get("horizon"),
+                "samples": self._to_int(row.get("samples"), default=0, min_value=0),
+                "expected_loss_with_system_mean": self._to_float(row.get("expected_loss_with_system_mean")),
+                "expected_loss_with_system_median": self._to_float(row.get("expected_loss_with_system_median")),
+                "expected_loss_without_system_mean": self._to_float(row.get("expected_loss_without_system_mean")),
+                "expected_loss_without_system_median": self._to_float(row.get("expected_loss_without_system_median")),
+                "delta_r_mean": self._to_float(row.get("delta_r_mean")),
+                "delta_r_median": self._to_float(row.get("delta_r_median")),
+                "delta_r_min": self._to_float(row.get("delta_r_min")),
+                "delta_r_max": self._to_float(row.get("delta_r_max")),
+                "delta_r_pct_mean": self._to_float(row.get("delta_r_pct_mean")),
+                "delta_r_pct_median": self._to_float(row.get("delta_r_pct_median")),
+                "share_positive": self._to_float(row.get("share_positive")),
+            })
+
+        normalized_dm_rows = []
+        for row in dm_rows:
+            normalized_dm_rows.append({
+                "horizon": row.get("horizon"),
+                "model_a": row.get("model_a"),
+                "model_b": row.get("model_b"),
+                "samples": self._to_int(row.get("samples"), default=0, min_value=0),
+                "mean_loss_diff": self._to_float(row.get("mean_loss_diff")),
+                "dm_stat": self._to_float(row.get("dm_stat")),
+                "p_value": self._to_float(row.get("p_value")),
+                "significant_005": str(row.get("significant_005") or "").strip().lower() in ("1", "true", "yes"),
+                "winner": row.get("winner"),
+            })
+
+        normalized_bootstrap_rows = []
+        for row in bootstrap_rows:
+            normalized_bootstrap_rows.append({
+                "model_kind": row.get("model_kind"),
+                "horizon": row.get("horizon"),
+                "metric": row.get("metric"),
+                "samples": self._to_int(row.get("samples"), default=0, min_value=0),
+                "estimate": self._to_float(row.get("estimate")),
+                "ci95_low": self._to_float(row.get("ci95_low")),
+                "ci95_high": self._to_float(row.get("ci95_high")),
+                "bootstrap_samples": self._to_int(row.get("bootstrap_samples"), default=0, min_value=0),
+                "bootstrap_block_size": self._to_int(row.get("bootstrap_block_size"), default=0, min_value=0),
+            })
+
+        if normalized_model_rows and not chart_data.get("forecast_metrics_by_model_horizon"):
+            chart_data["forecast_metrics_by_model_horizon"] = normalized_model_rows
+        if normalized_bucket_rows and not chart_data.get("forecast_metrics_by_bucket"):
+            chart_data["forecast_metrics_by_bucket"] = normalized_bucket_rows
+        if normalized_variant_rows and not chart_data.get("forecast_metrics_by_variant_horizon"):
+            chart_data["forecast_metrics_by_variant_horizon"] = normalized_variant_rows
+        if normalized_variant_rows and not chart_data.get("forecast_metrics_by_sarima_variant_horizon"):
+            chart_data["forecast_metrics_by_sarima_variant_horizon"] = [
+                row for row in normalized_variant_rows if str(row.get("model_kind") or "").lower() == "sarima"
+            ]
+        if normalized_prob_rows and not chart_data.get("forecast_prob_metrics_by_model_horizon"):
+            chart_data["forecast_prob_metrics_by_model_horizon"] = normalized_prob_rows
+        elif normalized_model_rows and not chart_data.get("forecast_prob_metrics_by_model_horizon"):
+            chart_data["forecast_prob_metrics_by_model_horizon"] = [
+                {
+                    "model_kind": row.get("model_kind"),
+                    "horizon": row.get("horizon"),
+                    "samples": row.get("samples"),
+                    "mean_error": row.get("mean_error"),
+                    "smape": row.get("smape"),
+                    "mase": row.get("mase"),
+                    "rmsse": row.get("rmsse"),
+                    "pinball_q10": row.get("pinball_q10"),
+                    "pinball_q50": row.get("pinball_q50"),
+                    "pinball_q90": row.get("pinball_q90"),
+                    "pinball_avg": row.get("pinball_avg"),
+                }
+                for row in normalized_model_rows
+            ]
+        if normalized_interval_rows and not chart_data.get("forecast_interval_calibration_by_model_horizon"):
+            chart_data["forecast_interval_calibration_by_model_horizon"] = normalized_interval_rows
+        elif normalized_model_rows and not chart_data.get("forecast_interval_calibration_by_model_horizon"):
+            chart_data["forecast_interval_calibration_by_model_horizon"] = [
+                {
+                    "model_kind": row.get("model_kind"),
+                    "horizon": row.get("horizon"),
+                    "samples": row.get("samples"),
+                    "picp80": row.get("picp80"),
+                    "ace80": row.get("ace80"),
+                    "miw": row.get("miw"),
+                    "winkler80": row.get("winkler80"),
+                }
+                for row in normalized_model_rows
+            ]
+        if normalized_delta_rows and not chart_data.get("decision_delta_r_by_horizon"):
+            chart_data["decision_delta_r_by_horizon"] = normalized_delta_rows
+        if normalized_dm_rows and not chart_data.get("stat_tests_dm"):
+            chart_data["stat_tests_dm"] = normalized_dm_rows
+        if normalized_bootstrap_rows and not chart_data.get("bootstrap_ci"):
+            chart_data["bootstrap_ci"] = normalized_bootstrap_rows
+        return chart_data
+
+    def _build_insights_from_chart_data(self, manifest: dict, chart_data: dict):
+        summary = manifest.get("summary") if isinstance(manifest, dict) else {}
+        if not isinstance(summary, dict):
+            summary = {}
+        existing = summary.get("insights")
+        existing = dict(existing) if isinstance(existing, dict) else {}
+
+        model_rows = chart_data.get("forecast_metrics_by_model_horizon") if isinstance(chart_data, dict) else []
+        delta_rows = chart_data.get("decision_delta_r_by_horizon") if isinstance(chart_data, dict) else []
+        if not isinstance(model_rows, list):
+            model_rows = []
+        if not isinstance(delta_rows, list):
+            delta_rows = []
+
+        best_rmse = min(
+            (row for row in model_rows if self._to_float(row.get("rmse")) is not None),
+            key=lambda row: float(row.get("rmse")),
+            default=None,
+        )
+        best_delta = max(
+            (row for row in delta_rows if self._to_float(row.get("delta_r_mean")) is not None),
+            key=lambda row: float(row.get("delta_r_mean")),
+            default=None,
+        )
+        variant_rows = chart_data.get("forecast_metrics_by_sarima_variant_horizon") if isinstance(chart_data, dict) else []
+        if not isinstance(variant_rows, list) or not variant_rows:
+            raw_variant_rows = chart_data.get("forecast_metrics_by_variant_horizon") if isinstance(chart_data, dict) else []
+            variant_rows = [
+                row for row in (raw_variant_rows if isinstance(raw_variant_rows, list) else [])
+                if str(row.get("model_kind") or "").lower() == "sarima"
+            ]
+        prob_rows = chart_data.get("forecast_prob_metrics_by_model_horizon") if isinstance(chart_data, dict) else []
+        if not isinstance(prob_rows, list) or not prob_rows:
+            prob_rows = model_rows
+        interval_rows = chart_data.get("forecast_interval_calibration_by_model_horizon") if isinstance(chart_data, dict) else []
+        if not isinstance(interval_rows, list) or not interval_rows:
+            interval_rows = model_rows
+        dm_rows = chart_data.get("stat_tests_dm") if isinstance(chart_data, dict) else []
+        if not isinstance(dm_rows, list):
+            dm_rows = []
+        best_sarima_variant = min(
+            (
+                row for row in variant_rows
+                if self._to_float(row.get("rmse")) is not None and str(row.get("variant_key") or "") != "sarima:unknown"
+            ),
+            key=lambda row: float(row.get("rmse")),
+            default=None,
+        )
+        best_pinball = min(
+            (row for row in prob_rows if self._to_float(row.get("pinball_avg")) is not None),
+            key=lambda row: float(row.get("pinball_avg")),
+            default=None,
+        )
+        best_interval_calibration = min(
+            (row for row in interval_rows if self._to_float(row.get("ace80")) is not None),
+            key=lambda row: float(row.get("ace80")),
+            default=None,
+        )
+        significant_dm = [
+            row for row in dm_rows
+            if bool(row.get("significant_005")) or (
+                self._to_float(row.get("p_value")) is not None and float(row.get("p_value")) < 0.05
+            )
+        ]
+        best_dm = min(
+            (row for row in dm_rows if self._to_float(row.get("p_value")) is not None),
+            key=lambda row: float(row.get("p_value")),
+            default=None,
+        )
+        coverage = self._to_float(summary.get("forecast_coverage"))
+        points_with_actual = self._to_int(summary.get("forecast_points_with_actual"), default=0, min_value=0)
+        points_with_actual_raw = self._to_int(summary.get("forecast_points_with_actual_raw"), default=points_with_actual, min_value=0)
+        points_compared = self._to_int(summary.get("forecast_points_compared"), default=points_with_actual, min_value=0)
+        points_total = self._to_int(summary.get("forecast_points_total"), default=0, min_value=0)
+        strict_enabled = bool(summary.get("strict_intersection_enabled"))
+
+        computed = {
+            "coverage_note": (
+                f"Покрытие фактом: {(coverage * 100.0):.1f}% "
+                f"({points_compared}/{points_total} точек для сравнения; raw {points_with_actual_raw}/{points_total}; "
+                f"strict={strict_enabled})."
+                if coverage is not None else "Покрытие фактом недоступно."
+            ),
+            "best_rmse": best_rmse,
+            "best_delta_horizon": best_delta,
+            "best_sarima_variant": best_sarima_variant,
+            "best_pinball": best_pinball,
+            "best_interval_calibration": best_interval_calibration,
+            "dm_tests": {
+                "total_pairs": len(dm_rows),
+                "significant_pairs_005": len(significant_dm),
+                "best_p_value_row": best_dm,
+            },
+        }
+        for key, value in computed.items():
+            if key not in existing or existing.get(key) in (None, "", [], {}):
+                existing[key] = value
+        return existing
+
+    @action(detail=False, methods=["post"], permission_classes=[AdminGroupPermission], url_path="run")
+    def run(self, request):
+        serial = (request.data.get("serial") or "").strip() or None
+        days_back = self._to_int(request.data.get("days_back"), default=120, min_value=1, max_value=2000)
+        target_date_from = request.data.get("target_date_from")
+        target_date_to = request.data.get("target_date_to")
+        actual_date_from = request.data.get("actual_date_from")
+        actual_date_to = request.data.get("actual_date_to")
+        horizons = self._parse_csv(request.data.get("horizons"), fallback=["24h", "7d", "30d"])
+        model_kinds = self._parse_csv(request.data.get("model_kinds"), fallback=["sarima", "lstm", "ensemble"])
+        forecast_run_ids = self._parse_csv(request.data.get("forecast_run_ids"), fallback=[])
+        baseline_action_code = (request.data.get("baseline_action_code") or "no_action").strip() or "no_action"
+        tag = (request.data.get("tag") or "").strip() or None
+        strict_intersection = self._to_bool(request.data.get("strict_intersection", True), default=True)
+        enable_stat_tests = self._to_bool(request.data.get("enable_stat_tests", True), default=True)
+        bootstrap_samples = self._to_int(request.data.get("bootstrap_samples"), default=300, min_value=50, max_value=2000)
+        bootstrap_block_size = self._to_int(request.data.get("bootstrap_block_size"), default=0, min_value=0, max_value=5000)
+
+        try:
+            from .forecasting.evaluation_service import run_dissertation_evaluation
+            payload = run_dissertation_evaluation(
+                serial=serial,
+                days_back=days_back,
+                target_date_from=target_date_from,
+                target_date_to=target_date_to,
+                actual_date_from=actual_date_from,
+                actual_date_to=actual_date_to,
+                horizons=horizons,
+                model_kinds=model_kinds,
+                forecast_run_ids=forecast_run_ids,
+                baseline_action_code=baseline_action_code,
+                output_dir=str(self._base_dir()),
+                tag=tag,
+                strict_intersection=strict_intersection,
+                enable_stat_tests=enable_stat_tests,
+                bootstrap_samples=bootstrap_samples,
+                bootstrap_block_size=(bootstrap_block_size if bootstrap_block_size > 0 else None),
+            )
+            return Response(payload, status=status.HTTP_200_OK)
+        except Exception as exc:
+            return Response({"detail": f"evaluation failed: {exc}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @action(detail=False, methods=["post"], permission_classes=[AdminGroupPermission], url_path="preview")
+    def preview(self, request):
+        serial = (request.data.get("serial") or "").strip() or None
+        days_back = self._to_int(request.data.get("days_back"), default=120, min_value=1, max_value=2000)
+        target_date_from = request.data.get("target_date_from")
+        target_date_to = request.data.get("target_date_to")
+        actual_date_from = request.data.get("actual_date_from")
+        actual_date_to = request.data.get("actual_date_to")
+        horizons = self._parse_csv(request.data.get("horizons"), fallback=["24h", "7d", "30d"])
+        model_kinds = self._parse_csv(request.data.get("model_kinds"), fallback=["sarima", "lstm", "ensemble"])
+        forecast_run_ids = self._parse_csv(request.data.get("forecast_run_ids"), fallback=[])
+        strict_intersection = self._to_bool(request.data.get("strict_intersection", True), default=True)
+
+        try:
+            from .forecasting.evaluation_service import preview_dissertation_evaluation
+            payload = preview_dissertation_evaluation(
+                serial=serial,
+                days_back=days_back,
+                target_date_from=target_date_from,
+                target_date_to=target_date_to,
+                actual_date_from=actual_date_from,
+                actual_date_to=actual_date_to,
+                horizons=horizons,
+                model_kinds=model_kinds,
+                forecast_run_ids=forecast_run_ids,
+                strict_intersection=strict_intersection,
+            )
+            return Response(payload, status=status.HTTP_200_OK)
+        except Exception as exc:
+            return Response({"detail": f"evaluation preview failed: {exc}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @action(detail=False, methods=["get"], permission_classes=[AdminGroupPermission], url_path="history")
+    def history(self, request):
+        limit = self._to_int(request.query_params.get("limit"), default=20, min_value=1, max_value=200)
+        serial_filter = str(request.query_params.get("serial") or "").strip()
+        base = self._base_dir()
+        rows = []
+        for child in base.iterdir():
+            if not child.is_dir() or not child.name.startswith("run_"):
+                continue
+            manifest_path = child / "manifest.json"
+            if not manifest_path.exists():
+                continue
+            try:
+                manifest = self._read_json(manifest_path)
+            except Exception:
+                continue
+            config = manifest.get("config") or {}
+            if serial_filter and str(config.get("serial") or "").strip() != serial_filter:
+                continue
+            rows.append({
+                "run_id": child.name,
+                "generated_at": manifest.get("generated_at"),
+                "output_dir": str(child),
+                "config": config,
+                "summary": manifest.get("summary") or {},
+                "artifacts": manifest.get("artifacts") or {},
+                "mtime": child.stat().st_mtime,
+            })
+        rows.sort(key=lambda row: row.get("generated_at") or row.get("mtime") or 0, reverse=True)
+        for row in rows:
+            row.pop("mtime", None)
+        return Response(rows[:limit], status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=["get"], permission_classes=[AdminGroupPermission], url_path="latest")
+    def latest(self, request):
+        history_response = self.history(request)
+        rows = history_response.data if isinstance(history_response.data, list) else []
+        if not rows:
+            return Response({"detail": "No evaluation runs found"}, status=status.HTTP_404_NOT_FOUND)
+        return Response(rows[0], status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=["get"], permission_classes=[AdminGroupPermission], url_path="detail")
+    def run_detail(self, request):
+        run_id = (request.query_params.get("run_id") or "").strip()
+        if not run_id:
+            return Response({"detail": "run_id is required"}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            run_dir = self._run_dir(run_id)
+            manifest = self._load_manifest(run_dir)
+            report_path = run_dir / "dissertation_evaluation_report.md"
+            report_text = report_path.read_text(encoding="utf-8") if report_path.exists() else ""
+            chart_data = self._build_chart_data_from_artifacts(manifest, run_dir)
+            insights = self._build_insights_from_chart_data(manifest, chart_data)
+            return Response({
+                "run_id": run_id,
+                "output_dir": str(run_dir),
+                "manifest": manifest,
+                "report_text": report_text,
+                "chart_data": chart_data,
+                "insights": insights,
+            }, status=status.HTTP_200_OK)
+        except RuntimeError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as exc:
+            return Response({"detail": f"detail read failed: {exc}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @action(detail=False, methods=["get"], permission_classes=[AdminGroupPermission], url_path="download")
+    def download(self, request):
+        run_id = (request.query_params.get("run_id") or "").strip()
+        artifact = (request.query_params.get("artifact") or "").strip()
+        if not run_id or not artifact:
+            return Response({"detail": "run_id and artifact are required"}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            run_dir = self._run_dir(run_id)
+            manifest = self._load_manifest(run_dir)
+            artifacts = manifest.get("artifacts") if isinstance(manifest, dict) else {}
+            if artifact in (artifacts or {}):
+                target = Path(artifacts[artifact]).resolve()
+            else:
+                target = (run_dir / artifact).resolve()
+            if not str(target).startswith(str(run_dir)):
+                return Response({"detail": "Invalid artifact path"}, status=status.HTTP_400_BAD_REQUEST)
+            if not target.exists() or not target.is_file():
+                return Response({"detail": "Artifact file not found"}, status=status.HTTP_404_NOT_FOUND)
+            response = FileResponse(target.open("rb"), as_attachment=True, filename=target.name)
+            return response
+        except RuntimeError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as exc:
+            return Response({"detail": f"download failed: {exc}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class MonitoringSystemViewSet(viewsets.ViewSet):
+    permission_classes = [AdminGroupPermission]
+
+    @staticmethod
+    def _evaluation_base_dir() -> Path:
+        base = Path(getattr(settings, "BASE_DIR", Path.cwd())) / "research" / "evaluation"
+        base.mkdir(parents=True, exist_ok=True)
+        return base.resolve()
+
+    def _summary_payload(self):
+        base = self._evaluation_base_dir()
+        evaluation_dirs = [child for child in base.iterdir() if child.is_dir() and child.name.startswith("run_")]
+        evaluation_files = 0
+        for child in evaluation_dirs:
+            try:
+                evaluation_files += sum(1 for _ in child.rglob("*") if _.is_file())
+            except Exception:
+                continue
+        return {
+            "raw_metrics": RawMetric.objects.count(),
+            "computed_metrics": ComputedMetric.objects.count(),
+            "agent_status_rows": AgentStatus.objects.count(),
+            "forecast_runs": ForecastRun.objects.count(),
+            "forecast_points": ForecastPoint.objects.count(),
+            "state_estimates": StateEstimate.objects.count(),
+            "lstm_queue_jobs": LSTMRemoteQueueJob.objects.count(),
+            "decision_runs": DecisionRun.objects.count(),
+            "evaluation_runs": len(evaluation_dirs),
+            "evaluation_files": evaluation_files,
+        }
+
+    @staticmethod
+    def _env_local_path() -> Path:
+        return (Path(getattr(settings, "BASE_DIR", Path.cwd())) / ".env.local").resolve()
+
+    @staticmethod
+    def _parse_env_line(raw_line: str):
+        line = str(raw_line or "").strip()
+        if not line or line.startswith("#"):
+            return None, None
+        if line.startswith("export "):
+            line = line[len("export "):].strip()
+        if "=" not in line:
+            return None, None
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip()
+        if not key:
+            return None, None
+        if (value.startswith('"') and value.endswith('"')) or (value.startswith("'") and value.endswith("'")):
+            value = value[1:-1]
+        return key, value
+
+    @classmethod
+    def _read_env_local_map(cls) -> dict[str, str]:
+        path = cls._env_local_path()
+        out: dict[str, str] = {}
+        if not path.exists():
+            return out
+        try:
+            for raw in path.read_text(encoding="utf-8").splitlines():
+                key, value = cls._parse_env_line(raw)
+                if key:
+                    out[key] = value
+        except Exception:
+            return {}
+        return out
+
+    @staticmethod
+    def _render_env_value(value: str) -> str:
+        text = str(value if value is not None else "")
+        if not text:
+            return ""
+        if any(ch in text for ch in (" ", "#", "\t")):
+            escaped = text.replace("\\", "\\\\").replace('"', '\\"')
+            return f"\"{escaped}\""
+        return text
+
+    @classmethod
+    def _upsert_env_local_values(cls, values: dict[str, str]) -> Path:
+        path = cls._env_local_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+        existing_lines: list[str] = []
+        if path.exists():
+            try:
+                existing_lines = path.read_text(encoding="utf-8").splitlines()
+            except Exception:
+                existing_lines = []
+
+        key_to_line_idx: dict[str, int] = {}
+        for idx, raw in enumerate(existing_lines):
+            key, _ = cls._parse_env_line(raw)
+            if key and key not in key_to_line_idx:
+                key_to_line_idx[key] = idx
+
+        normalized_values = {str(k): str(v if v is not None else "") for k, v in (values or {}).items()}
+        for key, value in normalized_values.items():
+            line = f"{key}={cls._render_env_value(value)}"
+            if key in key_to_line_idx:
+                existing_lines[key_to_line_idx[key]] = line
+            else:
+                existing_lines.append(line)
+            os.environ[key] = value
+
+        content = "\n".join(existing_lines).rstrip("\n")
+        path.write_text(content + "\n", encoding="utf-8")
+        return path
+
+    @staticmethod
+    def _as_bool(value, default=False):
+        if value is None:
+            return bool(default)
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            return bool(value)
+        return str(value).strip().lower() in ("1", "true", "yes", "on")
+
+    @staticmethod
+    def _token_preview(token: str) -> str:
+        text = str(token or "")
+        if not text:
+            return ""
+        if len(text) <= 10:
+            return "*" * len(text)
+        return f"{text[:6]}...{text[-4:]}"
+
+    @staticmethod
+    def _split_lstm_base_url(base_url: str):
+        raw = str(base_url or "").strip()
+        if not raw:
+            raw = "http://127.0.0.1:8099"
+        if "://" not in raw:
+            raw = f"http://{raw}"
+        try:
+            parsed = urlsplit(raw)
+        except Exception:
+            parsed = urlsplit("http://127.0.0.1:8099")
+        scheme = (parsed.scheme or "http").strip().lower()
+        if scheme not in {"http", "https"}:
+            scheme = "http"
+        host = (parsed.hostname or "").strip()
+        if not host:
+            host = "127.0.0.1"
+        default_port = 443 if scheme == "https" else 80
+        port = parsed.port or default_port
+        return {
+            "scheme": scheme,
+            "host": host,
+            "port": int(port),
+        }
+
+    @staticmethod
+    def _build_lstm_base_url(*, scheme: str, host: str, port: int):
+        scheme_value = str(scheme or "http").strip().lower()
+        if scheme_value not in {"http", "https"}:
+            scheme_value = "http"
+        host_value = str(host or "").strip()
+        if not host_value:
+            raise ValueError("lstm_host is required")
+        if ":" in host_value and not host_value.startswith("[") and not host_value.endswith("]"):
+            host_value = f"[{host_value}]"
+        port_value = int(port)
+        if port_value < 1 or port_value > 65535:
+            raise ValueError("lstm_port must be in range 1..65535")
+        return f"{scheme_value}://{host_value}:{port_value}"
+
+    @classmethod
+    def _lstm_config_payload(cls, *, include_token: bool = False):
+        env_local = cls._read_env_local_map()
+        base_url_raw = str(
+            env_local.get("LSTM_REMOTE_API_BASE_URL")
+            or os.environ.get("LSTM_REMOTE_API_BASE_URL")
+            or "http://127.0.0.1:8099"
+        ).strip()
+        parsed = cls._split_lstm_base_url(base_url_raw)
+        scheme = str(
+            env_local.get("LSTM_REMOTE_API_SCHEME")
+            or os.environ.get("LSTM_REMOTE_API_SCHEME")
+            or parsed["scheme"]
+        ).strip().lower()
+        if scheme not in {"http", "https"}:
+            scheme = parsed["scheme"]
+        host = str(
+            env_local.get("LSTM_REMOTE_API_HOST")
+            or os.environ.get("LSTM_REMOTE_API_HOST")
+            or parsed["host"]
+        ).strip() or parsed["host"]
+        port_raw = env_local.get("LSTM_REMOTE_API_PORT", os.environ.get("LSTM_REMOTE_API_PORT", str(parsed["port"])))
+        try:
+            port = int(port_raw)
+        except (TypeError, ValueError):
+            port = int(parsed["port"])
+        if port < 1 or port > 65535:
+            port = int(parsed["port"])
+        try:
+            base_url = cls._build_lstm_base_url(scheme=scheme, host=host, port=port)
+        except Exception:
+            scheme = parsed["scheme"]
+            host = parsed["host"]
+            port = parsed["port"]
+            base_url = cls._build_lstm_base_url(scheme=scheme, host=host, port=port)
+
+        api_token = str(
+            env_local.get("LSTM_REMOTE_API_TOKEN")
+            or os.environ.get("LSTM_REMOTE_API_TOKEN")
+            or ""
+        ).strip()
+
+        timeout_raw = env_local.get("LSTM_REMOTE_TIMEOUT_SEC", os.environ.get("LSTM_REMOTE_TIMEOUT_SEC", "20"))
+        verify_raw = env_local.get("LSTM_REMOTE_VERIFY_SSL", os.environ.get("LSTM_REMOTE_VERIFY_SSL", "0"))
+
+        try:
+            timeout_sec = float(timeout_raw)
+        except (TypeError, ValueError):
+            timeout_sec = 20.0
+        timeout_sec = max(1.0, min(timeout_sec, 180.0))
+        verify_ssl = cls._as_bool(verify_raw, default=False)
+
+        payload = {
+            "base_url": base_url,
+            "scheme": scheme,
+            "lstm_host": host,
+            "lstm_port": port,
+            "timeout_sec": timeout_sec,
+            "verify_ssl": verify_ssl,
+            "has_token": bool(api_token),
+            "token_preview": cls._token_preview(api_token),
+            "env_file": str(cls._env_local_path()),
+            "env_file_exists": cls._env_local_path().exists(),
+        }
+        if include_token:
+            payload["api_token"] = api_token
+        return payload
+
+    @action(detail=False, methods=["get"], permission_classes=[AdminGroupPermission], url_path="summary")
+    def summary(self, request):
+        return Response(self._summary_payload(), status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=["get"], permission_classes=[AdminGroupPermission], url_path="lstm-config")
+    def lstm_config(self, request):
+        return Response(self._lstm_config_payload(include_token=True), status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=["post"], permission_classes=[AdminGroupPermission], url_path="save-lstm-config")
+    def save_lstm_config(self, request):
+        current = self._lstm_config_payload(include_token=True)
+        incoming_base_url = str(request.data.get("base_url", "")).strip()
+        scheme = str(request.data.get("scheme", current.get("scheme") or "http")).strip().lower()
+        if scheme not in {"http", "https"}:
+            return Response({"detail": "scheme must be http or https"}, status=status.HTTP_400_BAD_REQUEST)
+        lstm_host = str(request.data.get("lstm_host", current.get("lstm_host") or "")).strip()
+        lstm_port_raw = request.data.get("lstm_port", current.get("lstm_port", 8099))
+        if incoming_base_url:
+            parsed = self._split_lstm_base_url(incoming_base_url)
+            if not lstm_host:
+                lstm_host = parsed["host"]
+            if "lstm_port" not in request.data:
+                lstm_port_raw = parsed["port"]
+            if "scheme" not in request.data:
+                scheme = parsed["scheme"]
+
+        if not lstm_host:
+            return Response({"detail": "lstm_host is required"}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            lstm_port = int(lstm_port_raw)
+        except (TypeError, ValueError):
+            return Response({"detail": "lstm_port must be an integer"}, status=status.HTTP_400_BAD_REQUEST)
+        if lstm_port < 1 or lstm_port > 65535:
+            return Response({"detail": "lstm_port must be in range 1..65535"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            base_url = self._build_lstm_base_url(scheme=scheme, host=lstm_host, port=lstm_port)
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        timeout_raw = request.data.get("timeout_sec", current.get("timeout_sec", 20))
+        verify_ssl = self._as_bool(request.data.get("verify_ssl", current.get("verify_ssl", False)), default=False)
+
+        token_provided = "api_token" in request.data
+        if token_provided:
+            api_token = str(request.data.get("api_token") or "").strip()
+        else:
+            api_token = str(current.get("api_token") or "").strip()
+
+        if not base_url:
+            return Response({"detail": "base_url is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            timeout_sec = float(timeout_raw)
+        except (TypeError, ValueError):
+            return Response({"detail": "timeout_sec must be a number"}, status=status.HTTP_400_BAD_REQUEST)
+        timeout_sec = max(1.0, min(timeout_sec, 180.0))
+
+        try:
+            self._upsert_env_local_values({
+                "LSTM_REMOTE_API_BASE_URL": base_url,
+                "LSTM_REMOTE_API_SCHEME": scheme,
+                "LSTM_REMOTE_API_HOST": lstm_host,
+                "LSTM_REMOTE_API_PORT": str(lstm_port),
+                "LSTM_REMOTE_API_TOKEN": api_token,
+                "LSTM_REMOTE_TIMEOUT_SEC": str(timeout_sec),
+                "LSTM_REMOTE_VERIFY_SSL": "1" if verify_ssl else "0",
+            })
+        except Exception as exc:
+            return Response({"detail": f"Не удалось сохранить .env.local: {exc}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        return Response({
+            "detail": "Настройки LSTM сохранены в .env.local",
+            "config": self._lstm_config_payload(include_token=True),
+        }, status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=["post"], permission_classes=[AdminGroupPermission], url_path="generate-lstm-token")
+    def generate_lstm_token(self, request):
+        bytes_raw = request.data.get("bytes", 32)
+        save_immediately = self._as_bool(request.data.get("save", True), default=True)
+        try:
+            token_bytes = int(bytes_raw)
+        except (TypeError, ValueError):
+            token_bytes = 32
+        token_bytes = max(16, min(token_bytes, 64))
+        token = secrets.token_hex(token_bytes)
+
+        if save_immediately:
+            try:
+                self._upsert_env_local_values({
+                    "LSTM_REMOTE_API_TOKEN": token,
+                })
+            except Exception as exc:
+                return Response({"detail": f"Не удалось сохранить токен в .env.local: {exc}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        else:
+            os.environ["LSTM_REMOTE_API_TOKEN"] = token
+
+        return Response({
+            "detail": "Новый токен сгенерирован.",
+            "generated_token": token,
+            "saved_to_env_local": bool(save_immediately),
+            "config": self._lstm_config_payload(include_token=True),
+        }, status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=["post"], permission_classes=[AdminGroupPermission], url_path="clear-history")
+    def clear_history(self, request):
+        before = self._summary_payload()
+        base = self._evaluation_base_dir()
+        cleared_dirs = 0
+
+        with transaction.atomic():
+            DecisionRun.objects.all().delete()
+            StateEstimate.objects.all().delete()
+            ForecastPoint.objects.all().delete()
+            LSTMRemoteQueueJob.objects.all().delete()
+            ForecastRun.objects.all().delete()
+            RawMetric.objects.all().delete()
+            ComputedMetric.objects.all().delete()
+            AgentStatus.objects.all().delete()
+
+        for child in list(base.iterdir()):
+            if not child.is_dir() or not child.name.startswith("run_"):
+                continue
+            try:
+                shutil.rmtree(child)
+                cleared_dirs += 1
+            except Exception:
+                continue
+
+        after = self._summary_payload()
+        return Response({
+            "detail": "История мониторинга очищена.",
+            "before": before,
+            "after": after,
+            "cleared_evaluation_runs": cleared_dirs,
+        }, status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=["get"], permission_classes=[AdminGroupPermission], url_path="pipeline-report")
+    def pipeline_report(self, request):
+        serial = str(request.query_params.get("serial") or "").strip()
+        horizon = str(request.query_params.get("horizon") or "30d").strip() or "30d"
+        decision_mode = str(request.query_params.get("decision_mode") or "bayes").strip() or "bayes"
+        raw_horizons = request.query_params.getlist("forecast_horizons")
+        if not raw_horizons:
+            raw_horizons = [request.query_params.get("forecast_horizons") or ""]
+        forecast_horizons = []
+        for chunk in raw_horizons:
+            for item in str(chunk or "").split(","):
+                cleaned = item.strip()
+                if cleaned:
+                    forecast_horizons.append(cleaned)
+
+        if not serial:
+            return Response({"detail": "serial is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            from .forecasting.pipeline_report_service import build_pipeline_summary_report
+
+            payload = build_pipeline_summary_report(
+                serial=serial,
+                horizon=horizon,
+                decision_mode=decision_mode,
+                forecast_horizons=forecast_horizons,
+            )
+            pdf_path = Path(payload["pdf_path"]).resolve()
+            return FileResponse(pdf_path.open("rb"), as_attachment=True, filename=payload.get("file_name") or pdf_path.name)
+        except RuntimeError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as exc:
+            return Response({"detail": f"pipeline report failed: {exc}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class ApplicationUpdateViewSet(viewsets.ReadOnlyModelViewSet):
+    permission_classes = [AdminGroupPermission]
+    serializer_class = ApplicationUpdateJobSerializer
+    queryset = ApplicationUpdateJob.objects.all().order_by('-created_at')
+
+    @staticmethod
+    def _last_job_payload():
+        job = ApplicationUpdateJob.objects.order_by('-created_at').first()
+        if not job:
+            return None
+        return ApplicationUpdateJobSerializer(job).data
+
+    @action(detail=False, methods=["get"], permission_classes=[AdminGroupPermission], url_path="status")
+    def status_info(self, request):
+        payload = get_current_release_info()
+        payload["last_job"] = self._last_job_payload()
+        payload["can_start_update"] = bool(payload.get("update_enabled")) and bool(payload.get("update_script_exists"))
+        if not payload.get("update_enabled"):
+            payload["blocked_reason"] = "APP_UPDATE_ENABLED=0. Включите обновления на сервере явно."
+        elif not payload.get("update_script_exists"):
+            payload["blocked_reason"] = "Скрипт обновления не найден."
+        else:
+            payload["blocked_reason"] = ""
+        return Response(payload, status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=["post"], permission_classes=[AdminGroupPermission], url_path="check")
+    def check(self, request):
+        manifest_url = str(request.data.get("manifest_url") or "").strip() or None
+        try:
+            payload = check_for_update(manifest_url=manifest_url)
+        except Exception as exc:
+            return Response({"detail": f"Не удалось проверить обновления: {exc}"}, status=status.HTTP_400_BAD_REQUEST)
+        payload["last_job"] = self._last_job_payload()
+        return Response(payload, status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=["post"], permission_classes=[AdminGroupPermission], url_path="start-update")
+    def start_update(self, request):
+        current = get_current_release_info()
+        if not current.get("update_enabled"):
+            return Response(
+                {"detail": "Обновление из интерфейса выключено. Установите APP_UPDATE_ENABLED=1 на сервере."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not current.get("update_script_exists"):
+            return Response(
+                {"detail": f"Скрипт обновления не найден: {current.get('update_script')}"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            check_payload = check_for_update()
+        except Exception as exc:
+            return Response({"detail": f"Не удалось получить manifest обновления: {exc}"}, status=status.HTTP_400_BAD_REQUEST)
+
+        force = MonitoringSystemViewSet._as_bool(request.data.get("force", False), default=False)
+        if not check_payload.get("update_available") and not force:
+            return Response({"detail": "Новая версия не найдена. Для принудительного запуска передайте force=true."}, status=status.HTTP_400_BAD_REQUEST)
+
+        manifest = check_payload.get("manifest") or {}
+        job = ApplicationUpdateJob.objects.create(
+            status="queued",
+            current_version=current.get("current_version") or "",
+            target_version=manifest.get("version") or "",
+            release_channel=manifest.get("channel") or current.get("release_channel") or "single",
+            manifest_url=current.get("manifest_url") or "",
+            git_ref=manifest.get("git_ref") or "",
+            release_notes=manifest.get("notes") or [],
+            parameters={
+                "manifest": manifest,
+                "force": force,
+                "git_commit_before": current.get("git_commit"),
+                "git_branch_before": current.get("git_branch"),
+            },
+            created_by=request.user if request.user.is_authenticated else None,
+        )
+        try:
+            launch_update_worker(job)
+        except Exception as exc:
+            job.status = "failed"
+            job.error = f"Не удалось запустить процесс обновления: {exc}"
+            job.finished_at = timezone.now()
+            job.save(update_fields=["status", "error", "finished_at", "updated_at"])
+            return Response(ApplicationUpdateJobSerializer(job).data, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        return Response(ApplicationUpdateJobSerializer(job).data, status=status.HTTP_202_ACCEPTED)
+
+
+class RiskAssessmentViewSet(viewsets.ViewSet):
+    permission_classes = [IsAuthenticated]
+
+    @staticmethod
+    def _to_bool(value, default=False):
+        if value is None:
+            return default
+        if isinstance(value, bool):
+            return value
+        return str(value).strip().lower() in ('1', 'true', 'yes', 'on')
+
+    @staticmethod
+    def _parse_horizons(raw):
+        if raw is None:
+            return None
+        if isinstance(raw, list):
+            out = [str(item).strip() for item in raw if str(item).strip()]
+            return out or None
+        text = str(raw).strip()
+        if not text:
+            return None
+        return [item.strip() for item in text.split(',') if item.strip()] or None
+
+    @action(detail=False, methods=['get'], permission_classes=[AdminGroupPermission])
+    def defaults(self, request):
+        from .forecasting.risk_assessment_service import (
+            DEFAULT_HORIZONS,
+            BASE_THRESHOLDS,
+            WEAR_WEIBULL_DEFAULTS,
+            BASE_METRIC_WEIGHTS,
+        )
+        return Response({
+            "default_horizons": list(DEFAULT_HORIZONS),
+            "base_thresholds": dict(BASE_THRESHOLDS),
+            "wear_weibull_defaults": dict(WEAR_WEIBULL_DEFAULTS),
+            "base_metric_weights": dict(BASE_METRIC_WEIGHTS),
+        }, status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=['post'], permission_classes=[AdminGroupPermission])
+    def evaluate(self, request):
+        serial = request.data.get('serial')
+        device_id_raw = request.data.get('device')
+        horizons = self._parse_horizons(request.data.get('horizons'))
+        preferred_model_kind = str(request.data.get('preferred_model_kind', 'auto') or 'auto')
+        personalized_thresholds = self._to_bool(request.data.get('personalized_thresholds', True), default=True)
+
+        threshold_lookback_raw = request.data.get('threshold_lookback_days', 60)
+        markov_lookback_raw = request.data.get('markov_lookback_days', 120)
+        markov_smoothing_raw = request.data.get('markov_smoothing', 1.0)
+        type_blend_raw = request.data.get('type_blend', 0.35)
+        overall_weight_markov_raw = request.data.get('overall_weight_markov', 0.65)
+        history_limit_raw = request.data.get('history_limit', 12)
+
+        device_id = None
+        if device_id_raw not in (None, ''):
+            try:
+                device_id = int(device_id_raw)
+            except (TypeError, ValueError):
+                return Response({"detail": "Invalid device id"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            threshold_lookback_days = max(1, int(threshold_lookback_raw))
+        except (TypeError, ValueError):
+            threshold_lookback_days = 60
+        try:
+            markov_lookback_days = max(1, int(markov_lookback_raw))
+        except (TypeError, ValueError):
+            markov_lookback_days = 120
+        try:
+            markov_smoothing = max(0.001, float(markov_smoothing_raw))
+        except (TypeError, ValueError):
+            markov_smoothing = 1.0
+        try:
+            type_blend = max(0.0, float(type_blend_raw))
+        except (TypeError, ValueError):
+            type_blend = 0.35
+        try:
+            overall_weight_markov = min(1.0, max(0.0, float(overall_weight_markov_raw)))
+        except (TypeError, ValueError):
+            overall_weight_markov = 0.65
+        try:
+            history_limit = max(3, min(64, int(history_limit_raw)))
+        except (TypeError, ValueError):
+            history_limit = 12
+
+        try:
+            from .forecasting.risk_assessment_service import (
+                RiskAssessmentError,
+                evaluate_risk_assessment,
+            )
+            payload = evaluate_risk_assessment(
+                serial=serial,
+                device_id=device_id,
+                horizons=horizons,
+                preferred_model_kind=preferred_model_kind,
+                personalized_thresholds=personalized_thresholds,
+                threshold_lookback_days=threshold_lookback_days,
+                markov_lookback_days=markov_lookback_days,
+                markov_smoothing=markov_smoothing,
+                type_blend=type_blend,
+                overall_weight_markov=overall_weight_markov,
+                history_limit=history_limit,
+            )
+            return Response(payload, status=status.HTTP_200_OK)
+        except RiskAssessmentError as exc:
+            return Response({"detail": str(exc)}, status=getattr(exc, "status_code", status.HTTP_400_BAD_REQUEST))
+        except Exception as exc:
+            return Response({"detail": f"risk assessment failed: {exc}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class DecisionActionViewSet(viewsets.ModelViewSet):
+    queryset = DecisionAction.objects.all()
+    serializer_class = DecisionActionSerializer
+    permission_classes = [AdminGroupPermission]
+
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_fields = ['is_active', 'code']
+    search_fields = ['code', 'name', 'description']
+    ordering_fields = ['id', 'code', 'name', 'updated_at']
+    ordering = ['name']
+
+    def destroy(self, request, *args, **kwargs):
+        instance: DecisionAction = self.get_object()
+        has_links = (
+            instance.policy_losses.exists()
+            or instance.run_scores.exists()
+            or instance.recommended_runs.exists()
+            or instance.feedback_items.exists()
+        )
+        if has_links:
+            if instance.is_active:
+                instance.is_active = False
+                instance.save(update_fields=['is_active', 'updated_at'])
+            return Response(
+                {"detail": "Action is referenced in history and was archived (is_active=false) instead of hard delete."},
+                status=status.HTTP_200_OK,
+            )
+        return super().destroy(request, *args, **kwargs)
+
+
+class DecisionCriterionViewSet(viewsets.ModelViewSet):
+    queryset = DecisionCriterion.objects.all()
+    serializer_class = DecisionCriterionSerializer
+    permission_classes = [AdminGroupPermission]
+
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_fields = ['is_active', 'code']
+    search_fields = ['code', 'name', 'description']
+    ordering_fields = ['id', 'code', 'name', 'updated_at']
+    ordering = ['name']
+
+    def destroy(self, request, *args, **kwargs):
+        instance: DecisionCriterion = self.get_object()
+        has_links = (
+            instance.ahp_as_i.exists()
+            or instance.ahp_as_j.exists()
+            or instance.run_utilities.exists()
+        )
+        if has_links:
+            if instance.is_active:
+                instance.is_active = False
+                instance.save(update_fields=['is_active', 'updated_at'])
+            return Response(
+                {"detail": "Criterion is referenced in history and was archived (is_active=false) instead of hard delete."},
+                status=status.HTTP_200_OK,
+            )
+        return super().destroy(request, *args, **kwargs)
+
+
+class DecisionPolicyViewSet(viewsets.ModelViewSet):
+    queryset = DecisionPolicy.objects.all().select_related('device', 'device_type', 'previous_version', 'created_by')
+    serializer_class = DecisionPolicySerializer
+    permission_classes = [AdminGroupPermission]
+
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_fields = ['is_active', 'scope', 'horizon', 'device_type', 'device']
+    search_fields = ['name', 'notes']
+    ordering_fields = ['id', 'name', 'version', 'horizon', 'updated_at', 'created_at']
+    ordering = ['-updated_at']
+
+    def perform_create(self, serializer):
+        serializer.save(created_by=self.request.user if self.request and self.request.user.is_authenticated else None)
+
+    @action(detail=False, methods=['post'], permission_classes=[AdminGroupPermission], url_path='bootstrap_defaults')
+    def bootstrap_defaults(self, request):
+        from .forecasting.decision_support_service import bootstrap_decision_defaults
+        rows = bootstrap_decision_defaults(created_by=request.user if request.user.is_authenticated else None)
+        return Response({
+            "created_or_updated": len(rows),
+            "policy_ids": [row.id for row in rows],
+        }, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['get', 'put', 'patch', 'post'], permission_classes=[AdminGroupPermission], url_path='ahp_matrix')
+    def ahp_matrix(self, request, pk=None):
+        policy = self.get_object()
+        from .forecasting.decision_support_service import get_policy_ahp_matrix, upsert_policy_ahp_pairs
+
+        if request.method.lower() in ('put', 'patch', 'post'):
+            payload_serializer = DecisionAHPMatrixUpsertSerializer(data=request.data)
+            payload_serializer.is_valid(raise_exception=True)
+            pairs = payload_serializer.validated_data.get('pairs', [])
+            try:
+                upsert_policy_ahp_pairs(policy, pairs)
+            except RuntimeError as exc:
+                return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(get_policy_ahp_matrix(policy), status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['post'], permission_classes=[AdminGroupPermission], url_path='ahp_validate')
+    def ahp_validate(self, request, pk=None):
+        policy = self.get_object()
+        from .forecasting.decision_support_service import validate_policy_ahp
+        return Response(validate_policy_ahp(policy), status=status.HTTP_200_OK)
+
+
+class DecisionPolicyLossViewSet(viewsets.ModelViewSet):
+    queryset = DecisionPolicyLoss.objects.all().select_related('policy', 'action')
+    serializer_class = DecisionPolicyLossSerializer
+    permission_classes = [AdminGroupPermission]
+
+    filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
+    filterset_fields = ['policy', 'action']
+    ordering_fields = ['id', 'policy', 'action', 'updated_at']
+    ordering = ['policy_id', 'action_id']
+
+
+class DecisionRunViewSet(viewsets.ReadOnlyModelViewSet):
+    queryset = (
+        DecisionRun.objects.all()
+        .select_related('device', 'policy', 'recommended_action', 'created_by')
+        .prefetch_related('scores', 'criterion_utilities', 'feedback')
+    )
+    serializer_class = DecisionRunSerializer
+    permission_classes = [AdminGroupPermission]
+
+    filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
+    filterset_fields = ['device', 'policy', 'horizon', 'mode', 'status']
+    ordering_fields = ['id', 'created_at', 'updated_at', 'horizon']
+    ordering = ['-created_at']
+
+    @action(detail=False, methods=['get'])
+    def latest(self, request):
+        serial = request.query_params.get('serial')
+        device_id = request.query_params.get('device')
+        mode = request.query_params.get('mode')
+        horizon = request.query_params.get('horizon')
+
+        qs = self.filter_queryset(self.get_queryset())
+        if serial:
+            device = Device.objects.filter(serial_number=serial).first()
+            if not device:
+                return Response({"detail": "Device not found"}, status=status.HTTP_404_NOT_FOUND)
+            qs = qs.filter(device=device)
+        if device_id:
+            qs = qs.filter(device_id=device_id)
+        if mode:
+            qs = qs.filter(mode=mode)
+        if horizon:
+            qs = qs.filter(horizon=horizon)
+
+        row = qs.order_by('-created_at').first()
+        if not row:
+            return Response({"detail": "Decision run not found"}, status=status.HTTP_404_NOT_FOUND)
+        return Response(self.get_serializer(row).data, status=status.HTTP_200_OK)
+
+    def _run_recommendation(self, request, forced_mode: str | None = None):
+        req = DecisionRecommendationRequestSerializer(data=request.data)
+        req.is_valid(raise_exception=True)
+        data = req.validated_data
+
+        mode = forced_mode or data.get('mode') or 'bayes'
+        if mode not in ('bayes', 'advanced'):
+            mode = 'bayes'
+
+        try:
+            from .forecasting.decision_support_service import run_decision_recommendation
+            run = run_decision_recommendation(
+                serial=data.get('serial') or None,
+                device_id=data.get('device'),
+                horizon=data.get('horizon', '24h'),
+                policy_id=data.get('policy_id'),
+                mode=mode,
+                user=request.user if request.user.is_authenticated else None,
+                bayes_weight=data.get('bayes_weight', 0.5),
+                ahp_weight=data.get('ahp_weight', 0.5),
+                sensitivity_weights=data.get('sensitivity_weights') or {},
+                overall_weight_markov=data.get('overall_weight_markov', 0.65),
+                risk_metric_min_risk=data.get('risk_metric_min_risk', 0.08),
+                risk_metric_min_contribution=data.get('risk_metric_min_contribution', 0.03),
+                risk_metric_top_k_fallback=data.get('risk_metric_top_k_fallback', 3),
+            )
+            return Response(self.get_serializer(run).data, status=status.HTTP_200_OK)
+        except RuntimeError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as exc:
+            return Response({"detail": f"recommendation failed: {exc}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @action(detail=False, methods=['post'], permission_classes=[AdminGroupPermission], url_path='recommend')
+    def recommend(self, request):
+        return self._run_recommendation(request, forced_mode='bayes')
+
+    @action(detail=False, methods=['post'], permission_classes=[AdminGroupPermission], url_path='recommend_advanced')
+    def recommend_advanced(self, request):
+        return self._run_recommendation(request, forced_mode='advanced')
+
+    @action(detail=True, methods=['post'], permission_classes=[AdminGroupPermission], url_path='feedback')
+    def feedback(self, request, pk=None):
+        run = self.get_object()
+        payload = DecisionFeedbackCreateSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        data = payload.validated_data
+        try:
+            from .forecasting.decision_support_service import create_decision_feedback
+            create_decision_feedback(
+                run=run,
+                actual_action_id=data.get('actual_action'),
+                outcome_state=data.get('outcome_state'),
+                outage_minutes=data.get('outage_minutes', 0.0),
+                incident_cost=data.get('incident_cost', 0.0),
+                notes=data.get('notes') or '',
+                user=request.user if request.user.is_authenticated else None,
+            )
+            run.refresh_from_db()
+            return Response(self.get_serializer(run).data, status=status.HTTP_200_OK)
+        except RuntimeError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as exc:
+            return Response({"detail": f"feedback save failed: {exc}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 class NetworkPathViewSet(viewsets.ModelViewSet):

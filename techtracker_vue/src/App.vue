@@ -29,6 +29,10 @@
           </button>
 
           <div v-if="!isNavCollapsed && isMonitoringMenuOpen" class="nav-submenu">
+            <router-link :to="{ name: 'MonitoringPipeline' }" class="nav-sublink" active-class="active">
+              <i class="pi pi-sitemap"></i>
+              <span>Полный цикл</span>
+            </router-link>
             <router-link :to="{ name: 'Monitoring' }" class="nav-sublink" active-class="active">
               <i class="pi pi-wave-pulse"></i>
               <span>Сырые метрики</span>
@@ -37,13 +41,29 @@
               <i class="pi pi-chart-bar"></i>
               <span>Анализ мониторинга</span>
             </router-link>
-            <router-link :to="{ name: 'AiDiagnostics' }" class="nav-sublink" active-class="active">
-              <i class="pi pi-bolt"></i>
-              <span>Умная диагностика</span>
-            </router-link>
             <router-link :to="{ name: 'MonitoringForecast' }" class="nav-sublink" active-class="active">
               <i class="pi pi-chart-scatter"></i>
               <span>Прогнозы и состояния</span>
+            </router-link>
+            <router-link :to="{ name: 'MonitoringRisk' }" class="nav-sublink" active-class="active">
+              <i class="pi pi-exclamation-triangle"></i>
+              <span>Оценка риска</span>
+            </router-link>
+            <router-link :to="{ name: 'MonitoringDecision' }" class="nav-sublink" active-class="active">
+              <i class="pi pi-lightbulb"></i>
+              <span>Рекомендации СППР</span>
+            </router-link>
+            <router-link :to="{ name: 'MonitoringDemo' }" class="nav-sublink" active-class="active">
+              <i class="pi pi-database"></i>
+              <span>Мониторинг - Демо</span>
+            </router-link>
+            <router-link :to="{ name: 'MonitoringEvaluation' }" class="nav-sublink" active-class="active">
+              <i class="pi pi-chart-line"></i>
+              <span>Оценка прогноза</span>
+            </router-link>
+            <router-link :to="{ name: 'MonitoringTasks' }" class="nav-sublink" active-class="active">
+              <i class="pi pi-clock"></i>
+              <span>Центр задач</span>
             </router-link>
           </div>
         </div>
@@ -78,6 +98,11 @@
           <span>Диагностика агента</span>
         </router-link>
 
+        <router-link v-if="!auth.isUser" :to="{ name: 'Settings' }" class="nav-link" active-class="active">
+          <i class="pi pi-cog"></i>
+          <span>Настройки</span>
+        </router-link>
+
       </nav>
 
       <div class="nav-footer">
@@ -106,6 +131,7 @@
     </aside>
 
     <main class="main-content">
+      <ConfirmDialog />
       <router-view v-if="!auth.loading" />
       <div v-else class="loading-screen">
         <i class="pi pi-spin pi-spinner" style="font-size: 3rem; color: #0ea5e9;"></i>
@@ -119,6 +145,7 @@ import { computed, nextTick, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useAuthStore } from '@/stores/auth';
 import Button from 'primevue/button'; // Используем компонент Button
+import ConfirmDialog from 'primevue/confirmdialog';
 
 const auth = useAuthStore();
 const router = useRouter();
@@ -126,7 +153,7 @@ const route = useRoute();
 const isNavCollapsed = ref(false);
 const isMonitoringMenuOpen = ref(true);
 
-const monitoringRoutes = ['Monitoring', 'MonitoringAnalysis', 'AiDiagnostics', 'MonitoringForecast'];
+const monitoringRoutes = ['MonitoringPipeline', 'Monitoring', 'MonitoringAnalysis', 'MonitoringForecast', 'MonitoringRisk', 'MonitoringDecision', 'MonitoringDemo', 'MonitoringEvaluation', 'MonitoringTasks'];
 const isMonitoringRoute = computed(() => monitoringRoutes.includes(route.name));
 
 const triggerLayoutRefresh = () => {

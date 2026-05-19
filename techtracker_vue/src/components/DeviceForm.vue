@@ -213,7 +213,6 @@
     </form>
 
     <!-- PrimeVue Confirm и Toast -->
-    <ConfirmDialog />
     <Toast />
 
     <!-- Ошибка -->
@@ -237,7 +236,6 @@ import InputNumber from 'primevue/inputnumber';
 import Dropdown from 'primevue/dropdown';
 import Checkbox from 'primevue/checkbox';
 import Button from 'primevue/button';
-import ConfirmDialog from 'primevue/confirmdialog';
 import Toast from 'primevue/toast';
 import Message from 'primevue/message';
 
@@ -250,7 +248,6 @@ export default {
     Dropdown,
     Checkbox,
     Button,
-    ConfirmDialog,
     Toast,
     Message
   },

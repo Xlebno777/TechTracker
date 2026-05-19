@@ -1,0 +1,3 @@
+run_id,created_at,device_serial,horizon,mode,recommended_action_code,baseline_action_code,expected_loss_with_system,expected_loss_without_system,delta_r,overall_risk,markov_p_s2,feedback_state,feedback_incident_cost
+57,2026-04-21T13:15:12.380614+00:00,DEMO-SARIMA-001,30d,advanced,throttle_cpu_limit,no_action,43827.77934001855,541442.0747360768,497614.29539605824,0.7204467352518353,0.6284102364016827,,
+58,2026-04-21T13:18:34.452871+00:00,DEMO-SARIMA-001,30d,advanced,throttle_cpu_limit,no_action,43827.77934001855,541442.0747360768,497614.29539605824,0.7204467352518353,0.6284102364016827,,

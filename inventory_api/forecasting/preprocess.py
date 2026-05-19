@@ -29,13 +29,21 @@ def _require_deps():
     return pd, STL
 
 
-def infer_daily_seasonal_period(freq: str) -> int:
+def infer_daily_seasonal_period(freq: str, *, sample_count: int | None = None) -> int:
     pd, _ = _require_deps()
     step = pd.to_timedelta(freq)
     if step <= timedelta(0):
         return 24
-    period = int(round(timedelta(days=1) / step))
-    return max(2, period)
+    daily_period = int(round(timedelta(days=1) / step))
+    weekly_period = int(round(timedelta(days=7) / step))
+
+    # Auto mode:
+    # if history is long enough and seasonal period is not too large for stable fitting,
+    # use weekly seasonality; otherwise fallback to daily.
+    count = int(sample_count or 0)
+    if weekly_period > 0 and weekly_period <= 192 and count >= (weekly_period * 4):
+        return max(2, weekly_period)
+    return max(2, daily_period)
 
 
 def horizon_to_timedelta(horizon: str):
@@ -96,7 +104,7 @@ def preprocess_points(
         high = float(filled.quantile(1 - clip_quantile))
         filled = filled.clip(lower=low, upper=high)
 
-    period = seasonal_period or infer_daily_seasonal_period(freq)
+    period = seasonal_period or infer_daily_seasonal_period(freq, sample_count=len(filled))
     stl = STL(filled, period=period, robust=True).fit()
     cleaned = stl.trend + stl.resid
 

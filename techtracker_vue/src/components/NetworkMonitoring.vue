@@ -808,8 +808,10 @@ import Dialog from 'primevue/dialog';
 import Toast from 'primevue/toast';
 import Chart from 'primevue/chart';
 import { useToast } from 'primevue/usetoast';
+import { useConfirmAction } from '@/composables/useConfirmAction';
 
 const toast = useToast();
+const { confirmAction } = useConfirmAction();
 const activeTab = ref('paths');
 const autoTimer = ref(null);
 
@@ -1685,7 +1687,14 @@ const saveRule = async (rule) => {
 };
 
 const removeRule = async (rule) => {
-  if (!window.confirm(`Удалить правило "${rule.name || rule.code}"?`)) return;
+  const confirmed = await confirmAction({
+    message: `Удалить правило "${rule.name || rule.code}"?`,
+    header: 'Удаление правила',
+    acceptLabel: 'Удалить',
+    rejectLabel: 'Отмена',
+    acceptClass: 'p-button-danger',
+  });
+  if (!confirmed) return;
   try {
     await apiClient.delete(`network-alert-rules/${rule.id}/`);
     await loadAlertRules();
@@ -1838,7 +1847,14 @@ const savePath = async () => {
 };
 
 const removePath = async (path) => {
-  if (!window.confirm(`Удалить путь ${path.src_device_name} -> ${path.dst_device_name}?`)) return;
+  const confirmed = await confirmAction({
+    message: `Удалить путь ${path.src_device_name} -> ${path.dst_device_name}?`,
+    header: 'Удаление пути',
+    acceptLabel: 'Удалить',
+    rejectLabel: 'Отмена',
+    acceptClass: 'p-button-danger',
+  });
+  if (!confirmed) return;
   try {
     await apiClient.delete(`network-paths/${path.id}/`);
     await loadPaths();

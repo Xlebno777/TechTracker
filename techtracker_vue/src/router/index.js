@@ -9,8 +9,14 @@ import Dashboard from '../components/DashboardMain.vue'
 import MonitoringRaw from '../components/MonitoringRaw.vue'
 import NetworkMonitoring from '../components/NetworkMonitoring.vue'
 import AgentDiagnostics from '../components/AgentDiagnostics.vue'
-import DiagnosticsAI from '../components/DiagnosticsAI.vue'
 import MonitoringForecast from '../components/MonitoringForecast.vue'
+import MonitoringPipeline from '../components/MonitoringPipeline.vue'
+import MonitoringRisk from '../components/MonitoringRisk.vue'
+import MonitoringDecision from '../components/MonitoringDecision.vue'
+import MonitoringDemo from '../components/MonitoringDemo.vue'
+import MonitoringEvaluation from '../components/MonitoringEvaluation.vue'
+import MonitoringTasks from '../components/MonitoringTasks.vue'
+import MonitoringSettings from '../components/MonitoringSettings.vue'
 import PrintersPage from '../components/PrintersPage.vue'
 
 
@@ -81,15 +87,51 @@ const routes = [
     meta: { requiresAuth: true, requiresAdmin: true }
   },
   {
-    path: '/ai-diagnostics',
-    name: 'AiDiagnostics',
-    component: DiagnosticsAI,
-    meta: { requiresAuth: true, requiresAdmin: true }
-  },
-  {
     path: '/monitoring-forecast',
     name: 'MonitoringForecast',
     component: MonitoringForecast,
+    meta: { requiresAuth: true, forbidUsers: true }
+  },
+  {
+    path: '/monitoring-pipeline',
+    name: 'MonitoringPipeline',
+    component: MonitoringPipeline,
+    meta: { requiresAuth: true, forbidUsers: true }
+  },
+  {
+    path: '/monitoring-risk',
+    name: 'MonitoringRisk',
+    component: MonitoringRisk,
+    meta: { requiresAuth: true, forbidUsers: true }
+  },
+  {
+    path: '/monitoring-decision',
+    name: 'MonitoringDecision',
+    component: MonitoringDecision,
+    meta: { requiresAuth: true, forbidUsers: true }
+  },
+  {
+    path: '/monitoring-demo',
+    name: 'MonitoringDemo',
+    component: MonitoringDemo,
+    meta: { requiresAuth: true, forbidUsers: true }
+  },
+  {
+    path: '/monitoring-evaluation',
+    name: 'MonitoringEvaluation',
+    component: MonitoringEvaluation,
+    meta: { requiresAuth: true, forbidUsers: true }
+  },
+  {
+    path: '/monitoring-tasks',
+    name: 'MonitoringTasks',
+    component: MonitoringTasks,
+    meta: { requiresAuth: true, forbidUsers: true }
+  },
+  {
+    path: '/settings',
+    name: 'Settings',
+    component: MonitoringSettings,
     meta: { requiresAuth: true, forbidUsers: true }
   },
   {
@@ -116,7 +158,7 @@ const router = createRouter({ // <-- router создаётся ЗДЕСЬ
 router.beforeEach((to, from, next) => {
   const hasToken = localStorage.getItem('auth_token') !== null;
 
-  if (to.name === 'DeviceTable' || to.name === 'DeviceCreate' || to.name === 'DeviceEdit' || to.name === 'RequestForm' || to.name === 'RequestList' || to.name === 'Printers' || to.name === 'Monitoring' || to.name === 'NetworkMonitoring' || to.name === 'MonitoringAnalysis' || to.name === 'AgentDiagnostics' || to.name === 'AiDiagnostics' || to.name === 'MonitoringForecast' || to.name === 'AdminRequests') {
+  if (to.name === 'DeviceTable' || to.name === 'DeviceCreate' || to.name === 'DeviceEdit' || to.name === 'RequestForm' || to.name === 'RequestList' || to.name === 'Printers' || to.name === 'Monitoring' || to.name === 'NetworkMonitoring' || to.name === 'MonitoringAnalysis' || to.name === 'AgentDiagnostics' || to.name === 'MonitoringForecast' || to.name === 'MonitoringPipeline' || to.name === 'MonitoringRisk' || to.name === 'MonitoringDecision' || to.name === 'MonitoringDemo' || to.name === 'MonitoringEvaluation' || to.name === 'MonitoringTasks' || to.name === 'Settings' || to.name === 'AdminRequests') {
     if (!hasToken) {
       next({ name: 'AuthPage' });
     } else {

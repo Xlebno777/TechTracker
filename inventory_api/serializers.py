@@ -5,7 +5,10 @@ from .models import (
     Log, Metric, PrintJob, MonitoringSetting, RawMetric, TrackedVM, ComputedMetric, AgentStatus, DiagnosticReport,
     NetworkPath, NetworkOutage, NetworkAlertRule,
     NetworkMapSnapshot, NetworkMapNode, NetworkMapEdge,
-    ForecastRun, ForecastPoint, StateEstimate
+    ForecastRun, ForecastPoint, StateEstimate, StateInferenceProfile, LSTMRemoteQueueJob,
+    DecisionAction, DecisionCriterion, DecisionPolicy, DecisionPolicyLoss,
+    DecisionPolicyAHPPairwise, DecisionRun, DecisionRunScore, DecisionRunAHP,
+    DecisionRunUtility, DecisionFeedback, ApplicationUpdateJob,
 )
 from django.utils import timezone
 from django.contrib.auth.models import User, Group
@@ -419,6 +422,518 @@ class StateEstimateSerializer(serializers.ModelSerializer):
             'evidence', 'timestamp', 'created_at',
         ]
         read_only_fields = fields
+
+
+class StateInferenceProfileSerializer(serializers.ModelSerializer):
+    created_by_username = serializers.CharField(source='created_by.username', read_only=True)
+
+    class Meta:
+        model = StateInferenceProfile
+        fields = [
+            'id',
+            'name',
+            'version',
+            'is_active',
+            'notes',
+            'thresholds',
+            'forecast_metric_controls',
+            'orchestrator_controls',
+            'risk_ratio_baseline',
+            'risk_ratio_scale',
+            'medium_risk_level',
+            'critical_risk_level',
+            'overall_hint_weight',
+            'softmax_temperature',
+            'score_weights',
+            's0_bias',
+            's0_effective_weight',
+            's0_avg_weight',
+            's0_medium_weight',
+            's0_critical_weight',
+            's1_bias',
+            's1_avg_weight',
+            's1_medium_weight',
+            's1_markov_weight',
+            's2_bias',
+            's2_effective_power',
+            's2_critical_weight',
+            's2_medium_weight',
+            's2_markov_weight',
+            'confidence_max',
+            'confidence_base',
+            'confidence_component_weight',
+            'confidence_feature_weight',
+            'confidence_margin_weight',
+            'confidence_component_cap',
+            'created_by',
+            'created_by_username',
+            'created_at',
+            'updated_at',
+        ]
+        read_only_fields = ['created_by', 'created_by_username', 'created_at', 'updated_at']
+
+    def validate_thresholds(self, value):
+        if value in (None, ''):
+            return {}
+        if not isinstance(value, dict):
+            raise serializers.ValidationError("thresholds must be an object.")
+        normalized = {}
+        for key, raw in value.items():
+            metric_code = str(key or '').strip()
+            if not metric_code:
+                continue
+            try:
+                parsed = float(raw)
+            except (TypeError, ValueError):
+                raise serializers.ValidationError(f"Invalid threshold for metric '{metric_code}'.")
+            if parsed <= 0:
+                raise serializers.ValidationError(f"Threshold for metric '{metric_code}' must be > 0.")
+            normalized[metric_code] = parsed
+        return normalized
+
+    def validate_score_weights(self, value):
+        if value in (None, ''):
+            return {}
+        if not isinstance(value, dict):
+            raise serializers.ValidationError("score_weights must be an object.")
+        normalized = {}
+        for state_key, state_payload in value.items():
+            state_name = str(state_key or '').strip()
+            if state_name not in {'s0', 's1', 's2'}:
+                continue
+            if not isinstance(state_payload, dict):
+                raise serializers.ValidationError(f"score_weights['{state_name}'] must be an object.")
+            normalized[state_name] = {}
+            for feature_key, raw in state_payload.items():
+                feature_name = str(feature_key or '').strip()
+                if not feature_name:
+                    continue
+                try:
+                    normalized[state_name][feature_name] = float(raw)
+                except (TypeError, ValueError):
+                    raise serializers.ValidationError(
+                        f"score_weights['{state_name}']['{feature_name}'] must be numeric."
+                    )
+        return normalized
+
+    def validate_forecast_metric_controls(self, value):
+        if value in (None, ''):
+            return {}
+        if not isinstance(value, dict):
+            raise serializers.ValidationError("forecast_metric_controls must be an object.")
+
+        normalized = {}
+        for key, raw in value.items():
+            metric_code = str(key or '').strip()
+            if not metric_code:
+                continue
+            if not isinstance(raw, dict):
+                raise serializers.ValidationError(f"forecast_metric_controls['{metric_code}'] must be an object.")
+
+            alpha_mode = str(raw.get('alpha_mode', 'auto') or 'auto').strip().lower()
+            if alpha_mode not in {'auto', 'manual'}:
+                raise serializers.ValidationError(
+                    f"forecast_metric_controls['{metric_code}']['alpha_mode'] must be 'auto' or 'manual'."
+                )
+
+            try:
+                manual_alpha = float(raw.get('manual_alpha_sarima', 0.5))
+            except (TypeError, ValueError):
+                raise serializers.ValidationError(
+                    f"forecast_metric_controls['{metric_code}']['manual_alpha_sarima'] must be numeric."
+                )
+            if manual_alpha < 0 or manual_alpha > 1:
+                raise serializers.ValidationError(
+                    f"forecast_metric_controls['{metric_code}']['manual_alpha_sarima'] must be within [0, 1]."
+                )
+
+            trend_long_mode = str(raw.get('trend_long_mode', 'mean_regression') or 'mean_regression').strip().lower()
+            if trend_long_mode not in {'mean_regression', 'upper_envelope_blend', 'upper_envelope_floor'}:
+                raise serializers.ValidationError(
+                    f"forecast_metric_controls['{metric_code}']['trend_long_mode'] must be one of "
+                    "'mean_regression', 'upper_envelope_blend', 'upper_envelope_floor'."
+                )
+
+            try:
+                trend_transition_steps = int(raw.get('trend_transition_steps', 0))
+            except (TypeError, ValueError):
+                raise serializers.ValidationError(
+                    f"forecast_metric_controls['{metric_code}']['trend_transition_steps'] must be an integer."
+                )
+            if trend_transition_steps < 0 or trend_transition_steps > 10000:
+                raise serializers.ValidationError(
+                    f"forecast_metric_controls['{metric_code}']['trend_transition_steps'] must be within [0, 10000]."
+                )
+
+            try:
+                trend_envelope_weight = float(raw.get('trend_envelope_weight', 0.0))
+            except (TypeError, ValueError):
+                raise serializers.ValidationError(
+                    f"forecast_metric_controls['{metric_code}']['trend_envelope_weight'] must be numeric."
+                )
+            if trend_envelope_weight < 0 or trend_envelope_weight > 1:
+                raise serializers.ValidationError(
+                    f"forecast_metric_controls['{metric_code}']['trend_envelope_weight'] must be within [0, 1]."
+                )
+
+            try:
+                bias_correction_strength = float(raw.get('bias_correction_strength', 0.0))
+            except (TypeError, ValueError):
+                raise serializers.ValidationError(
+                    f"forecast_metric_controls['{metric_code}']['bias_correction_strength'] must be numeric."
+                )
+            if bias_correction_strength < 0 or bias_correction_strength > 1:
+                raise serializers.ValidationError(
+                    f"forecast_metric_controls['{metric_code}']['bias_correction_strength'] must be within [0, 1]."
+                )
+
+            normalized[metric_code] = {
+                'sarima_enabled': bool(raw.get('sarima_enabled', True)),
+                'lstm_enabled': bool(raw.get('lstm_enabled', True)),
+                'alpha_mode': alpha_mode,
+                'manual_alpha_sarima': manual_alpha,
+                'trend_long_mode': trend_long_mode,
+                'trend_transition_steps': trend_transition_steps,
+                'trend_envelope_weight': trend_envelope_weight,
+                'bias_correction_strength': bias_correction_strength,
+            }
+        return normalized
+
+    def validate_orchestrator_controls(self, value):
+        if value in (None, ''):
+            return {}
+        if not isinstance(value, dict):
+            raise serializers.ValidationError("orchestrator_controls must be an object.")
+
+        normalized = {}
+
+        if 'alpha_version_aware' in value:
+            normalized['alpha_version_aware'] = bool(value.get('alpha_version_aware'))
+
+        if 'normalize_errors_by_scale' in value:
+            normalized['normalize_errors_by_scale'] = bool(value.get('normalize_errors_by_scale'))
+
+        if 'compatible_history_runs' in value:
+            try:
+                compatible_history_runs = int(value.get('compatible_history_runs'))
+            except (TypeError, ValueError):
+                raise serializers.ValidationError("orchestrator_controls['compatible_history_runs'] must be an integer.")
+            if compatible_history_runs < 1 or compatible_history_runs > 50:
+                raise serializers.ValidationError("orchestrator_controls['compatible_history_runs'] must be within [1, 50].")
+            normalized['compatible_history_runs'] = compatible_history_runs
+
+        if 'history_limit_per_segment' in value:
+            try:
+                history_limit = int(value.get('history_limit_per_segment'))
+            except (TypeError, ValueError):
+                raise serializers.ValidationError("orchestrator_controls['history_limit_per_segment'] must be an integer.")
+            if history_limit < 1 or history_limit > 200:
+                raise serializers.ValidationError("orchestrator_controls['history_limit_per_segment'] must be within [1, 200].")
+            normalized['history_limit_per_segment'] = history_limit
+
+        if 'error_scale_lookback_days' in value:
+            try:
+                lookback_days = int(value.get('error_scale_lookback_days'))
+            except (TypeError, ValueError):
+                raise serializers.ValidationError("orchestrator_controls['error_scale_lookback_days'] must be an integer.")
+            if lookback_days < 1 or lookback_days > 3650:
+                raise serializers.ValidationError("orchestrator_controls['error_scale_lookback_days'] must be within [1, 3650].")
+            normalized['error_scale_lookback_days'] = lookback_days
+
+        if 'winner_margin' in value:
+            try:
+                winner_margin = float(value.get('winner_margin'))
+            except (TypeError, ValueError):
+                raise serializers.ValidationError("orchestrator_controls['winner_margin'] must be numeric.")
+            if winner_margin < 1.0 or winner_margin > 10.0:
+                raise serializers.ValidationError("orchestrator_controls['winner_margin'] must be within [1.0, 10.0].")
+            normalized['winner_margin'] = winner_margin
+
+        if 'winner_weight' in value:
+            try:
+                winner_weight = float(value.get('winner_weight'))
+            except (TypeError, ValueError):
+                raise serializers.ValidationError("orchestrator_controls['winner_weight'] must be numeric.")
+            if winner_weight < 0.5 or winner_weight > 1.0:
+                raise serializers.ValidationError("orchestrator_controls['winner_weight'] must be within [0.5, 1.0].")
+            normalized['winner_weight'] = winner_weight
+
+        if 'segment_boundaries_hours' in value:
+            raw_boundaries = value.get('segment_boundaries_hours')
+            if not isinstance(raw_boundaries, (list, tuple)):
+                raise serializers.ValidationError("orchestrator_controls['segment_boundaries_hours'] must be an array.")
+            try:
+                parsed_boundaries = [int(item) for item in raw_boundaries]
+            except (TypeError, ValueError):
+                raise serializers.ValidationError("orchestrator_controls['segment_boundaries_hours'] must contain integers.")
+            parsed_boundaries = [item for item in parsed_boundaries if item > 0]
+            parsed_boundaries = sorted(set(parsed_boundaries))
+            if len(parsed_boundaries) < 2:
+                raise serializers.ValidationError(
+                    "orchestrator_controls['segment_boundaries_hours'] must contain at least two positive boundaries."
+                )
+            normalized['segment_boundaries_hours'] = parsed_boundaries
+
+        return normalized
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        probability_like = [
+            'risk_ratio_baseline',
+            'risk_ratio_scale',
+            'medium_risk_level',
+            'critical_risk_level',
+            'overall_hint_weight',
+            'softmax_temperature',
+            'confidence_max',
+            'confidence_base',
+            'confidence_component_weight',
+            'confidence_feature_weight',
+            'confidence_margin_weight',
+        ]
+        for field in probability_like:
+            if field not in attrs and self.instance is not None:
+                continue
+            value = attrs.get(field, getattr(self.instance, field, None))
+            if value is None:
+                continue
+            if field == 'risk_ratio_scale':
+                if value <= 0:
+                    raise serializers.ValidationError({field: "Must be > 0."})
+                continue
+            if field == 'softmax_temperature':
+                if float(value) <= 0:
+                    raise serializers.ValidationError({field: "Must be > 0."})
+                if float(value) > 5:
+                    raise serializers.ValidationError({field: "Expected a value between 0 and 5."})
+                continue
+            if not (0 <= float(value) <= 1.5):
+                raise serializers.ValidationError({field: "Expected a value between 0 and 1.5."})
+
+        positive_fields = [
+            's2_effective_power',
+            'confidence_component_cap',
+        ]
+        for field in positive_fields:
+            value = attrs.get(field, getattr(self.instance, field, None))
+            if value is not None and float(value) <= 0:
+                raise serializers.ValidationError({field: "Must be > 0."})
+        return attrs
+
+
+class LSTMRemoteQueueJobSerializer(serializers.ModelSerializer):
+    device_name = serializers.CharField(source='device.name', read_only=True)
+    device_serial = serializers.CharField(source='device.serial_number', read_only=True)
+    run_model_kind = serializers.CharField(source='forecast_run.model_kind', read_only=True)
+    run_status = serializers.CharField(source='forecast_run.status', read_only=True)
+
+    class Meta:
+        model = LSTMRemoteQueueJob
+        fields = [
+            'id', 'forecast_run', 'run_model_kind', 'run_status',
+            'device', 'device_name', 'device_serial',
+            'request_id', 'status', 'remote_job_id',
+            'attempts_submit', 'attempts_poll', 'retry_count', 'max_retries',
+            'next_retry_at', 'locked_until',
+            'last_error', 'request_payload', 'submit_response', 'remote_snapshot',
+            'created_at', 'updated_at',
+        ]
+        read_only_fields = fields
+
+
+class ApplicationUpdateJobSerializer(serializers.ModelSerializer):
+    created_by_username = serializers.CharField(source='created_by.username', read_only=True)
+
+    class Meta:
+        model = ApplicationUpdateJob
+        fields = [
+            'id', 'status', 'current_version', 'target_version', 'release_channel',
+            'manifest_url', 'git_ref', 'release_notes', 'parameters', 'log', 'error',
+            'pid', 'created_by', 'created_by_username', 'started_at', 'finished_at',
+            'created_at', 'updated_at',
+        ]
+        read_only_fields = fields
+
+
+class DecisionActionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = DecisionAction
+        fields = [
+            'id', 'code', 'name', 'description', 'is_active', 'constraints_json',
+            'created_at', 'updated_at',
+        ]
+        read_only_fields = ['id', 'created_at', 'updated_at']
+
+
+class DecisionCriterionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = DecisionCriterion
+        fields = ['id', 'code', 'name', 'description', 'is_active', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'created_at', 'updated_at']
+
+
+class DecisionPolicyLossSerializer(serializers.ModelSerializer):
+    action_name = serializers.CharField(source='action.name', read_only=True)
+    action_code = serializers.CharField(source='action.code', read_only=True)
+
+    class Meta:
+        model = DecisionPolicyLoss
+        fields = [
+            'id', 'policy', 'action', 'action_name', 'action_code',
+            'loss_s0', 'loss_s1', 'loss_s2',
+            'fixed_cost', 'downtime_minutes', 'ops_effort',
+            'notes', 'created_at', 'updated_at',
+        ]
+        read_only_fields = ['id', 'created_at', 'updated_at']
+
+
+class DecisionPolicyAHPPairwiseSerializer(serializers.ModelSerializer):
+    criterion_i_code = serializers.CharField(source='criterion_i.code', read_only=True)
+    criterion_j_code = serializers.CharField(source='criterion_j.code', read_only=True)
+
+    class Meta:
+        model = DecisionPolicyAHPPairwise
+        fields = [
+            'id', 'policy',
+            'criterion_i', 'criterion_i_code',
+            'criterion_j', 'criterion_j_code',
+            'value', 'created_at', 'updated_at',
+        ]
+        read_only_fields = ['id', 'created_at', 'updated_at']
+
+
+class DecisionPolicySerializer(serializers.ModelSerializer):
+    device_name = serializers.CharField(source='device.name', read_only=True)
+    device_serial = serializers.CharField(source='device.serial_number', read_only=True)
+    device_type_name = serializers.CharField(source='device_type.name', read_only=True)
+    losses = DecisionPolicyLossSerializer(source='loss_rows', many=True, read_only=True)
+    ahp_pairs = DecisionPolicyAHPPairwiseSerializer(source='ahp_pairwise', many=True, read_only=True)
+
+    class Meta:
+        model = DecisionPolicy
+        fields = [
+            'id', 'name', 'version', 'is_active',
+            'scope', 'device_type', 'device_type_name', 'device', 'device_name', 'device_serial',
+            'horizon', 'previous_version', 'notes', 'created_by', 'created_at', 'updated_at',
+            'losses', 'ahp_pairs',
+        ]
+        read_only_fields = ['id', 'created_at', 'updated_at', 'created_by']
+
+
+class DecisionRunScoreSerializer(serializers.ModelSerializer):
+    action_name = serializers.CharField(source='action.name', read_only=True)
+    action_code = serializers.CharField(source='action.code', read_only=True)
+
+    class Meta:
+        model = DecisionRunScore
+        fields = [
+            'id', 'run', 'action', 'action_name', 'action_code',
+            'expected_loss', 'bayes_utility', 'ahp_utility', 'final_score',
+            'rank', 'is_recommended', 'explanation', 'created_at',
+        ]
+        read_only_fields = fields
+
+
+class DecisionRunAHPSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = DecisionRunAHP
+        fields = ['id', 'run', 'weights', 'lambda_max', 'ci', 'cr', 'is_consistent', 'matrix', 'created_at']
+        read_only_fields = fields
+
+
+class DecisionRunUtilitySerializer(serializers.ModelSerializer):
+    action_name = serializers.CharField(source='action.name', read_only=True)
+    action_code = serializers.CharField(source='action.code', read_only=True)
+    criterion_name = serializers.CharField(source='criterion.name', read_only=True)
+    criterion_code = serializers.CharField(source='criterion.code', read_only=True)
+
+    class Meta:
+        model = DecisionRunUtility
+        fields = [
+            'id', 'run',
+            'action', 'action_name', 'action_code',
+            'criterion', 'criterion_name', 'criterion_code',
+            'utility', 'evidence', 'created_at',
+        ]
+        read_only_fields = fields
+
+
+class DecisionFeedbackSerializer(serializers.ModelSerializer):
+    actual_action_name = serializers.CharField(source='actual_action.name', read_only=True)
+    actual_action_code = serializers.CharField(source='actual_action.code', read_only=True)
+
+    class Meta:
+        model = DecisionFeedback
+        fields = [
+            'id', 'run', 'actual_action', 'actual_action_name', 'actual_action_code',
+            'outcome_state', 'outage_minutes', 'incident_cost', 'notes',
+            'created_by', 'created_at',
+        ]
+        read_only_fields = ['id', 'created_by', 'created_at']
+
+
+class DecisionRunSerializer(serializers.ModelSerializer):
+    device_name = serializers.CharField(source='device.name', read_only=True)
+    device_serial = serializers.CharField(source='device.serial_number', read_only=True)
+    policy_name = serializers.CharField(source='policy.name', read_only=True)
+    recommended_action_name = serializers.CharField(source='recommended_action.name', read_only=True)
+    recommended_action_code = serializers.CharField(source='recommended_action.code', read_only=True)
+    scores = DecisionRunScoreSerializer(many=True, read_only=True)
+    ahp = DecisionRunAHPSerializer(read_only=True)
+    criterion_utilities = DecisionRunUtilitySerializer(many=True, read_only=True)
+    feedback = DecisionFeedbackSerializer(read_only=True)
+
+    class Meta:
+        model = DecisionRun
+        fields = [
+            'id', 'device', 'device_name', 'device_serial',
+            'policy', 'policy_name', 'horizon',
+            'mode', 'status',
+            'risk_snapshot',
+            'recommended_action', 'recommended_action_name', 'recommended_action_code',
+            'explanation',
+            'created_by', 'created_at', 'updated_at',
+            'scores', 'ahp', 'criterion_utilities', 'feedback',
+        ]
+        read_only_fields = fields
+
+
+class DecisionRecommendationRequestSerializer(serializers.Serializer):
+    serial = serializers.CharField(required=False, allow_blank=True)
+    device = serializers.IntegerField(required=False)
+    horizon = serializers.ChoiceField(choices=['24h', '7d', '30d'], required=False, default='24h')
+    policy_id = serializers.IntegerField(required=False)
+    mode = serializers.ChoiceField(choices=['bayes', 'advanced'], required=False, default='bayes')
+    overall_weight_markov = serializers.FloatField(required=False, default=0.65)
+    risk_metric_min_risk = serializers.FloatField(required=False, default=0.08)
+    risk_metric_min_contribution = serializers.FloatField(required=False, default=0.03)
+    risk_metric_top_k_fallback = serializers.IntegerField(required=False, default=3, min_value=1, max_value=10)
+    bayes_weight = serializers.FloatField(required=False, default=0.5)
+    ahp_weight = serializers.FloatField(required=False, default=0.5)
+    sensitivity_weights = serializers.DictField(required=False, default=dict)
+
+    def validate(self, attrs):
+        if not attrs.get('serial') and not attrs.get('device'):
+            raise serializers.ValidationError("Either 'serial' or 'device' must be provided.")
+        return attrs
+
+
+class DecisionAHPPairInputSerializer(serializers.Serializer):
+    criterion_i = serializers.IntegerField()
+    criterion_j = serializers.IntegerField()
+    value = serializers.FloatField()
+
+
+class DecisionAHPMatrixUpsertSerializer(serializers.Serializer):
+    pairs = DecisionAHPPairInputSerializer(many=True)
+
+
+class DecisionFeedbackCreateSerializer(serializers.Serializer):
+    actual_action = serializers.IntegerField(required=False, allow_null=True)
+    outcome_state = serializers.ChoiceField(choices=['s0', 's1', 's2', 'unknown'])
+    outage_minutes = serializers.FloatField(required=False, default=0.0)
+    incident_cost = serializers.FloatField(required=False, default=0.0)
+    notes = serializers.CharField(required=False, allow_blank=True, default='')
 
 
 class NetworkPathSerializer(serializers.ModelSerializer):

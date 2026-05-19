@@ -105,6 +105,7 @@
 import { ref, computed, onMounted } from 'vue';
 import apiClient from '@/api';
 import { useToast } from 'primevue/usetoast';
+import { useConfirmAction } from '@/composables/useConfirmAction';
 
 // UI Components
 import DataTable from 'primevue/datatable';
@@ -117,6 +118,7 @@ import Checkbox from 'primevue/checkbox';
 import Toast from 'primevue/toast';
 
 const toast = useToast();
+const { confirmAction } = useConfirmAction();
 
 const requests = ref([]);
 const devices = ref([]);
@@ -222,7 +224,12 @@ const toggleCompleted = async (req, value) => {
 };
 
 const deleteRequest = async (req) => {
-  const ok = window.confirm('Удалить заявку?');
+  const ok = await confirmAction({
+    header: 'Удаление заявки',
+    message: 'Удалить выбранную заявку?',
+    acceptLabel: 'Удалить',
+    acceptSeverity: 'danger',
+  });
   if (!ok) return;
   try {
     await apiClient.delete(`logs/${req.id}/`);

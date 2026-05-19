@@ -13,6 +13,12 @@ class Command(BaseCommand):
         parser.add_argument("--horizons", type=str, default="24h,7d,30d")
         parser.add_argument("--metric-codes", type=str, default="")
         parser.add_argument("--no-stl-components", action="store_true")
+        parser.add_argument(
+            "--seasonality-mode",
+            type=str,
+            default="stl_reseasonalized",
+            help="sarima_seasonal or stl_reseasonalized",
+        )
 
     def handle(self, *args, **options):
         horizons = [h.strip() for h in (options.get("horizons") or "").split(",") if h.strip()]
@@ -25,5 +31,6 @@ class Command(BaseCommand):
             horizons=horizons or None,
             metric_codes=metric_codes or None,
             save_stl_components=not bool(options.get("no_stl_components")),
+            seasonality_mode=options.get("seasonality_mode"),
         )
         self.stdout.write(self.style.SUCCESS(str(payload)))

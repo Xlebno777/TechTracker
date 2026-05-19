@@ -27,6 +27,14 @@
       </div>
     </div>
 
+    <div v-if="!selectedMonitoringDeviceId && !loadingMonitoringDevices" class="card p-3 mb-3">
+      <EmptyStateCard
+        icon="pi pi-server"
+        title="Нет активных устройств для мониторинга"
+        description="Проверьте агент на устройствах и статусы AgentStatus=ok, затем обновите страницу."
+      />
+    </div>
+
     <div class="grid mb-4">
       <div class="col-12 md:col-6 lg:col-3" v-for="card in summaryCards" :key="card.key">
         <div class="metric-card surface-card border-round shadow-1 p-3">
@@ -123,7 +131,12 @@
                 </div>
               </div>
             </div>
-            <div v-if="vmCards.length === 0" class="text-500">Нет данных по ВМ.</div>
+            <EmptyStateCard
+              v-if="vmCards.length === 0"
+              icon="pi pi-desktop"
+              title="Нет данных по виртуальным машинам"
+              description="Метрики ВМ (vm_status_running/vm_cpu_usage/vm_memory_usage) пока не поступали."
+            />
           </div>
         </div>
       </div>
@@ -150,6 +163,7 @@ import Toast from 'primevue/toast';
 import { useToast } from 'primevue/usetoast';
 import Dropdown from 'primevue/dropdown';
 import { useMonitoringDevice } from '@/composables/useMonitoringDevice';
+import EmptyStateCard from '@/components/ui/EmptyStateCard.vue';
 
 const toast = useToast();
 const loading = ref(false);

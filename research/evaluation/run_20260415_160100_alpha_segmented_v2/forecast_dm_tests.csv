@@ -1,0 +1,10 @@
+horizon,model_a,model_b,samples,mean_loss_diff,dm_stat,p_value,significant_005,winner
+24h,lstm,ensemble,0,,,,False,
+24h,sarima,ensemble,168,832.7670385101356,1.516540476486453,0.12938274350910484,False,ensemble
+24h,sarima,lstm,0,,,,False,
+30d,lstm,ensemble,0,,,,False,
+30d,sarima,ensemble,4928,-584.5935789760855,-3.252642268593673,0.00114337342515735,True,sarima
+30d,sarima,lstm,0,,,,False,
+7d,lstm,ensemble,0,,,,False,
+7d,sarima,ensemble,1176,106.03330787843032,0.3764739496453329,0.706564578577587,False,ensemble
+7d,sarima,lstm,0,,,,False,

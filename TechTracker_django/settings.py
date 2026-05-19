@@ -17,6 +17,31 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 
+def _env_bool(name, default=False):
+    value = os.environ.get(name)
+    if value is None:
+        return bool(default)
+    return str(value).strip().lower() in ('1', 'true', 'yes', 'on')
+
+
+def _read_app_version():
+    env_version = os.environ.get('APP_VERSION')
+    if env_version:
+        return env_version.strip()
+    version_file = BASE_DIR / 'VERSION'
+    try:
+        return version_file.read_text(encoding='utf-8').strip() or '0.1.0'
+    except Exception:
+        return '0.1.0'
+
+
+def _env_int(name, default):
+    try:
+        return int(os.environ.get(name, str(default)) or default)
+    except (TypeError, ValueError):
+        return int(default)
+
+
 def _load_env_file(path):
     if not path.exists():
         return
@@ -43,6 +68,18 @@ def _load_env_file(path):
 
 # Load local env file for development/CLI commands
 _load_env_file(BASE_DIR / '.env.local')
+
+
+APP_VERSION = _read_app_version()
+APP_RELEASE_CHANNEL = os.environ.get('APP_RELEASE_CHANNEL', 'single').strip() or 'single'
+APP_RELEASE_MANIFEST_URL = os.environ.get('APP_RELEASE_MANIFEST_URL', '').strip()
+APP_UPDATE_ENABLED = _env_bool('APP_UPDATE_ENABLED', False)
+APP_UPDATE_SCRIPT = os.environ.get(
+    'APP_UPDATE_SCRIPT',
+    str(BASE_DIR / 'deployment' / 'windows' / 'update_techtracker.ps1'),
+)
+APP_UPDATE_WORKDIR = os.environ.get('APP_UPDATE_WORKDIR', str(BASE_DIR))
+APP_UPDATE_TIMEOUT_SEC = _env_int('APP_UPDATE_TIMEOUT_SEC', 3600)
 
 
 # Quick-start development settings - unsuitable for production
@@ -195,6 +232,7 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
 
 STATIC_URL = 'static/'
+STATIC_ROOT = BASE_DIR / 'staticfiles'
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field

@@ -1,0 +1,2 @@
+samples,expected_loss_with_system_mean,expected_loss_with_system_median,expected_loss_without_system_mean,expected_loss_without_system_median,delta_r_mean,delta_r_median,delta_r_min,delta_r_max,delta_r_pct_mean,delta_r_pct_median,share_positive
+6,32273.700362538733,28808.656157897993,319196.6023533602,216570.24877806284,286922.90199082147,187761.59262016485,175392.81795624128,497614.29539605824,0.8882840201297343,0.8788206707489997,1.0

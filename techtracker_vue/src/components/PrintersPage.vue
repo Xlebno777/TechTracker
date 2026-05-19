@@ -65,6 +65,7 @@
 import { ref, computed, onMounted, watch } from 'vue';
 import apiClient from '@/api';
 import { useAuthStore } from '@/stores/auth';
+import { useConfirmAction } from '@/composables/useConfirmAction';
 
 import DataTable from 'primevue/datatable';
 import Column from 'primevue/column';
@@ -77,6 +78,7 @@ const printJobs = ref([]);
 const loadingPrinters = ref(false);
 const loadingJobs = ref(false);
 const auth = useAuthStore();
+const { confirmAction } = useConfirmAction();
 
 const selectedPrinter = computed(() =>
   favoritePrinters.value.find(p => p.id === selectedPrinterId.value)
@@ -121,7 +123,12 @@ const fetchPrintJobs = async (deviceId) => {
 
 const deleteJob = async (job) => {
   if (!job?.id) return;
-  const ok = window.confirm('Удалить запись о печати?');
+  const ok = await confirmAction({
+    header: 'Удаление записи',
+    message: 'Удалить запись о печати?',
+    acceptLabel: 'Удалить',
+    acceptSeverity: 'danger',
+  });
   if (!ok) return;
   await apiClient.delete(`printjob/${job.id}/`);
   printJobs.value = printJobs.value.filter(j => j.id !== job.id);

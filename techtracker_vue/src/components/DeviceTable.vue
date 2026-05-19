@@ -166,7 +166,6 @@
       </div>
     </Dialog>
 
-    <ConfirmDialog />
     <Toast />
   </div>
 </template>
@@ -188,7 +187,6 @@ import Button from 'primevue/button';
 import Menu from 'primevue/menu';
 import Dialog from 'primevue/dialog';
 import Tag from 'primevue/tag';
-import ConfirmDialog from 'primevue/confirmdialog';
 import Toast from 'primevue/toast';
 
 const router = useRouter();
