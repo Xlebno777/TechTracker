@@ -147,7 +147,7 @@ Bootstrap-установщик интерактивно спросит:
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\deployment\windows\install_windows_server.ps1 -AppRoot C:\TechTracker -InstallServices -StartServices
 ```
 
-Bootstrap-установщик сам проверяет и устанавливает зависимости. На Windows Server `winget` часто отсутствует; в этом случае установщик автоматически ставит Chocolatey и через него устанавливает Git, Python 3.12, Node.js LTS и PostgreSQL 17. Пароли PostgreSQL и администратора TechTracker запрашиваются во время установки.
+Bootstrap-установщик сам проверяет и устанавливает зависимости. На Windows Server `winget` часто отсутствует; в этом случае установщик скачивает official silent-инсталляторы напрямую и ставит Git for Windows, Python 3.12, Node.js LTS и PostgreSQL 17 без Chocolatey. Пароли PostgreSQL и администратора TechTracker запрашиваются во время установки.
 
 ## Ограничения MVP
 

@@ -1,11 +1,11 @@
 {
-  "version": "0.1.4",
+  "version": "0.1.5",
   "channel": "single",
   "release_date": "2026-05-20",
-  "git_ref": "v0.1.4",
+  "git_ref": "v0.1.5",
   "notes": [
-    "Установщик больше не требует winget на Windows Server.",
-    "Если winget отсутствует, bootstrap автоматически устанавливает Chocolatey и через него ставит Git, Python, Node.js и PostgreSQL.",
-    "PostgreSQL ставится после ввода настроек, чтобы использовать заданный пароль администратора postgres."
+    "Установщик больше не зависит от Chocolatey и .NET 4.8 на чистом Windows Server.",
+    "Если winget отсутствует, Git, Python, Node.js и PostgreSQL ставятся прямыми official silent-инсталляторами.",
+    "Добавлена обработка reboot-required кодов 3010/1641 без падения установки."
   ]
 }
