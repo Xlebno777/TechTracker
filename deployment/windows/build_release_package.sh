@@ -67,14 +67,13 @@ TechTracker Windows Server package
    - PostgreSQL
    - PowerShell 5+ or PowerShell 7
 
-2. Copy this folder to C:\TechTracker.
+2. Extract this folder anywhere, for example C:\Temp\TechTracker-vX.Y.Z.
 
-3. Create .env.local:
-   Copy deployment\windows\.env.windows.example to .env.local and fill passwords, hosts and LSTM token.
+3. Run bootstrap installer. It will ask for DB/admin/LSTM settings and create .env.local automatically.
 
 4. Run PowerShell as Administrator:
-   cd C:\TechTracker
-   powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\deployment\windows\install_windows_server.ps1 -AppRoot C:\TechTracker -InstallServices -StartServices
+   cd C:\Temp\TechTracker-vX.Y.Z
+   powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\deployment\windows\bootstrap_techtracker.ps1 -AppRoot C:\TechTracker
 
 5. Open:
    http://SERVER_IP:8080

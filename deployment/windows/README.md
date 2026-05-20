@@ -126,8 +126,24 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\deployment\windows\upd
 
 ## Полная первая установка
 
+Рекомендуемый новый сценарий:
+
 ```powershell
 cd C:\TechTracker
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\deployment\windows\bootstrap_techtracker.ps1 -AppRoot C:\TechTracker
+```
+
+Bootstrap-установщик интерактивно спросит:
+
+- параметры сервера и портов;
+- пользователя и пароль PostgreSQL;
+- администратора TechTracker;
+- URL и token удаленного LSTM API;
+- включать ли обновления из web-интерфейса.
+
+Старый низкоуровневый сценарий, если `.env.local` уже создан вручную:
+
+```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\deployment\windows\install_windows_server.ps1 -AppRoot C:\TechTracker -InstallServices -StartServices
 ```
 
