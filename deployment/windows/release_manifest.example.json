@@ -1,11 +1,11 @@
 {
-  "version": "0.1.2",
+  "version": "0.1.3",
   "channel": "single",
   "release_date": "2026-05-20",
-  "git_ref": "v0.1.2",
+  "git_ref": "v0.1.3",
   "notes": [
-    "Исправлена совместимость bootstrap_techtracker.ps1 с Windows PowerShell.",
-    "Убран внешний try/catch, из-за которого Windows PowerShell мог падать на этапе парсинга.",
-    "Упрощена обработка имени хоста в configure_env.ps1."
+    "Исправлена упаковка PowerShell-скриптов для Windows PowerShell 5.1: UTF-8 BOM и CRLF.",
+    "Упрощён верхний bootstrap_techtracker.ps1 без вложенных scriptblock-вызовов.",
+    "Пакет предназначен для повторной проверки однокнопочной установки на Windows Server."
   ]
 }

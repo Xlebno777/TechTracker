@@ -34,45 +34,59 @@ Write-TechTrackerLog "AppRoot: $AppRoot"
 Write-TechTrackerLog "RepoUrl: $RepoUrl"
 Write-TechTrackerLog "GitRef: $GitRef"
 
-if (-not $SkipPrerequisites) {
-    Install-TechTrackerPrerequisites -SkipPostgreSQL:$SkipPostgreSQLInstall
-} else {
-    Write-TechTrackerLog "Установка зависимостей пропущена параметром SkipPrerequisites" "WARN"
+if ($SkipPrerequisites)
+{
+    Write-TechTrackerLog "Prerequisites step skipped by SkipPrerequisites" "WARN"
 }
 
-Invoke-TechTrackerStep "Подготовка исходников проекта" {
-    Initialize-TechTrackerProjectSource -PackageRoot $PackageRoot -AppRoot $AppRoot -RepoUrl $RepoUrl -GitRef $GitRef
+if (-not $SkipPrerequisites)
+{
+    Install-TechTrackerPrerequisites -SkipPostgreSQL:$SkipPostgreSQLInstall
 }
+
+Write-TechTrackerLog "START: project source preparation"
+Initialize-TechTrackerProjectSource -PackageRoot $PackageRoot -AppRoot $AppRoot -RepoUrl $RepoUrl -GitRef $GitRef
+Write-TechTrackerLog "OK: project source preparation" "OK"
 
 $config = Read-TechTrackerInstallConfig -AppRoot $AppRoot -RepoUrl $RepoUrl -GitRef $GitRef -AssumeDefaults:$AssumeDefaults
 
-Invoke-TechTrackerStep "Генерация .env.local" {
-    Write-TechTrackerInstallEnv -Config $config
+Write-TechTrackerLog "START: .env.local generation"
+Write-TechTrackerInstallEnv -Config $config
+Write-TechTrackerLog "OK: .env.local generation" "OK"
+
+if ($SkipDatabase)
+{
+    Write-TechTrackerLog "Database step skipped by SkipDatabase" "WARN"
 }
 
-if (-not $SkipDatabase) {
+if (-not $SkipDatabase)
+{
     Initialize-TechTrackerDatabase -Config $config
-} else {
-    Write-TechTrackerLog "Настройка PostgreSQL БД пропущена параметром SkipDatabase" "WARN"
 }
 
 Install-TechTrackerProject -Config $config -SkipFrontendBuild:$SkipFrontendBuild
 
-if (-not $SkipServices) {
-    Invoke-TechTrackerStep "Установка и запуск WinSW сервисов" {
-        & (Join-Path $AppRoot "deployment\windows\winsw_services.ps1") -Action Install -AppRoot $AppRoot -StartAfterInstall
-        if ($LASTEXITCODE -ne 0) {
-            throw "winsw_services.ps1 failed"
-        }
-    }
-} else {
-    Write-TechTrackerLog "Установка WinSW сервисов пропущена параметром SkipServices" "WARN"
+if ($SkipServices)
+{
+    Write-TechTrackerLog "WinSW services step skipped by SkipServices" "WARN"
 }
 
-if (-not $SkipHealthcheck) {
-    Invoke-TechTrackerStep "Healthcheck установки" {
-        Test-TechTrackerInstallation -Config $config
+if (-not $SkipServices)
+{
+    Write-TechTrackerLog "START: WinSW services install and start"
+    & (Join-Path $AppRoot "deployment\windows\winsw_services.ps1") -Action Install -AppRoot $AppRoot -StartAfterInstall
+    if ($LASTEXITCODE -ne 0)
+    {
+        throw "winsw_services.ps1 failed"
     }
+    Write-TechTrackerLog "OK: WinSW services install and start" "OK"
+}
+
+if (-not $SkipHealthcheck)
+{
+    Write-TechTrackerLog "START: installation healthcheck"
+    Test-TechTrackerInstallation -Config $config
+    Write-TechTrackerLog "OK: installation healthcheck" "OK"
 }
 
 Write-TechTrackerLog "TechTracker установлен." "OK"
@@ -82,6 +96,7 @@ Write-Host "UI: http://localhost:$($config.FrontendPort)"
 Write-Host "Путь установки: $AppRoot"
 Write-Host "Лог установки: $script:TechTrackerInstallLog"
 Write-Host ""
-if ($config.AppUpdateEnabled -ne "1") {
+if ($config.AppUpdateEnabled -ne "1")
+{
     Write-Host "Обновления из UI выключены. Для включения установите APP_UPDATE_ENABLED=1 в .env.local после ручной проверки update_techtracker.ps1." -ForegroundColor Yellow
 }

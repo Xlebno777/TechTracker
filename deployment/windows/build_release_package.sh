@@ -57,6 +57,21 @@ rm -rf \
 find "$STAGING" -name ".env.local" -delete
 find "$STAGING" -name ".env" -delete
 
+# Windows PowerShell 5.1 is conservative about script encodings. Release
+# packages store PowerShell scripts as UTF-8 with BOM and CRLF line endings so
+# Russian text and parser-sensitive blocks are read consistently on Windows
+# Server.
+python3 - "$STAGING" <<'PY'
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+for path in root.joinpath("deployment", "windows").rglob("*.ps1"):
+    text = path.read_text(encoding="utf-8-sig")
+    text = text.replace("\r\n", "\n").replace("\r", "\n").replace("\n", "\r\n")
+    path.write_bytes(b"\xef\xbb\xbf" + text.encode("utf-8"))
+PY
+
 cat > "$STAGING/INSTALL_WINDOWS_SERVER.txt" <<'TXT'
 TechTracker Windows Server package
 
