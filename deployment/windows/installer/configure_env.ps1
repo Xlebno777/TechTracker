@@ -16,6 +16,7 @@ function Read-TechTrackerInstallConfig {
 
     if ($AssumeDefaults) {
         $dbPassword = New-TechTrackerSecret 24
+        $pgAdminPassword = New-TechTrackerSecret 24
         $adminPassword = New-TechTrackerSecret 18
         $lstmToken = New-TechTrackerSecret 32
         return @{
@@ -32,7 +33,7 @@ function Read-TechTrackerInstallConfig {
             DbHost = "localhost"
             DbPort = "5432"
             PgAdminUser = "postgres"
-            PgAdminPassword = ""
+            PgAdminPassword = $pgAdminPassword
             AdminUsername = "admin"
             AdminEmail = "admin@example.local"
             AdminPassword = $adminPassword

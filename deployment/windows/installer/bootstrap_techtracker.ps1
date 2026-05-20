@@ -41,7 +41,7 @@ if ($SkipPrerequisites)
 
 if (-not $SkipPrerequisites)
 {
-    Install-TechTrackerPrerequisites -SkipPostgreSQL:$SkipPostgreSQLInstall
+    Install-TechTrackerPrerequisites -SkipPostgreSQL
 }
 
 Write-TechTrackerLog "START: project source preparation"
@@ -49,6 +49,15 @@ Initialize-TechTrackerProjectSource -PackageRoot $PackageRoot -AppRoot $AppRoot 
 Write-TechTrackerLog "OK: project source preparation" "OK"
 
 $config = Read-TechTrackerInstallConfig -AppRoot $AppRoot -RepoUrl $RepoUrl -GitRef $GitRef -AssumeDefaults:$AssumeDefaults
+
+if (-not $SkipPrerequisites -and -not $SkipPostgreSQLInstall)
+{
+    if (-not (Find-TechTrackerPsql) -and [string]::IsNullOrWhiteSpace($config.PgAdminPassword))
+    {
+        $config.PgAdminPassword = Read-TechTrackerSecret -Prompt "PostgreSQL admin password для автоматической установки PostgreSQL" -Required
+    }
+    Install-TechTrackerPrerequisites -SkipPostgreSQL:$false -PostgreSQLPassword $config.PgAdminPassword -PostgreSQLPort $config.DbPort
+}
 
 Write-TechTrackerLog "START: .env.local generation"
 Write-TechTrackerInstallEnv -Config $config
