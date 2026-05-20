@@ -5,7 +5,12 @@ function Read-TechTrackerInstallConfig {
         [string]$GitRef,
         [switch]$AssumeDefaults
     )
-    $hostname = try { [System.Net.Dns]::GetHostName() } catch { "localhost" }
+    $hostname = "localhost"
+    try {
+        $hostname = [System.Net.Dns]::GetHostName()
+    } catch {
+        $hostname = "localhost"
+    }
     $versionPath = Join-Path $AppRoot "VERSION"
     $appVersion = if (Test-Path $versionPath) { (Get-Content $versionPath -Raw).Trim() } else { "0.1.0" }
 

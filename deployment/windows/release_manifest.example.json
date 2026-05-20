@@ -1,11 +1,11 @@
 {
-  "version": "0.1.1",
+  "version": "0.1.2",
   "channel": "single",
   "release_date": "2026-05-20",
-  "git_ref": "v0.1.1",
+  "git_ref": "v0.1.2",
   "notes": [
-    "Добавлен bootstrap-установщик Windows Server с интерактивной настройкой.",
-    "Добавлена автоматическая генерация .env.local и создание администратора TechTracker.",
-    "Добавлены installer-скрипты для зависимостей, PostgreSQL, сборки проекта, WinSW и healthcheck."
+    "Исправлена совместимость bootstrap_techtracker.ps1 с Windows PowerShell.",
+    "Убран внешний try/catch, из-за которого Windows PowerShell мог падать на этапе парсинга.",
+    "Упрощена обработка имени хоста в configure_env.ps1."
   ]
 }

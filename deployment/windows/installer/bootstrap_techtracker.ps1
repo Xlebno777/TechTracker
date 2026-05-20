@@ -34,59 +34,54 @@ Write-TechTrackerLog "AppRoot: $AppRoot"
 Write-TechTrackerLog "RepoUrl: $RepoUrl"
 Write-TechTrackerLog "GitRef: $GitRef"
 
-try {
-    if (-not $SkipPrerequisites) {
-        Install-TechTrackerPrerequisites -SkipPostgreSQL:$SkipPostgreSQLInstall
-    } else {
-        Write-TechTrackerLog "Установка зависимостей пропущена параметром SkipPrerequisites" "WARN"
-    }
+if (-not $SkipPrerequisites) {
+    Install-TechTrackerPrerequisites -SkipPostgreSQL:$SkipPostgreSQLInstall
+} else {
+    Write-TechTrackerLog "Установка зависимостей пропущена параметром SkipPrerequisites" "WARN"
+}
 
-    Invoke-TechTrackerStep "Подготовка исходников проекта" {
-        Initialize-TechTrackerProjectSource -PackageRoot $PackageRoot -AppRoot $AppRoot -RepoUrl $RepoUrl -GitRef $GitRef
-    }
+Invoke-TechTrackerStep "Подготовка исходников проекта" {
+    Initialize-TechTrackerProjectSource -PackageRoot $PackageRoot -AppRoot $AppRoot -RepoUrl $RepoUrl -GitRef $GitRef
+}
 
-    $config = Read-TechTrackerInstallConfig -AppRoot $AppRoot -RepoUrl $RepoUrl -GitRef $GitRef -AssumeDefaults:$AssumeDefaults
+$config = Read-TechTrackerInstallConfig -AppRoot $AppRoot -RepoUrl $RepoUrl -GitRef $GitRef -AssumeDefaults:$AssumeDefaults
 
-    Invoke-TechTrackerStep "Генерация .env.local" {
-        Write-TechTrackerInstallEnv -Config $config
-    }
+Invoke-TechTrackerStep "Генерация .env.local" {
+    Write-TechTrackerInstallEnv -Config $config
+}
 
-    if (-not $SkipDatabase) {
-        Initialize-TechTrackerDatabase -Config $config
-    } else {
-        Write-TechTrackerLog "Настройка PostgreSQL БД пропущена параметром SkipDatabase" "WARN"
-    }
+if (-not $SkipDatabase) {
+    Initialize-TechTrackerDatabase -Config $config
+} else {
+    Write-TechTrackerLog "Настройка PostgreSQL БД пропущена параметром SkipDatabase" "WARN"
+}
 
-    Install-TechTrackerProject -Config $config -SkipFrontendBuild:$SkipFrontendBuild
+Install-TechTrackerProject -Config $config -SkipFrontendBuild:$SkipFrontendBuild
 
-    if (-not $SkipServices) {
-        Invoke-TechTrackerStep "Установка и запуск WinSW сервисов" {
-            & (Join-Path $AppRoot "deployment\windows\winsw_services.ps1") -Action Install -AppRoot $AppRoot -StartAfterInstall
-            if ($LASTEXITCODE -ne 0) {
-                throw "winsw_services.ps1 failed"
-            }
-        }
-    } else {
-        Write-TechTrackerLog "Установка WinSW сервисов пропущена параметром SkipServices" "WARN"
-    }
-
-    if (-not $SkipHealthcheck) {
-        Invoke-TechTrackerStep "Healthcheck установки" {
-            Test-TechTrackerInstallation -Config $config
+if (-not $SkipServices) {
+    Invoke-TechTrackerStep "Установка и запуск WinSW сервисов" {
+        & (Join-Path $AppRoot "deployment\windows\winsw_services.ps1") -Action Install -AppRoot $AppRoot -StartAfterInstall
+        if ($LASTEXITCODE -ne 0) {
+            throw "winsw_services.ps1 failed"
         }
     }
+} else {
+    Write-TechTrackerLog "Установка WinSW сервисов пропущена параметром SkipServices" "WARN"
+}
 
-    Write-TechTrackerLog "TechTracker установлен." "OK"
-    Write-Host ""
-    Write-Host "Готово." -ForegroundColor Green
-    Write-Host "UI: http://localhost:$($config.FrontendPort)"
-    Write-Host "Путь установки: $AppRoot"
-    Write-Host "Лог установки: $script:TechTrackerInstallLog"
-    Write-Host ""
-    if ($config.AppUpdateEnabled -ne "1") {
-        Write-Host "Обновления из UI выключены. Для включения установите APP_UPDATE_ENABLED=1 в .env.local после ручной проверки update_techtracker.ps1." -ForegroundColor Yellow
+if (-not $SkipHealthcheck) {
+    Invoke-TechTrackerStep "Healthcheck установки" {
+        Test-TechTrackerInstallation -Config $config
     }
-} catch {
-    Write-TechTrackerLog "Установка прервана: $($_.Exception.Message)" "ERROR"
-    throw
+}
+
+Write-TechTrackerLog "TechTracker установлен." "OK"
+Write-Host ""
+Write-Host "Готово." -ForegroundColor Green
+Write-Host "UI: http://localhost:$($config.FrontendPort)"
+Write-Host "Путь установки: $AppRoot"
+Write-Host "Лог установки: $script:TechTrackerInstallLog"
+Write-Host ""
+if ($config.AppUpdateEnabled -ne "1") {
+    Write-Host "Обновления из UI выключены. Для включения установите APP_UPDATE_ENABLED=1 в .env.local после ручной проверки update_techtracker.ps1." -ForegroundColor Yellow
 }
