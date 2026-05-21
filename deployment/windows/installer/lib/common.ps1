@@ -118,7 +118,14 @@ function ConvertFrom-TechTrackerSecureString {
 function New-TechTrackerSecret {
     param([int]$Bytes = 32)
     $data = New-Object byte[] $Bytes
-    [Security.Cryptography.RandomNumberGenerator]::Fill($data)
+    $rng = [Security.Cryptography.RandomNumberGenerator]::Create()
+    try {
+        $rng.GetBytes($data)
+    } finally {
+        if ($rng) {
+            $rng.Dispose()
+        }
+    }
     return [Convert]::ToBase64String($data).TrimEnd("=")
 }
 

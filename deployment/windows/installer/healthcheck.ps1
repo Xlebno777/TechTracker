@@ -24,12 +24,14 @@ function Test-TechTrackerInstallation {
     Test-TechTrackerHttp -Url $backendUrl -Name "Backend" | Out-Null
     Test-TechTrackerHttp -Url $frontendUrl -Name "Frontend" | Out-Null
 
-    if (-not [string]::IsNullOrWhiteSpace($Config.LstmUrl)) {
+    if ($Config.LstmConfigured -eq "1" -and -not [string]::IsNullOrWhiteSpace($Config.LstmUrl)) {
         $healthUrl = $Config.LstmUrl.TrimEnd("/") + "/health"
         $headers = @{}
         if (-not [string]::IsNullOrWhiteSpace($Config.LstmToken)) {
             $headers["X-API-Key"] = $Config.LstmToken
         }
         Test-TechTrackerHttp -Url $healthUrl -Name "Remote LSTM" -Headers $headers | Out-Null
+    } else {
+        Write-TechTrackerLog "Remote LSTM healthcheck skipped. Configure LSTM later in Settings -> Integrations." "WARN"
     }
 }

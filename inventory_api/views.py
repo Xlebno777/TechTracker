@@ -2773,6 +2773,51 @@ class MonitoringSystemViewSet(viewsets.ViewSet):
             payload["api_token"] = api_token
         return payload
 
+    @classmethod
+    def _environment_config_payload(cls):
+        env_local = cls._read_env_local_map()
+
+        def get_value(key: str, default: str = "") -> str:
+            value = env_local.get(key)
+            if value is None:
+                value = os.environ.get(key, default)
+            return str(value if value is not None else default)
+
+        db_password = get_value("DB_PASSWORD", "")
+        return {
+            "server": {
+                "allowed_hosts": get_value("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1"),
+                "backend_host": get_value("TECHTRACKER_BACKEND_HOST", "0.0.0.0"),
+                "backend_port": get_value("TECHTRACKER_BACKEND_PORT", "8000"),
+                "frontend_port": get_value("TECHTRACKER_FRONTEND_PORT", "8080"),
+                "backend_url": get_value("TECHTRACKER_BACKEND_URL", "http://127.0.0.1:8000"),
+            },
+            "database": {
+                "db_name": get_value("DB_NAME", ""),
+                "db_user": get_value("DB_USER", ""),
+                "db_host": get_value("DB_HOST", "localhost"),
+                "db_port": get_value("DB_PORT", "5432"),
+                "has_password": bool(db_password),
+                "password_preview": cls._token_preview(db_password),
+            },
+            "updates": {
+                "app_version": get_value("APP_VERSION", getattr(settings, "APP_VERSION", "0.1.0")),
+                "release_channel": get_value("APP_RELEASE_CHANNEL", "single"),
+                "manifest_url": get_value("APP_RELEASE_MANIFEST_URL", ""),
+                "update_enabled": cls._as_bool(get_value("APP_UPDATE_ENABLED", "0"), default=False),
+                "update_script": get_value("APP_UPDATE_SCRIPT", ""),
+                "update_workdir": get_value("APP_UPDATE_WORKDIR", str(getattr(settings, "BASE_DIR", ""))),
+                "update_timeout_sec": get_value("APP_UPDATE_TIMEOUT_SEC", "3600"),
+            },
+            "admin": {
+                "username": get_value("TECHTRACKER_ADMIN_USERNAME", ""),
+                "email": get_value("TECHTRACKER_ADMIN_EMAIL", ""),
+                "note": "Пароль администратора не хранится в .env.local. Меняйте его через управление пользователями Django/TechTracker.",
+            },
+            "env_file": str(cls._env_local_path()),
+            "env_file_exists": cls._env_local_path().exists(),
+        }
+
     @action(detail=False, methods=["get"], permission_classes=[AdminGroupPermission], url_path="summary")
     def summary(self, request):
         return Response(self._summary_payload(), status=status.HTTP_200_OK)
@@ -2780,6 +2825,115 @@ class MonitoringSystemViewSet(viewsets.ViewSet):
     @action(detail=False, methods=["get"], permission_classes=[AdminGroupPermission], url_path="lstm-config")
     def lstm_config(self, request):
         return Response(self._lstm_config_payload(include_token=True), status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=["get"], permission_classes=[AdminGroupPermission], url_path="environment-config")
+    def environment_config(self, request):
+        return Response(self._environment_config_payload(), status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=["post"], permission_classes=[AdminGroupPermission], url_path="save-environment-config")
+    def save_environment_config(self, request):
+        data = request.data or {}
+        server = data.get("server") or {}
+        database = data.get("database") or {}
+        updates = data.get("updates") or {}
+        admin = data.get("admin") or {}
+
+        def text(mapping, key, default=""):
+            return str(mapping.get(key, default) if mapping.get(key, default) is not None else "").strip()
+
+        values: dict[str, str] = {}
+
+        allowed_hosts = text(server, "allowed_hosts", "")
+        if allowed_hosts:
+            values["DJANGO_ALLOWED_HOSTS"] = allowed_hosts
+
+        backend_host = text(server, "backend_host", "")
+        if backend_host:
+            values["TECHTRACKER_BACKEND_HOST"] = backend_host
+
+        for source_key, env_key in (
+            ("backend_port", "TECHTRACKER_BACKEND_PORT"),
+            ("frontend_port", "TECHTRACKER_FRONTEND_PORT"),
+        ):
+            raw = text(server, source_key, "")
+            if raw:
+                try:
+                    port_value = int(raw)
+                except (TypeError, ValueError):
+                    return Response({"detail": f"{source_key} must be an integer"}, status=status.HTTP_400_BAD_REQUEST)
+                if port_value < 1 or port_value > 65535:
+                    return Response({"detail": f"{source_key} must be in range 1..65535"}, status=status.HTTP_400_BAD_REQUEST)
+                values[env_key] = str(port_value)
+
+        backend_url = text(server, "backend_url", "")
+        if backend_url:
+            values["TECHTRACKER_BACKEND_URL"] = backend_url
+
+        for source_key, env_key in (
+            ("db_name", "DB_NAME"),
+            ("db_user", "DB_USER"),
+            ("db_host", "DB_HOST"),
+            ("db_port", "DB_PORT"),
+        ):
+            raw = text(database, source_key, "")
+            if raw:
+                values[env_key] = raw
+
+        db_password = str(database.get("db_password") or "")
+        if db_password:
+            values["DB_PASSWORD"] = db_password
+
+        app_version = text(updates, "app_version", "")
+        if app_version:
+            values["APP_VERSION"] = app_version
+        release_channel = text(updates, "release_channel", "")
+        if release_channel:
+            values["APP_RELEASE_CHANNEL"] = release_channel
+        manifest_url = text(updates, "manifest_url", "")
+        if manifest_url:
+            values["APP_RELEASE_MANIFEST_URL"] = manifest_url
+        values["APP_UPDATE_ENABLED"] = "1" if self._as_bool(updates.get("update_enabled"), default=False) else "0"
+        update_script = text(updates, "update_script", "")
+        if update_script:
+            values["APP_UPDATE_SCRIPT"] = update_script
+        update_workdir = text(updates, "update_workdir", "")
+        if update_workdir:
+            values["APP_UPDATE_WORKDIR"] = update_workdir
+        update_timeout = text(updates, "update_timeout_sec", "")
+        if update_timeout:
+            try:
+                timeout_sec = int(float(update_timeout))
+            except (TypeError, ValueError):
+                return Response({"detail": "update_timeout_sec must be a number"}, status=status.HTTP_400_BAD_REQUEST)
+            values["APP_UPDATE_TIMEOUT_SEC"] = str(max(60, min(timeout_sec, 86400)))
+
+        admin_username = text(admin, "username", "")
+        if admin_username:
+            values["TECHTRACKER_ADMIN_USERNAME"] = admin_username
+        admin_email = text(admin, "email", "")
+        if admin_email:
+            values["TECHTRACKER_ADMIN_EMAIL"] = admin_email
+
+        try:
+            self._upsert_env_local_values(values)
+            for attr, env_key in (
+                ("APP_VERSION", "APP_VERSION"),
+                ("APP_RELEASE_CHANNEL", "APP_RELEASE_CHANNEL"),
+                ("APP_RELEASE_MANIFEST_URL", "APP_RELEASE_MANIFEST_URL"),
+                ("APP_UPDATE_ENABLED", "APP_UPDATE_ENABLED"),
+                ("APP_UPDATE_SCRIPT", "APP_UPDATE_SCRIPT"),
+                ("APP_UPDATE_WORKDIR", "APP_UPDATE_WORKDIR"),
+                ("APP_UPDATE_TIMEOUT_SEC", "APP_UPDATE_TIMEOUT_SEC"),
+            ):
+                if env_key in values:
+                    setattr(settings, attr, self._as_bool(values[env_key]) if env_key == "APP_UPDATE_ENABLED" else values[env_key])
+        except Exception as exc:
+            return Response({"detail": f"Не удалось сохранить .env.local: {exc}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        return Response({
+            "detail": "Настройки окружения сохранены в .env.local. Для портов, БД и ALLOWED_HOSTS может потребоваться перезапуск сервисов.",
+            "config": self._environment_config_payload(),
+        }, status=status.HTTP_200_OK)
 
     @action(detail=False, methods=["post"], permission_classes=[AdminGroupPermission], url_path="save-lstm-config")
     def save_lstm_config(self, request):
@@ -2838,6 +2992,7 @@ class MonitoringSystemViewSet(viewsets.ViewSet):
                 "LSTM_REMOTE_API_HOST": lstm_host,
                 "LSTM_REMOTE_API_PORT": str(lstm_port),
                 "LSTM_REMOTE_API_TOKEN": api_token,
+                "LSTM_REMOTE_CONFIGURED": "1",
                 "LSTM_REMOTE_TIMEOUT_SEC": str(timeout_sec),
                 "LSTM_REMOTE_VERIFY_SSL": "1" if verify_ssl else "0",
             })

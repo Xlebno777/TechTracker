@@ -33,8 +33,6 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\deployment\windows\boo
    - пароль администратора системы;
    - имя пользователя PostgreSQL;
    - пароль PostgreSQL;
-   - LSTM API URL;
-   - LSTM API token;
    - включать ли обновления из UI.
 6. Создать `.env.local`.
 7. Создать БД и пользователя PostgreSQL.
@@ -196,8 +194,7 @@ PostgreSQL password: ввод скрытым вводом
 TechTracker admin username: ввод пользователя
 TechTracker admin email: ввод пользователя
 TechTracker admin password: ввод скрытым вводом
-LSTM API URL: http://<tailscale-ip>:8099
-LSTM API token: ввод скрытым вводом или автогенерация
+LSTM API URL и token не запрашиваются при первой установке. Они настраиваются позже в GUI: `Настройки -> Интеграции`.
 Включить обновления из UI: yes/no
 ```
 
@@ -209,7 +206,7 @@ LSTM API token: ввод скрытым вводом или автогенера
 - `TECHTRACKER_ADMIN_USERNAME` спрашивать у пользователя.
 - `TECHTRACKER_ADMIN_EMAIL` спрашивать у пользователя.
 - `TECHTRACKER_ADMIN_PASSWORD` всегда спрашивать скрытым вводом.
-- `LSTM_REMOTE_API_TOKEN` спрашивать у пользователя или генерировать по запросу пользователя.
+- `LSTM_REMOTE_API_TOKEN` не спрашивать на установке; token генерируется в GUI на странице интеграций.
 - Если token генерируется при установке основного сервера, скрипт должен вывести его один раз и явно подписать: «этот token нужно вставить в конфигурацию LSTM-ПК».
 
 ## 6. Генерация `.env.local`
@@ -230,7 +227,7 @@ DB_HOST=localhost
 DB_PORT=5432
 
 LSTM_REMOTE_API_BASE_URL=http://<lstm-ip>:8099
-LSTM_REMOTE_API_TOKEN=<secret>
+LSTM_REMOTE_API_TOKEN=
 LSTM_REMOTE_TIMEOUT_SEC=60
 LSTM_REMOTE_VERIFY_SSL=0
 

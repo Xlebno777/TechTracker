@@ -175,6 +175,133 @@
       </div>
     </FilterPanel>
 
+    <FilterPanel v-if="showIntegrations" title="Параметры сервера и первого запуска">
+      <div class="settings-note">
+        Эти параметры дублируют то, что задаётся при установке в консоли. Менять их можно из GUI, но для портов, базы данных и ALLOWED_HOSTS обычно нужен перезапуск сервисов TechTracker.
+      </div>
+
+      <div class="env-section">
+        <div class="env-section__head">
+          <div>
+            <strong>Сеть приложения</strong>
+            <small>Где слушают backend/frontend и с каких адресов разрешён вход.</small>
+          </div>
+        </div>
+        <div class="environment-grid">
+          <div class="field field--wide">
+            <label class="field-label">Разрешённые адреса Django</label>
+            <InputText v-model.trim="environmentConfig.server.allowed_hosts" class="w-full" :disabled="environmentLoading || environmentSaving" />
+            <small class="field-hint">Например: localhost,127.0.0.1,server-ip. Если адреса нет в списке, backend может отклонить запрос.</small>
+          </div>
+          <div class="field">
+            <label class="field-label">Backend host</label>
+            <InputText v-model.trim="environmentConfig.server.backend_host" class="w-full" :disabled="environmentLoading || environmentSaving" />
+            <small class="field-hint">Обычно 0.0.0.0, чтобы backend был доступен с других ПК.</small>
+          </div>
+          <div class="field">
+            <label class="field-label">Backend port</label>
+            <InputNumber v-model="environmentConfig.server.backend_port" class="w-full" :min="1" :max="65535" :use-grouping="false" :disabled="environmentLoading || environmentSaving" />
+          </div>
+          <div class="field">
+            <label class="field-label">Frontend port</label>
+            <InputNumber v-model="environmentConfig.server.frontend_port" class="w-full" :min="1" :max="65535" :use-grouping="false" :disabled="environmentLoading || environmentSaving" />
+          </div>
+          <div class="field field--wide">
+            <label class="field-label">Backend URL для frontend/worker</label>
+            <InputText v-model.trim="environmentConfig.server.backend_url" class="w-full" :disabled="environmentLoading || environmentSaving" />
+            <small class="field-hint">Обычно http://127.0.0.1:8000 на том же сервере.</small>
+          </div>
+        </div>
+      </div>
+
+      <div class="env-section">
+        <div class="env-section__head">
+          <div>
+            <strong>База данных</strong>
+            <small>Подключение Django к PostgreSQL. Пароль не показывается, его можно только заменить.</small>
+          </div>
+        </div>
+        <div class="environment-grid">
+          <div class="field">
+            <label class="field-label">DB name</label>
+            <InputText v-model.trim="environmentConfig.database.db_name" class="w-full" :disabled="environmentLoading || environmentSaving" />
+          </div>
+          <div class="field">
+            <label class="field-label">DB user</label>
+            <InputText v-model.trim="environmentConfig.database.db_user" class="w-full" :disabled="environmentLoading || environmentSaving" />
+          </div>
+          <div class="field">
+            <label class="field-label">DB host</label>
+            <InputText v-model.trim="environmentConfig.database.db_host" class="w-full" :disabled="environmentLoading || environmentSaving" />
+          </div>
+          <div class="field">
+            <label class="field-label">DB port</label>
+            <InputText v-model.trim="environmentConfig.database.db_port" class="w-full" :disabled="environmentLoading || environmentSaving" />
+          </div>
+          <div class="field field--wide">
+            <label class="field-label">Новый DB password</label>
+            <InputText v-model="environmentConfig.database.db_password" class="w-full" type="password" placeholder="Оставьте пустым, чтобы не менять" :disabled="environmentLoading || environmentSaving" />
+            <small class="field-hint">
+              Сейчас пароль {{ environmentConfig.database.has_password ? `задан (${environmentConfig.database.password_preview})` : 'не задан' }}. После смены пароля в .env.local пароль PostgreSQL-пользователя в самой БД автоматически не меняется.
+            </small>
+          </div>
+        </div>
+      </div>
+
+      <div class="env-section">
+        <div class="env-section__head">
+          <div>
+            <strong>Обновления и администратор</strong>
+            <small>Настройки release-обновлений и справочная информация о первом администраторе.</small>
+          </div>
+        </div>
+        <div class="environment-grid">
+          <div class="field">
+            <label class="field-label">APP_VERSION</label>
+            <InputText v-model.trim="environmentConfig.updates.app_version" class="w-full" :disabled="environmentLoading || environmentSaving" />
+          </div>
+          <div class="field">
+            <label class="field-label">Канал релизов</label>
+            <InputText v-model.trim="environmentConfig.updates.release_channel" class="w-full" :disabled="environmentLoading || environmentSaving" />
+          </div>
+          <div class="field field--wide">
+            <label class="field-label">Manifest URL</label>
+            <InputText v-model.trim="environmentConfig.updates.manifest_url" class="w-full" :disabled="environmentLoading || environmentSaving" />
+          </div>
+          <div class="field">
+            <label class="field-label">Обновления из UI</label>
+            <div class="switch-row">
+              <InputSwitch v-model="environmentConfig.updates.update_enabled" :disabled="environmentLoading || environmentSaving" />
+              <span>{{ environmentConfig.updates.update_enabled ? 'Включены' : 'Выключены' }}</span>
+            </div>
+          </div>
+          <div class="field">
+            <label class="field-label">Timeout обновления, сек.</label>
+            <InputNumber v-model="environmentConfig.updates.update_timeout_sec" class="w-full" :min="60" :max="86400" :use-grouping="false" :disabled="environmentLoading || environmentSaving" />
+          </div>
+          <div class="field">
+            <label class="field-label">Первый admin username</label>
+            <InputText v-model.trim="environmentConfig.admin.username" class="w-full" :disabled="environmentLoading || environmentSaving" />
+          </div>
+          <div class="field">
+            <label class="field-label">Первый admin email</label>
+            <InputText v-model.trim="environmentConfig.admin.email" class="w-full" :disabled="environmentLoading || environmentSaving" />
+          </div>
+        </div>
+      </div>
+
+      <div class="lstm-actions mt-2">
+        <Button
+          icon="pi pi-save"
+          label="Сохранить параметры сервера"
+          severity="success"
+          :loading="environmentSaving"
+          :disabled="environmentLoading || environmentSaving"
+          @click="saveEnvironmentConfig"
+        />
+      </div>
+    </FilterPanel>
+
     <FilterPanel v-if="showIntegrations" title="Версия и обновления приложения">
       <div class="release-grid">
         <div class="release-card">
@@ -322,6 +449,8 @@ const lstmLoading = ref(false);
 const lstmSaving = ref(false);
 const lstmGenerating = ref(false);
 const showToken = ref(false);
+const environmentLoading = ref(false);
+const environmentSaving = ref(false);
 const releaseLoading = ref(false);
 const releaseChecking = ref(false);
 const releaseStarting = ref(false);
@@ -339,10 +468,40 @@ const lstmConfig = ref({
   has_token: false,
   token_preview: '',
 });
+const environmentConfig = ref({
+  server: {
+    allowed_hosts: 'localhost,127.0.0.1',
+    backend_host: '0.0.0.0',
+    backend_port: 8000,
+    frontend_port: 8080,
+    backend_url: 'http://127.0.0.1:8000',
+  },
+  database: {
+    db_name: '',
+    db_user: '',
+    db_host: 'localhost',
+    db_port: '5432',
+    has_password: false,
+    password_preview: '',
+    db_password: '',
+  },
+  updates: {
+    app_version: '0.1.0',
+    release_channel: 'single',
+    manifest_url: '',
+    update_enabled: false,
+    update_timeout_sec: 3600,
+  },
+  admin: {
+    username: '',
+    email: '',
+  },
+});
 
 const helpSteps = [
   'Сверху видно, сколько сейчас накоплено мониторинговых данных и отчетов.',
   'В блоке интеграции LSTM задайте IP/порт LSTM-ПК, сгенерируйте токен и сохраните параметры подключения.',
+  'В блоке параметров сервера можно изменить те же значения, которые вводились в консольном установщике; часть изменений применится после перезапуска сервисов.',
   'В блоке версий проверяйте manifest релиза и запускайте обновление только после резервной копии сервера.',
   'Кнопка очистки удаляет только историю мониторинга и анализа, но не настройки системы.',
   'После очистки нужно заново собрать метрики, прогнозы и СППР-запуски для нового цикла анализа.',
@@ -440,6 +599,101 @@ async function loadLstmConfig() {
     toast.add({ severity: 'error', summary: 'Ошибка', detail: 'Не удалось загрузить настройки LSTM', life: 4000 });
   } finally {
     lstmLoading.value = false;
+  }
+}
+
+function normalizeEnvironmentConfig(data = {}) {
+  const server = data.server || {};
+  const database = data.database || {};
+  const updates = data.updates || {};
+  const admin = data.admin || {};
+  return {
+    server: {
+      allowed_hosts: server.allowed_hosts || 'localhost,127.0.0.1',
+      backend_host: server.backend_host || '0.0.0.0',
+      backend_port: Number(server.backend_port ?? 8000),
+      frontend_port: Number(server.frontend_port ?? 8080),
+      backend_url: server.backend_url || 'http://127.0.0.1:8000',
+    },
+    database: {
+      db_name: database.db_name || '',
+      db_user: database.db_user || '',
+      db_host: database.db_host || 'localhost',
+      db_port: String(database.db_port || '5432'),
+      has_password: Boolean(database.has_password),
+      password_preview: database.password_preview || '',
+      db_password: '',
+    },
+    updates: {
+      app_version: updates.app_version || '0.1.0',
+      release_channel: updates.release_channel || 'single',
+      manifest_url: updates.manifest_url || '',
+      update_enabled: Boolean(updates.update_enabled),
+      update_timeout_sec: Number(updates.update_timeout_sec ?? 3600),
+    },
+    admin: {
+      username: admin.username || '',
+      email: admin.email || '',
+    },
+  };
+}
+
+async function loadEnvironmentConfig() {
+  environmentLoading.value = true;
+  try {
+    const res = await apiClient.get('monitoring-system/environment-config/');
+    environmentConfig.value = normalizeEnvironmentConfig(res.data || {});
+  } catch (err) {
+    toast.add({ severity: 'error', summary: 'Ошибка', detail: 'Не удалось загрузить параметры сервера', life: 4000 });
+  } finally {
+    environmentLoading.value = false;
+  }
+}
+
+async function saveEnvironmentConfig() {
+  environmentSaving.value = true;
+  try {
+    const payload = {
+      server: {
+        allowed_hosts: environmentConfig.value.server.allowed_hosts,
+        backend_host: environmentConfig.value.server.backend_host,
+        backend_port: Number(environmentConfig.value.server.backend_port || 8000),
+        frontend_port: Number(environmentConfig.value.server.frontend_port || 8080),
+        backend_url: environmentConfig.value.server.backend_url,
+      },
+      database: {
+        db_name: environmentConfig.value.database.db_name,
+        db_user: environmentConfig.value.database.db_user,
+        db_host: environmentConfig.value.database.db_host,
+        db_port: environmentConfig.value.database.db_port,
+        db_password: environmentConfig.value.database.db_password || '',
+      },
+      updates: {
+        app_version: environmentConfig.value.updates.app_version,
+        release_channel: environmentConfig.value.updates.release_channel,
+        manifest_url: environmentConfig.value.updates.manifest_url,
+        update_enabled: Boolean(environmentConfig.value.updates.update_enabled),
+        update_timeout_sec: Number(environmentConfig.value.updates.update_timeout_sec || 3600),
+      },
+      admin: {
+        username: environmentConfig.value.admin.username,
+        email: environmentConfig.value.admin.email,
+      },
+    };
+    const res = await apiClient.post('monitoring-system/save-environment-config/', payload);
+    environmentConfig.value = normalizeEnvironmentConfig(res.data?.config || {});
+    toast.add({
+      severity: 'success',
+      summary: 'Сохранено',
+      detail: res.data?.detail || 'Параметры сервера сохранены.',
+      life: 4500,
+    });
+    await loadReleaseStatus();
+  } catch (err) {
+    const detail = err?.response?.data?.detail || 'Не удалось сохранить параметры сервера';
+    toast.add({ severity: 'error', summary: 'Ошибка', detail, life: 5000 });
+  } finally {
+    environmentSaving.value = false;
   }
 }
 
@@ -654,6 +908,7 @@ async function refreshPage() {
   }
   if (showIntegrations.value) {
     jobs.push(loadLstmConfig());
+    jobs.push(loadEnvironmentConfig());
     jobs.push(loadReleaseStatus());
   }
   await Promise.all(jobs);
@@ -746,6 +1001,61 @@ onMounted(async () => {
   display: flex;
   flex-wrap: wrap;
   gap: 0.6rem;
+}
+
+.settings-note {
+  border: 1px solid #dbeafe;
+  border-radius: 12px;
+  padding: 0.85rem;
+  background: #eff6ff;
+  color: #334155;
+  margin-bottom: 0.9rem;
+  line-height: 1.35;
+}
+
+.env-section {
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  background: #f8fafc;
+  padding: 0.9rem;
+  margin-bottom: 0.9rem;
+  min-width: 0;
+}
+
+.env-section__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.8rem;
+  margin-bottom: 0.85rem;
+  min-width: 0;
+}
+
+.env-section__head > div {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 0;
+}
+
+.env-section__head strong {
+  color: #1e293b;
+}
+
+.env-section__head small {
+  color: #64748b;
+  overflow-wrap: anywhere;
+}
+
+.environment-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr));
+  gap: 0.9rem;
+  min-width: 0;
+}
+
+.field--wide {
+  grid-column: span 2;
 }
 
 .release-grid {
@@ -959,6 +1269,10 @@ onMounted(async () => {
 
   .danger-layout {
     grid-template-columns: 1fr;
+  }
+
+  .field--wide {
+    grid-column: 1 / -1;
   }
 
   .danger-actions {

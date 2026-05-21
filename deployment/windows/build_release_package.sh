@@ -84,7 +84,7 @@ TechTracker Windows Server package
 
 2. Extract this folder anywhere, for example C:\Temp\TechTracker-vX.Y.Z.
 
-3. Run bootstrap installer. It will ask for DB/admin/LSTM settings and create .env.local automatically.
+3. Run bootstrap installer. It will ask for DB/admin/server settings and create .env.local automatically.
 
 4. Run PowerShell as Administrator:
    cd C:\Temp\TechTracker-vX.Y.Z
