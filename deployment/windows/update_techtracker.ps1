@@ -37,7 +37,26 @@ function Invoke-Step {
         [scriptblock]$Block
     )
     Write-Step $Name
-    & $Block *>&1 | Tee-Object -FilePath $LogFile -Append
+    # PowerShell 5.1 can treat native command stderr/progress as a
+    # NativeCommandError when ErrorActionPreference=Stop and streams are
+    # redirected into Tee-Object. Git writes normal progress like
+    # "Cloning into ..." to stderr, so the update could fail even when git
+    # eventually exits with code 0. During a step we capture all streams as
+    # text and let explicit exit-code checks inside the block decide failure.
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        $output = & $Block *>&1
+        foreach ($item in @($output)) {
+            $line = [string]$item
+            if (-not [string]::IsNullOrWhiteSpace($line)) {
+                Write-Host $line
+                Add-Content -Path $LogFile -Value $line -Encoding UTF8
+            }
+        }
+    } finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
 }
 
 function Copy-TechTrackerSource {
@@ -153,7 +172,7 @@ $TempRoot = Join-Path $env:TEMP "TechTrackerUpdate_$Stamp"
 try {
     Invoke-Step "Cloning update source" {
         if (Test-Path $TempRoot) { Remove-Item -Recurse -Force $TempRoot }
-        git clone $RepoUrl $TempRoot
+        git clone --quiet $RepoUrl $TempRoot
         if ($LASTEXITCODE -ne 0) { throw "git clone завершился с кодом $LASTEXITCODE" }
     }
 
@@ -161,7 +180,7 @@ try {
     try {
         if (-not [string]::IsNullOrWhiteSpace($GitRef)) {
             Invoke-Step "Checking out $GitRef" {
-                git checkout $GitRef
+                git -c advice.detachedHead=false checkout --quiet $GitRef
                 if ($LASTEXITCODE -ne 0) { throw "git checkout $GitRef завершился с кодом $LASTEXITCODE" }
             }
         } else {
