@@ -20,6 +20,29 @@ function Invoke-TechTrackerPsql {
     }
 }
 
+function Invoke-TechTrackerPsqlScalar {
+    param(
+        [string]$Psql,
+        [string]$HostName,
+        [string]$Port,
+        [string]$AdminUser,
+        [string]$AdminPassword,
+        [string]$Database = "postgres",
+        [string]$Sql
+    )
+    $oldPassword = $env:PGPASSWORD
+    try {
+        $env:PGPASSWORD = $AdminPassword
+        $output = & $Psql -h $HostName -p $Port -U $AdminUser -d $Database -v ON_ERROR_STOP=1 -tAc $Sql
+        if ($LASTEXITCODE -ne 0) {
+            throw "psql завершился с кодом $LASTEXITCODE"
+        }
+        return ([string]($output | Select-Object -First 1)).Trim()
+    } finally {
+        $env:PGPASSWORD = $oldPassword
+    }
+}
+
 function Initialize-TechTrackerDatabase {
     param([hashtable]$Config)
 
@@ -55,23 +78,15 @@ END
     }
 
     Invoke-TechTrackerStep "Создание PostgreSQL базы $dbName" {
-        $sql = @"
-SELECT 'CREATE DATABASE "$dbName" OWNER "$dbUser"'
-WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = '$dbName')\gexec
-"@
-        $tempSql = [IO.Path]::GetTempFileName()
-        try {
-            Set-Content -Path $tempSql -Value $sql -Encoding UTF8
-            $oldPassword = $env:PGPASSWORD
-            $env:PGPASSWORD = $adminPassword
-            & $psql -h $hostName -p $port -U $adminUser -d postgres -v ON_ERROR_STOP=1 -f $tempSql
-            if ($LASTEXITCODE -ne 0) {
-                throw "psql завершился с кодом $LASTEXITCODE"
-            }
-        } finally {
-            $env:PGPASSWORD = $oldPassword
-            Remove-Item $tempSql -Force -ErrorAction SilentlyContinue
+        $existsSql = "SELECT 1 FROM pg_database WHERE datname = '$dbName';"
+        $exists = Invoke-TechTrackerPsqlScalar -Psql $psql -HostName $hostName -Port $port -AdminUser $adminUser -AdminPassword $adminPassword -Sql $existsSql
+        if ($exists -eq "1") {
+            Write-TechTrackerLog "База $dbName уже существует" "OK"
+            return
         }
+
+        $sql = "CREATE DATABASE `"$dbName`" OWNER `"$dbUser`";"
+        Invoke-TechTrackerPsql -Psql $psql -HostName $hostName -Port $port -AdminUser $adminUser -AdminPassword $adminPassword -Sql $sql
     }
 
     Invoke-TechTrackerStep "Выдача прав PostgreSQL" {
