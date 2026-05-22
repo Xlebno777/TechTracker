@@ -12,6 +12,9 @@ from django.utils import timezone
 from .models import ApplicationUpdateJob
 
 
+DEFAULT_RELEASE_MANIFEST_URL = "https://api.github.com/repos/Xlebno777/TechTracker/releases/latest"
+
+
 def _safe_text(value, default=""):
     text = str(value if value is not None else "").strip()
     return text or default
@@ -23,9 +26,17 @@ def _read_json_from_url(url: str, timeout: float = 10.0):
         raise ValueError("APP_RELEASE_MANIFEST_URL is not configured")
     if raw_url.startswith("file://"):
         path = Path(raw_url[7:]).expanduser()
+        if not path.exists() and path.name == "release_manifest.json":
+            fallback = path.with_name("release_manifest.example.json")
+            if fallback.exists():
+                path = fallback
         return json.loads(path.read_text(encoding="utf-8"))
     if "://" not in raw_url:
         path = Path(raw_url).expanduser()
+        if not path.exists() and path.name == "release_manifest.json":
+            fallback = path.with_name("release_manifest.example.json")
+            if fallback.exists():
+                path = fallback
         return json.loads(path.read_text(encoding="utf-8"))
     req = Request(raw_url, headers={"Accept": "application/json"})
     with urlopen(req, timeout=timeout) as response:
@@ -71,7 +82,7 @@ def _git_value(args):
 
 def get_current_release_info() -> dict:
     script_path = Path(getattr(settings, "APP_UPDATE_SCRIPT", "") or "").expanduser()
-    manifest_url = _safe_text(getattr(settings, "APP_RELEASE_MANIFEST_URL", ""))
+    manifest_url = _safe_text(getattr(settings, "APP_RELEASE_MANIFEST_URL", ""), DEFAULT_RELEASE_MANIFEST_URL)
     return {
         "current_version": _safe_text(getattr(settings, "APP_VERSION", ""), "0.1.0"),
         "release_channel": _safe_text(getattr(settings, "APP_RELEASE_CHANNEL", ""), "single"),
@@ -90,18 +101,33 @@ def get_current_release_info() -> dict:
 
 def normalize_manifest(raw_manifest: dict) -> dict:
     manifest = dict(raw_manifest or {})
-    notes = manifest.get("notes") or manifest.get("release_notes") or []
+    notes = manifest.get("notes") or manifest.get("release_notes") or manifest.get("body") or []
     if isinstance(notes, str):
-        notes = [notes]
+        notes = [line.strip("- ").strip() for line in notes.splitlines() if line.strip()]
     if not isinstance(notes, list):
         notes = []
+    assets = manifest.get("assets") if isinstance(manifest.get("assets"), list) else []
+    windows_asset = next(
+        (
+            asset for asset in assets
+            if isinstance(asset, dict) and str(asset.get("name") or "").endswith("-windows-server.zip")
+        ),
+        {},
+    )
+    digest = _safe_text(windows_asset.get("digest") if isinstance(windows_asset, dict) else "")
+    sha256 = _safe_text(manifest.get("sha256"))
+    if not sha256 and digest.startswith("sha256:"):
+        sha256 = digest.split(":", 1)[1]
+    download_url = _safe_text(manifest.get("download_url"))
+    if not download_url and isinstance(windows_asset, dict):
+        download_url = _safe_text(windows_asset.get("browser_download_url"))
     return {
-        "version": _safe_text(manifest.get("version") or manifest.get("tag") or manifest.get("name")),
+        "version": _safe_text(manifest.get("version") or manifest.get("tag") or manifest.get("tag_name") or manifest.get("name")),
         "channel": _safe_text(manifest.get("channel"), _safe_text(getattr(settings, "APP_RELEASE_CHANNEL", ""), "single")),
-        "release_date": _safe_text(manifest.get("release_date")),
-        "git_ref": _safe_text(manifest.get("git_ref") or manifest.get("tag")),
-        "download_url": _safe_text(manifest.get("download_url")),
-        "sha256": _safe_text(manifest.get("sha256")),
+        "release_date": _safe_text(manifest.get("release_date") or manifest.get("published_at") or manifest.get("created_at")),
+        "git_ref": _safe_text(manifest.get("git_ref") or manifest.get("tag") or manifest.get("tag_name")),
+        "download_url": download_url,
+        "sha256": sha256,
         "notes": notes,
         "raw": manifest,
     }

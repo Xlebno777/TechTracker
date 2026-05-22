@@ -1,11 +1,11 @@
 {
-  "version": "0.1.13",
+  "version": "0.1.14",
   "channel": "single",
   "release_date": "2026-05-22",
-  "git_ref": "v0.1.13",
+  "git_ref": "v0.1.14",
   "notes": [
-    "Добавлен публичный backend health endpoint /api/health/ для корректной проверки установки без авторизации.",
-    "Windows healthcheck больше не проверяет защищённый /api/, который штатно возвращает 401 без токена.",
-    "Установка теперь должна показывать Backend отвечает: HTTP 200, если Django backend действительно запущен."
+    "Исправлена проверка обновлений: manifest теперь берётся из GitHub Releases latest, а не из отсутствующего локального файла release_manifest.json.",
+    "Сервер обновлений теперь понимает GitHub release payload: tag_name, published_at, body, assets и sha256 digest.",
+    "Скрипт обновления теперь работает для ZIP-установки без .git: клонирует репозиторий во временную папку и безопасно копирует новую версию в AppRoot."
   ]
 }

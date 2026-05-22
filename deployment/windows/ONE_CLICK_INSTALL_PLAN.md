@@ -233,7 +233,7 @@ LSTM_REMOTE_VERIFY_SSL=0
 
 APP_VERSION=<VERSION>
 APP_RELEASE_CHANNEL=single
-APP_RELEASE_MANIFEST_URL=C:\TechTracker\deployment\windows\release_manifest.json
+APP_RELEASE_MANIFEST_URL=https://api.github.com/repos/Xlebno777/TechTracker/releases/latest
 APP_UPDATE_ENABLED=0
 APP_UPDATE_SCRIPT=C:\TechTracker\deployment\windows\update_techtracker.ps1
 APP_UPDATE_WORKDIR=C:\TechTracker
