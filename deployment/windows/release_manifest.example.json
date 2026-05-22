@@ -1,11 +1,11 @@
 {
-  "version": "0.1.14",
+  "version": "0.1.15",
   "channel": "single",
   "release_date": "2026-05-22",
-  "git_ref": "v0.1.14",
+  "git_ref": "v0.1.15",
   "notes": [
-    "Исправлена проверка обновлений: manifest теперь берётся из GitHub Releases latest, а не из отсутствующего локального файла release_manifest.json.",
-    "Сервер обновлений теперь понимает GitHub release payload: tag_name, published_at, body, assets и sha256 digest.",
-    "Скрипт обновления теперь работает для ZIP-установки без .git: клонирует репозиторий во временную папку и безопасно копирует новую версию в AppRoot."
+    "Исправлена установка поверх существующей ZIP-инсталляции без .git: bootstrap теперь копирует новый release package в AppRoot.",
+    "Сохранены исправления обновлений v0.1.14: GitHub Releases latest вместо локального release_manifest.json и update через временный clone.",
+    "Теперь можно установить новый релиз поверх работающего C:\\TechTracker без удаления PostgreSQL базы."
   ]
 }

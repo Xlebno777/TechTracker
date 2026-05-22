@@ -6,23 +6,30 @@ function Initialize-TechTrackerProjectSource {
         [string]$GitRef
     )
     $managePy = Join-Path $AppRoot "manage.py"
+    $packageManagePy = Join-Path $PackageRoot "manage.py"
     if (Test-Path $managePy) {
         Write-TechTrackerLog "Проект уже найден: $AppRoot"
         Set-Location $AppRoot
-        if (Test-TechTrackerCommand "git") {
+        if ((Test-Path ".git") -and (Test-TechTrackerCommand "git")) {
             try {
                 git fetch --all --tags --prune
                 if ($GitRef) {
                     git checkout $GitRef
                 }
+                return
             } catch {
                 Write-TechTrackerLog "Не удалось обновить git checkout: $($_.Exception.Message)" "WARN"
             }
         }
+        if (Test-Path $packageManagePy) {
+            Write-TechTrackerLog "Установка без .git: копирование release package поверх существующего AppRoot"
+            Copy-TechTrackerPackage -SourceRoot $PackageRoot -AppRoot $AppRoot
+            Set-Location $AppRoot
+            return
+        }
         return
     }
 
-    $packageManagePy = Join-Path $PackageRoot "manage.py"
     if (Test-Path $packageManagePy) {
         Write-TechTrackerLog "Копирование release package в $AppRoot"
         Copy-TechTrackerPackage -SourceRoot $PackageRoot -AppRoot $AppRoot
