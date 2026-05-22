@@ -121,10 +121,16 @@ function New-ServiceXml {
         [string]$Id,
         [string]$Name,
         [string]$Description,
-        [string]$Script
+        [string]$Script,
+        [string]$Executable = "powershell.exe",
+        [string]$Arguments = ""
     )
-    $scriptPath = Join-Path $WindowsDir $Script
-    $escapedArgs = XmlEscape "-NoProfile -ExecutionPolicy Bypass -File `"$scriptPath`" -AppRoot `"$AppRoot`""
+    if ([string]::IsNullOrWhiteSpace($Arguments)) {
+        $scriptPath = Join-Path $WindowsDir $Script
+        $Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$scriptPath`" -AppRoot `"$AppRoot`""
+    }
+    $escapedExecutable = XmlEscape $Executable
+    $escapedArgs = XmlEscape $Arguments
     $escapedWorkdir = XmlEscape $AppRoot
     $escapedLogDir = XmlEscape $LogDir
     $escapedName = XmlEscape $Name
@@ -134,7 +140,7 @@ function New-ServiceXml {
   <id>$Id</id>
   <name>$escapedName</name>
   <description>$escapedDescription</description>
-  <executable>powershell.exe</executable>
+  <executable>$escapedExecutable</executable>
   <arguments>$escapedArgs</arguments>
   <workingdirectory>$escapedWorkdir</workingdirectory>
   <logpath>$escapedLogDir</logpath>
@@ -157,7 +163,8 @@ $Services = @(
         Id = "TechTrackerBackend"
         Name = "TechTracker Backend"
         Description = "Django API server for TechTracker"
-        Script = "service_backend.ps1"
+        Script = "run_backend_waitress.py"
+        DirectPython = $true
     },
     @{
         Id = "TechTrackerFrontend"
@@ -193,7 +200,14 @@ function Install-One {
     $serviceXml = Join-Path $ServiceDir "$($Service.Id).xml"
 
     Copy-Item $winsw $serviceExe -Force
-    New-ServiceXml -Id $Service.Id -Name $Service.Name -Description $Service.Description -Script $Service.Script |
+    $xmlArgs = @{}
+    if ($Service.DirectPython) {
+        $python = Join-Path $AppRoot ".venv\Scripts\python.exe"
+        $runner = Join-Path $WindowsDir $Service.Script
+        $xmlArgs.Executable = $python
+        $xmlArgs.Arguments = "`"$runner`" --app-root `"$AppRoot`""
+    }
+    New-ServiceXml -Id $Service.Id -Name $Service.Name -Description $Service.Description -Script $Service.Script @xmlArgs |
         Set-Content -Path $serviceXml -Encoding UTF8
 
     $exists = Get-Service -Name $Service.Id -ErrorAction SilentlyContinue

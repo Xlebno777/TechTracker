@@ -83,7 +83,7 @@ if ($SkipServices)
 if (-not $SkipServices)
 {
     Write-TechTrackerLog "START: WinSW services install and start"
-    & (Join-Path $AppRoot "deployment\windows\winsw_services.ps1") -Action Install -AppRoot $AppRoot -StartAfterInstall
+    & (Join-Path $AppRoot "deployment\windows\winsw_services.ps1") -Action Reinstall -AppRoot $AppRoot -StartAfterInstall
     if ($LASTEXITCODE -ne 0)
     {
         throw "winsw_services.ps1 failed"
