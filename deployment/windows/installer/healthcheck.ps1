@@ -13,7 +13,7 @@ function Test-TechTrackerHttp {
             return $true
         } catch {
             if ($attempt -lt $Attempts) {
-                Write-TechTrackerLog "$Name пока не отвечает, попытка $attempt/$Attempts: $Url :: $($_.Exception.Message)" "WARN"
+                Write-TechTrackerLog "$Name пока не отвечает, попытка ${attempt}/${Attempts}: $Url :: $($_.Exception.Message)" "WARN"
                 Start-Sleep -Seconds $DelaySec
             } else {
                 Write-TechTrackerLog "$Name не отвечает: $Url :: $($_.Exception.Message)" "WARN"
