@@ -25,7 +25,7 @@ function Test-TechTrackerHttp {
 
 function Test-TechTrackerInstallation {
     param([hashtable]$Config)
-    $backendUrl = "http://127.0.0.1:$($Config.BackendPort)/api/"
+    $backendUrl = "http://127.0.0.1:$($Config.BackendPort)/api/health/"
     $frontendUrl = "http://127.0.0.1:$($Config.FrontendPort)/"
 
     Start-Sleep -Seconds 5

@@ -1,11 +1,11 @@
 {
-  "version": "0.1.12",
+  "version": "0.1.13",
   "channel": "single",
   "release_date": "2026-05-22",
-  "git_ref": "v0.1.12",
+  "git_ref": "v0.1.13",
   "notes": [
-    "Backend-служба WinSW теперь запускает Python runner напрямую, без PowerShell-обёртки.",
-    "Backend runner самостоятельно читает .env.local и пишет отдельный диагностический лог logs/backend_service.log.",
-    "Bootstrap переустанавливает WinSW службы, чтобы новая XML-конфигурация точно применялась поверх старых установок."
+    "Добавлен публичный backend health endpoint /api/health/ для корректной проверки установки без авторизации.",
+    "Windows healthcheck больше не проверяет защищённый /api/, который штатно возвращает 401 без токена.",
+    "Установка теперь должна показывать Backend отвечает: HTTP 200, если Django backend действительно запущен."
   ]
 }

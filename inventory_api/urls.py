@@ -54,6 +54,7 @@ router.register(r'tracked-vms', views.TrackedVMViewSet)
 
 # Подключаем маршруты роутера к этому файлу
 urlpatterns = [
+    path('health/', views.health_check, name='api-health'),
     path('', include(router.urls)),
     # Можно добавить дополнительные URL-ы, не связанные с ViewSet'ами, здесь
 ]

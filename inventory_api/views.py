@@ -20,8 +20,8 @@ from PIL import Image
 from django.shortcuts import render
 from rest_framework import viewsets, status, filters
 from rest_framework.response import Response
-from rest_framework.decorators import action
-from rest_framework.permissions import IsAuthenticated, DjangoModelPermissions, IsAdminUser
+from rest_framework.decorators import action, api_view, permission_classes
+from rest_framework.permissions import IsAuthenticated, DjangoModelPermissions, IsAdminUser, AllowAny
 from django.contrib.auth.models import User
 from django.db import models
 from django.db import IntegrityError
@@ -68,6 +68,12 @@ from .network_alerts import (
     get_network_derived_snapshot,
 )
 from .network_map_builder import build_network_map_snapshot
+
+
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def health_check(request):
+    return Response({"status": "ok", "service": "techtracker_backend"})
 from .forecasting.demo_seed import seed_demo_forecasts
 from .release_management import check_for_update, get_current_release_info, launch_update_worker
 from django.utils import timezone
