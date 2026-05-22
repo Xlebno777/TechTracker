@@ -57,6 +57,22 @@ rm -rf \
 find "$STAGING" -name ".env.local" -delete
 find "$STAGING" -name ".env" -delete
 
+WINSW_VERSION="${WINSW_VERSION:-2.12.0}"
+WINSW_LOCAL="$ROOT_DIR/deployment/windows/bin/WinSW-x64.exe"
+WINSW_STAGING="$STAGING/deployment/windows/bin/WinSW-x64.exe"
+WINSW_URL="https://github.com/winsw/winsw/releases/download/v${WINSW_VERSION}/WinSW-x64.exe"
+mkdir -p "$(dirname "$WINSW_STAGING")"
+if [[ -f "$WINSW_LOCAL" ]]; then
+  cp -a "$WINSW_LOCAL" "$WINSW_STAGING"
+else
+  echo "Downloading WinSW ${WINSW_VERSION} for offline installer package"
+  curl -fL --retry 5 --retry-delay 2 --connect-timeout 30 --max-time 300 -o "$WINSW_STAGING" "$WINSW_URL"
+fi
+if [[ ! -s "$WINSW_STAGING" ]] || [[ "$(stat -c '%s' "$WINSW_STAGING")" -lt 1048576 ]]; then
+  echo "WinSW binary was not bundled correctly: $WINSW_STAGING" >&2
+  exit 1
+fi
+
 # Windows PowerShell 5.1 is conservative about script encodings. Release
 # packages store PowerShell scripts as UTF-8 with BOM and CRLF line endings so
 # Russian text and parser-sensitive blocks are read consistently on Windows

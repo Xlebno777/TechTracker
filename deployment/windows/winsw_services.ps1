@@ -2,7 +2,7 @@ param(
     [ValidateSet("Install", "Reinstall", "Start", "Stop", "Restart", "Uninstall", "Status")]
     [string]$Action = "Install",
     [string]$AppRoot = "C:\TechTracker",
-    [string]$WinSWVersion = "3.0.0",
+    [string]$WinSWVersion = "2.12.0",
     [string]$WinSWExe = "",
     [switch]$StartAfterInstall
 )
@@ -23,6 +23,75 @@ function Write-Step {
     Write-Host "[WinSW] $Message"
 }
 
+function Enable-StrongTls {
+    try {
+        [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12
+    } catch {
+        Write-Step "TLS 1.2 setup skipped: $($_.Exception.Message)"
+    }
+}
+
+function Test-WinSWBinary {
+    param([string]$Path)
+    if (-not (Test-Path $Path)) {
+        return $false
+    }
+
+    $item = Get-Item $Path
+    return ($item.Length -gt 1024KB)
+}
+
+function Save-WinSWBinary {
+    param(
+        [string]$Url,
+        [string]$OutFile
+    )
+
+    Enable-StrongTls
+    $tmp = "$OutFile.download"
+    $lastError = $null
+
+    for ($attempt = 1; $attempt -le 3; $attempt++) {
+        try {
+            if (Test-Path $tmp) { Remove-Item -Force $tmp }
+            Write-Step "Download attempt $attempt/3 via Invoke-WebRequest"
+            Invoke-WebRequest -Uri $Url -OutFile $tmp -UseBasicParsing
+            if (-not (Test-WinSWBinary -Path $tmp)) {
+                throw "Downloaded file is missing or too small"
+            }
+            Move-Item -Force $tmp $OutFile
+            return
+        } catch {
+            $lastError = $_.Exception.Message
+            Write-Step "Invoke-WebRequest failed: $lastError"
+            Start-Sleep -Seconds (2 * $attempt)
+        }
+    }
+
+    $curl = Get-Command "curl.exe" -ErrorAction SilentlyContinue
+    if ($curl) {
+        try {
+            if (Test-Path $tmp) { Remove-Item -Force $tmp }
+            Write-Step "Download fallback via curl.exe"
+            & $curl.Source -fL --retry 5 --retry-delay 2 --connect-timeout 30 --max-time 300 -o $tmp $Url
+            if ($LASTEXITCODE -ne 0) {
+                throw "curl.exe exit code $LASTEXITCODE"
+            }
+            if (-not (Test-WinSWBinary -Path $tmp)) {
+                throw "Downloaded file is missing or too small"
+            }
+            Move-Item -Force $tmp $OutFile
+            return
+        } catch {
+            $lastError = $_.Exception.Message
+            Write-Step "curl.exe failed: $lastError"
+        }
+    }
+
+    if (Test-Path $tmp) { Remove-Item -Force $tmp }
+    throw "Cannot download WinSW from $Url. Last error: $lastError"
+}
+
 function Get-WinSWBinary {
     if (-not [string]::IsNullOrWhiteSpace($WinSWExe)) {
         if (-not (Test-Path $WinSWExe)) {
@@ -38,7 +107,7 @@ function Get-WinSWBinary {
 
     $url = "https://github.com/winsw/winsw/releases/download/v$WinSWVersion/WinSW-x64.exe"
     Write-Step "Downloading WinSW $WinSWVersion from $url"
-    Invoke-WebRequest -Uri $url -OutFile $local
+    Save-WinSWBinary -Url $url -OutFile $local
     return $local
 }
 
