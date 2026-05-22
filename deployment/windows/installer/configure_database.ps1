@@ -37,7 +37,11 @@ function Invoke-TechTrackerPsqlScalar {
         if ($LASTEXITCODE -ne 0) {
             throw "psql завершился с кодом $LASTEXITCODE"
         }
-        return ([string]($output | Select-Object -First 1)).Trim()
+        $lines = @($output)
+        if ($lines.Count -eq 0 -or $null -eq $lines[0]) {
+            return ""
+        }
+        return ([string]$lines[0]).Trim()
     } finally {
         $env:PGPASSWORD = $oldPassword
     }
