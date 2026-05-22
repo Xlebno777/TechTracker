@@ -17,6 +17,7 @@ import MonitoringDemo from '../components/MonitoringDemo.vue'
 import MonitoringEvaluation from '../components/MonitoringEvaluation.vue'
 import MonitoringTasks from '../components/MonitoringTasks.vue'
 import MonitoringSettings from '../components/MonitoringSettings.vue'
+import UserManagement from '../components/UserManagement.vue'
 import PrintersPage from '../components/PrintersPage.vue'
 
 
@@ -135,6 +136,12 @@ const routes = [
     meta: { requiresAuth: true, forbidUsers: true }
   },
   {
+    path: '/users',
+    name: 'UserManagement',
+    component: UserManagement,
+    meta: { requiresAuth: true, requiresAdmin: true }
+  },
+  {
     path: '/admin/requests',
     name: 'AdminRequests',
     component: RequestList,
@@ -158,7 +165,7 @@ const router = createRouter({ // <-- router создаётся ЗДЕСЬ
 router.beforeEach((to, from, next) => {
   const hasToken = localStorage.getItem('auth_token') !== null;
 
-  if (to.name === 'DeviceTable' || to.name === 'DeviceCreate' || to.name === 'DeviceEdit' || to.name === 'RequestForm' || to.name === 'RequestList' || to.name === 'Printers' || to.name === 'Monitoring' || to.name === 'NetworkMonitoring' || to.name === 'MonitoringAnalysis' || to.name === 'AgentDiagnostics' || to.name === 'MonitoringForecast' || to.name === 'MonitoringPipeline' || to.name === 'MonitoringRisk' || to.name === 'MonitoringDecision' || to.name === 'MonitoringDemo' || to.name === 'MonitoringEvaluation' || to.name === 'MonitoringTasks' || to.name === 'Settings' || to.name === 'AdminRequests') {
+  if (to.name === 'DeviceTable' || to.name === 'DeviceCreate' || to.name === 'DeviceEdit' || to.name === 'RequestForm' || to.name === 'RequestList' || to.name === 'Printers' || to.name === 'Monitoring' || to.name === 'NetworkMonitoring' || to.name === 'MonitoringAnalysis' || to.name === 'AgentDiagnostics' || to.name === 'MonitoringForecast' || to.name === 'MonitoringPipeline' || to.name === 'MonitoringRisk' || to.name === 'MonitoringDecision' || to.name === 'MonitoringDemo' || to.name === 'MonitoringEvaluation' || to.name === 'MonitoringTasks' || to.name === 'Settings' || to.name === 'UserManagement' || to.name === 'AdminRequests') {
     if (!hasToken) {
       next({ name: 'AuthPage' });
     } else {

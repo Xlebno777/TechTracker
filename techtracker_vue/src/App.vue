@@ -98,6 +98,11 @@
           <span>Диагностика агента</span>
         </router-link>
 
+        <router-link v-if="auth.isAdmin" :to="{ name: 'UserManagement' }" class="nav-link" active-class="active">
+          <i class="pi pi-users"></i>
+          <span>Пользователи</span>
+        </router-link>
+
         <router-link v-if="!auth.isUser" :to="{ name: 'Settings' }" class="nav-link" active-class="active">
           <i class="pi pi-cog"></i>
           <span>Настройки</span>

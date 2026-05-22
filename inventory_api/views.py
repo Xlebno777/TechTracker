@@ -22,7 +22,9 @@ from rest_framework import viewsets, status, filters
 from rest_framework.response import Response
 from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated, DjangoModelPermissions, IsAdminUser, AllowAny
-from django.contrib.auth.models import User
+from rest_framework.exceptions import ValidationError
+from django.contrib.auth.models import Group, Permission, User
+from rest_framework.authtoken.models import Token
 from django.db import models
 from django.db import IntegrityError
 from django.db import transaction
@@ -48,6 +50,7 @@ from .serializers import (
     UserProfileSerializer, ComputerSpecsSerializer,
     PrinterScannerSpecsSerializer, NetworkDeviceSpecsSerializer,
     CartridgeSerializer, CartridgeLogSerializer, LogSerializer, UserSerializer,
+    ManagedGroupSerializer, ManagedUserSerializer, PermissionSerializer,
     MetricSerializer, PrintJobSerializer, RawMetricSerializer, RawMetricIngestSerializer,
     TrackedVMSerializer, TrackedVMSyncSerializer, ComputedMetricSerializer, AgentStatusSerializer, AgentStatusReportSerializer,
     DiagnosticReportSerializer, DiagnosticRunSerializer, NetworkPathSerializer, NetworkOutageSerializer,
@@ -771,6 +774,108 @@ class UserViewSet(viewsets.ReadOnlyModelViewSet):
     def me(self, request):
         serializer = self.get_serializer(request.user)
         return Response(serializer.data)
+
+
+class ManagedUserViewSet(viewsets.ModelViewSet):
+    serializer_class = ManagedUserSerializer
+    permission_classes = [AdminGroupPermission]
+    filter_backends = [filters.SearchFilter, filters.OrderingFilter]
+    search_fields = ['username', 'first_name', 'last_name', 'email', 'groups__name']
+    ordering_fields = ['username', 'email', 'is_active', 'is_staff', 'is_superuser', 'last_login', 'date_joined']
+    ordering = ['username']
+
+    def get_queryset(self):
+        return (
+            User.objects
+            .prefetch_related('groups', 'user_permissions__content_type')
+            .order_by('username')
+        )
+
+    def perform_destroy(self, instance):
+        if instance.pk == self.request.user.pk:
+            raise ValidationError("Нельзя удалить собственную учетную запись через этот экран.")
+        instance.delete()
+
+    def partial_update(self, request, *args, **kwargs):
+        instance = self.get_object()
+        if instance.pk == request.user.pk:
+            protected_flags = {'is_active', 'is_staff', 'is_superuser'}
+            if protected_flags.intersection(set(request.data.keys())):
+                return Response(
+                    {"detail": "Нельзя менять собственные критические флаги доступа через этот экран."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+        return super().partial_update(request, *args, **kwargs)
+
+    @action(detail=True, methods=['post'], url_path='generate-token')
+    def generate_token(self, request, pk=None):
+        user = self.get_object()
+        Token.objects.filter(user=user).delete()
+        token = Token.objects.create(user=user)
+        serializer = self.get_serializer(user)
+        return Response(
+            {
+                "detail": "Ключ пользователя сгенерирован. Скопируйте его сейчас, позже будет показана только маска.",
+                "token": token.key,
+                "user": serializer.data,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    @action(detail=True, methods=['post'], url_path='clear-token')
+    def clear_token(self, request, pk=None):
+        user = self.get_object()
+        deleted, _ = Token.objects.filter(user=user).delete()
+        serializer = self.get_serializer(user)
+        return Response(
+            {
+                "detail": "Ключ пользователя удален." if deleted else "У пользователя не было ключа.",
+                "user": serializer.data,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    @action(detail=True, methods=['post'], url_path='set-password')
+    def set_password_action(self, request, pk=None):
+        user = self.get_object()
+        password = str(request.data.get('password') or '')
+        if len(password) < 8:
+            return Response(
+                {"detail": "Пароль должен быть не короче 8 символов."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        user.set_password(password)
+        user.save(update_fields=['password'])
+        return Response({"detail": "Пароль пользователя обновлен."}, status=status.HTTP_200_OK)
+
+
+class ManagedGroupViewSet(viewsets.ModelViewSet):
+    queryset = Group.objects.prefetch_related('permissions__content_type').order_by('name')
+    serializer_class = ManagedGroupSerializer
+    permission_classes = [AdminGroupPermission]
+    filter_backends = [filters.SearchFilter, filters.OrderingFilter]
+    search_fields = ['name', 'permissions__codename', 'permissions__content_type__app_label']
+    ordering_fields = ['name']
+    ordering = ['name']
+
+    @action(detail=False, methods=['post'], url_path='bootstrap-defaults')
+    def bootstrap_defaults(self, request):
+        names = ['Admins', 'Users', 'Agent', 'PrinterAgents', 'MetricsAgents', 'VMAgents']
+        rows = []
+        for name in names:
+            group, created = Group.objects.get_or_create(name=name)
+            rows.append({"id": group.id, "name": group.name, "created": created})
+        return Response({"detail": "Базовые группы проверены.", "groups": rows}, status=status.HTTP_200_OK)
+
+
+class PermissionViewSet(viewsets.ReadOnlyModelViewSet):
+    queryset = Permission.objects.select_related('content_type').order_by('content_type__app_label', 'content_type__model', 'codename')
+    serializer_class = PermissionSerializer
+    permission_classes = [AdminGroupPermission]
+    filter_backends = [filters.SearchFilter, filters.OrderingFilter]
+    search_fields = ['name', 'codename', 'content_type__app_label', 'content_type__model']
+    ordering_fields = ['content_type__app_label', 'content_type__model', 'codename', 'name']
+    ordering = ['content_type__app_label', 'content_type__model', 'codename']
     
 class MetricViewSet(viewsets.ModelViewSet):
     queryset = Metric.objects.all()

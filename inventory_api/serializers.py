@@ -11,7 +11,8 @@ from .models import (
     DecisionRunUtility, DecisionFeedback, ApplicationUpdateJob,
 )
 from django.utils import timezone
-from django.contrib.auth.models import User, Group
+from django.contrib.auth.models import Permission, User, Group
+from rest_framework.authtoken.models import Token
 
 # --- Serializers для справочников ---
 class DeviceTypeSerializer(serializers.ModelSerializer):
@@ -137,6 +138,108 @@ class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = ['id', 'username', 'first_name', 'last_name', 'email', 'is_staff', 'groups', 'profile']
+
+
+class PermissionSerializer(serializers.ModelSerializer):
+    app_label = serializers.CharField(source='content_type.app_label', read_only=True)
+    model = serializers.CharField(source='content_type.model', read_only=True)
+    label = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Permission
+        fields = ['id', 'name', 'codename', 'app_label', 'model', 'label']
+
+    def get_label(self, obj):
+        return f"{obj.content_type.app_label}.{obj.codename}"
+
+
+class ManagedGroupSerializer(serializers.ModelSerializer):
+    permissions = serializers.PrimaryKeyRelatedField(
+        queryset=Permission.objects.select_related('content_type').all(),
+        many=True,
+        required=False,
+    )
+    permissions_detail = PermissionSerializer(source='permissions', many=True, read_only=True)
+    users_count = serializers.IntegerField(source='user_set.count', read_only=True)
+
+    class Meta:
+        model = Group
+        fields = ['id', 'name', 'permissions', 'permissions_detail', 'users_count']
+
+
+class ManagedUserSerializer(serializers.ModelSerializer):
+    groups = GroupSerializer(many=True, read_only=True)
+    group_ids = serializers.PrimaryKeyRelatedField(
+        source='groups',
+        queryset=Group.objects.all(),
+        many=True,
+        required=False,
+        write_only=True,
+    )
+    user_permissions = PermissionSerializer(many=True, read_only=True)
+    user_permission_ids = serializers.PrimaryKeyRelatedField(
+        source='user_permissions',
+        queryset=Permission.objects.select_related('content_type').all(),
+        many=True,
+        required=False,
+        write_only=True,
+    )
+    token_preview = serializers.SerializerMethodField()
+    has_token = serializers.SerializerMethodField()
+    password = serializers.CharField(write_only=True, required=False, allow_blank=True, trim_whitespace=False)
+
+    class Meta:
+        model = User
+        fields = [
+            'id', 'username', 'first_name', 'last_name', 'email',
+            'is_active', 'is_staff', 'is_superuser', 'last_login', 'date_joined',
+            'groups', 'group_ids', 'user_permissions', 'user_permission_ids',
+            'has_token', 'token_preview', 'password',
+        ]
+        read_only_fields = ['id', 'last_login', 'date_joined', 'has_token', 'token_preview']
+
+    def get_has_token(self, obj):
+        return Token.objects.filter(user=obj).exists()
+
+    def get_token_preview(self, obj):
+        token = Token.objects.filter(user=obj).first()
+        if not token:
+            return ''
+        key = token.key or ''
+        if len(key) <= 12:
+            return key
+        return f"{key[:6]}...{key[-6:]}"
+
+    def create(self, validated_data):
+        groups = validated_data.pop('groups', [])
+        user_permissions = validated_data.pop('user_permissions', [])
+        password = validated_data.pop('password', '')
+        user = User(**validated_data)
+        if password:
+            user.set_password(password)
+        else:
+            user.set_unusable_password()
+        user.save()
+        if groups:
+            user.groups.set(groups)
+        if user_permissions:
+            user.user_permissions.set(user_permissions)
+        return user
+
+    def update(self, instance, validated_data):
+        groups = validated_data.pop('groups', None)
+        user_permissions = validated_data.pop('user_permissions', None)
+        password = validated_data.pop('password', None)
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        if password:
+            instance.set_password(password)
+        instance.save()
+        if groups is not None:
+            instance.groups.set(groups)
+        if user_permissions is not None:
+            instance.user_permissions.set(user_permissions)
+        return instance
 
 # --- Основной DeviceSerializer ---
 # Используется для CRUD операций с устройствами

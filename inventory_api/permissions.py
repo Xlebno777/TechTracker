@@ -5,6 +5,10 @@ def _is_admin(user):
     return user.is_staff or user.groups.filter(name='Admins').exists()
 
 
+def _has_any_group(user, names):
+    return user.groups.filter(name__in=list(names)).exists()
+
+
 class PrintJobPermission(BasePermission):
     """
     Read: any authenticated user.
@@ -20,7 +24,7 @@ class PrintJobPermission(BasePermission):
             return True
 
         if request.method == 'POST':
-            return _is_admin(user) or user.groups.filter(name='Agent').exists()
+            return _is_admin(user) or _has_any_group(user, ['Agent', 'PrinterAgents'])
 
         return _is_admin(user)
 
@@ -33,7 +37,7 @@ class PrinterAgentPermission(BasePermission):
         user = request.user
         if not user or not user.is_authenticated:
             return False
-        return _is_admin(user) or user.groups.filter(name='Agent').exists()
+        return _is_admin(user) or _has_any_group(user, ['Agent', 'PrinterAgents'])
 
 
 class MetricsAgentPermission(BasePermission):
@@ -44,7 +48,7 @@ class MetricsAgentPermission(BasePermission):
         user = request.user
         if not user or not user.is_authenticated:
             return False
-        return _is_admin(user) or user.groups.filter(name='Agent').exists()
+        return _is_admin(user) or _has_any_group(user, ['Agent', 'MetricsAgents'])
 
 
 class VMStatusAgentPermission(BasePermission):
@@ -55,7 +59,7 @@ class VMStatusAgentPermission(BasePermission):
         user = request.user
         if not user or not user.is_authenticated:
             return False
-        return _is_admin(user) or user.groups.filter(name='Agent').exists()
+        return _is_admin(user) or _has_any_group(user, ['Agent', 'VMAgents'])
 
 
 class AdminGroupPermission(BasePermission):
