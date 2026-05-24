@@ -8,7 +8,7 @@ from .models import (
     ForecastRun, ForecastPoint, StateEstimate, StateInferenceProfile, LSTMRemoteQueueJob,
     DecisionAction, DecisionCriterion, DecisionPolicy, DecisionPolicyLoss,
     DecisionPolicyAHPPairwise, DecisionRun, DecisionRunScore, DecisionRunAHP,
-    DecisionRunUtility, DecisionFeedback, ApplicationUpdateJob,
+    DecisionRunUtility, DecisionFeedback, ApplicationUpdateJob, PageAccessRule,
 )
 from django.utils import timezone
 from django.contrib.auth.models import Permission, User, Group
@@ -240,6 +240,28 @@ class ManagedUserSerializer(serializers.ModelSerializer):
         if user_permissions is not None:
             instance.user_permissions.set(user_permissions)
         return instance
+
+
+class PageAccessRuleSerializer(serializers.ModelSerializer):
+    allowed_groups = serializers.PrimaryKeyRelatedField(
+        queryset=Group.objects.all(),
+        many=True,
+        required=False,
+    )
+    allowed_groups_detail = GroupSerializer(source='allowed_groups', many=True, read_only=True)
+    allowed_group_names = serializers.SerializerMethodField()
+
+    class Meta:
+        model = PageAccessRule
+        fields = [
+            'id', 'route_name', 'label', 'section', 'icon', 'order', 'is_enabled',
+            'allowed_groups', 'allowed_groups_detail', 'allowed_group_names',
+            'created_at', 'updated_at',
+        ]
+        read_only_fields = ['id', 'created_at', 'updated_at', 'allowed_group_names']
+
+    def get_allowed_group_names(self, obj):
+        return [group.name for group in obj.allowed_groups.all()]
 
 # --- Основной DeviceSerializer ---
 # Используется для CRUD операций с устройствами

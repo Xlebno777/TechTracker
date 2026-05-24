@@ -42,7 +42,7 @@ from .models import (
     NetworkPath, NetworkOutage, NetworkAlertRule,
     NetworkMapSnapshot, ForecastRun, ForecastPoint, StateEstimate, StateInferenceProfile, LSTMRemoteQueueJob,
     DecisionAction, DecisionCriterion, DecisionPolicy, DecisionPolicyLoss, DecisionRun,
-    ApplicationUpdateJob,
+    ApplicationUpdateJob, PageAccessRule,
 )
 from .serializers import (
     DeviceSerializer, DeviceCreateUpdateSerializer,
@@ -50,7 +50,7 @@ from .serializers import (
     UserProfileSerializer, ComputerSpecsSerializer,
     PrinterScannerSpecsSerializer, NetworkDeviceSpecsSerializer,
     CartridgeSerializer, CartridgeLogSerializer, LogSerializer, UserSerializer,
-    ManagedGroupSerializer, ManagedUserSerializer, PermissionSerializer,
+    ManagedGroupSerializer, ManagedUserSerializer, PageAccessRuleSerializer, PermissionSerializer,
     MetricSerializer, PrintJobSerializer, RawMetricSerializer, RawMetricIngestSerializer,
     TrackedVMSerializer, TrackedVMSyncSerializer, ComputedMetricSerializer, AgentStatusSerializer, AgentStatusReportSerializer,
     DiagnosticReportSerializer, DiagnosticRunSerializer, NetworkPathSerializer, NetworkOutageSerializer,
@@ -71,6 +71,7 @@ from .network_alerts import (
     get_network_derived_snapshot,
 )
 from .network_map_builder import build_network_map_snapshot
+from .page_access import ensure_default_page_access_rules
 
 
 @api_view(["GET"])
@@ -876,6 +877,47 @@ class PermissionViewSet(viewsets.ReadOnlyModelViewSet):
     search_fields = ['name', 'codename', 'content_type__app_label', 'content_type__model']
     ordering_fields = ['content_type__app_label', 'content_type__model', 'codename', 'name']
     ordering = ['content_type__app_label', 'content_type__model', 'codename']
+
+
+class PageAccessRuleViewSet(viewsets.ModelViewSet):
+    serializer_class = PageAccessRuleSerializer
+    permission_classes = [AdminGroupPermission]
+    filter_backends = [filters.SearchFilter, filters.OrderingFilter]
+    search_fields = ['route_name', 'label', 'section', 'allowed_groups__name']
+    ordering_fields = ['section', 'order', 'label', 'route_name', 'is_enabled']
+    ordering = ['section', 'order', 'label']
+
+    def get_queryset(self):
+        ensure_default_page_access_rules()
+        return PageAccessRule.objects.prefetch_related('allowed_groups').order_by('section', 'order', 'label')
+
+    @action(detail=False, methods=['post'], permission_classes=[AdminGroupPermission], url_path='bootstrap-defaults')
+    def bootstrap_defaults(self, request):
+        rows = ensure_default_page_access_rules()
+        serializer = self.get_serializer(rows, many=True)
+        return Response(
+            {"detail": "Базовые правила доступа к страницам проверены.", "rules": serializer.data},
+            status=status.HTTP_200_OK,
+        )
+
+    @action(detail=False, methods=['get'], permission_classes=[IsAuthenticated], url_path='me')
+    def me(self, request):
+        ensure_default_page_access_rules()
+        user = request.user
+        qs = PageAccessRule.objects.prefetch_related('allowed_groups').filter(is_enabled=True).order_by('section', 'order', 'label')
+        is_admin = user.is_staff or user.groups.filter(name='Admins').exists()
+        if not is_admin:
+            qs = qs.filter(allowed_groups__in=user.groups.all()).distinct()
+        serializer = self.get_serializer(qs, many=True)
+        route_names = [row["route_name"] for row in serializer.data]
+        return Response(
+            {
+                "is_admin": is_admin,
+                "allowed_route_names": route_names,
+                "rules": serializer.data,
+            },
+            status=status.HTTP_200_OK,
+        )
     
 class MetricViewSet(viewsets.ModelViewSet):
     queryset = Metric.objects.all()

@@ -30,6 +30,10 @@
         <span>Доступные права</span>
         <strong>{{ permissions.length }}</strong>
       </div>
+      <div class="stat-card">
+        <span>Правила страниц</span>
+        <strong>{{ pageAccessRules.length }}</strong>
+      </div>
     </div>
 
     <div class="management-grid">
@@ -138,6 +142,77 @@
                 <Button icon="pi pi-pencil" text rounded severity="info" @click="editGroup(data)" />
                 <Button icon="pi pi-trash" text rounded severity="danger" @click="deleteGroup(data)" />
               </div>
+            </template>
+          </Column>
+        </DataTable>
+      </FilterPanel>
+
+      <FilterPanel
+        class="page-access-panel"
+        title="Доступ к страницам"
+        description="Здесь задается, какие группы видят страницы в меню и могут переходить по ним. Группа Admins и staff остаются аварийным полным доступом."
+      >
+        <template #actions>
+          <Button icon="pi pi-sparkles" label="Базовые правила" outlined @click="bootstrapPageAccess" />
+        </template>
+
+        <div class="toolbar-row">
+          <span class="p-input-icon-left search-box">
+            <i class="pi pi-search" />
+            <InputText v-model.trim="pageAccessSearch" placeholder="Поиск по страницам и группам" />
+          </span>
+          <span class="muted">
+            Если группе не назначена страница, пользователь этой группы не увидит пункт меню и не сможет перейти по маршруту.
+          </span>
+        </div>
+
+        <DataTable
+          :value="filteredPageAccessRules"
+          dataKey="id"
+          responsiveLayout="scroll"
+          size="small"
+          class="safe-table"
+        >
+          <Column field="order" header="#" style="width: 90px" sortable>
+            <template #body="{ data }">
+              <InputText v-model.number="data.order" class="compact-input" />
+            </template>
+          </Column>
+          <Column field="label" header="Страница" sortable>
+            <template #body="{ data }">
+              <div class="main-cell">
+                <strong><i :class="data.icon"></i> {{ data.label }}</strong>
+                <small>{{ data.route_name }} • {{ sectionLabel(data.section) }}</small>
+              </div>
+            </template>
+          </Column>
+          <Column header="Доступные группы">
+            <template #body="{ data }">
+              <MultiSelect
+                v-model="data.allowed_groups"
+                :options="groups"
+                optionLabel="name"
+                optionValue="id"
+                display="chip"
+                filter
+                placeholder="Выберите группы"
+              />
+            </template>
+          </Column>
+          <Column header="Включена" style="width: 130px">
+            <template #body="{ data }">
+              <InputSwitch v-model="data.is_enabled" />
+            </template>
+          </Column>
+          <Column header="Действие" style="width: 140px">
+            <template #body="{ data }">
+              <Button
+                icon="pi pi-save"
+                label="Сохранить"
+                size="small"
+                :loading="savingPageAccess[data.id]"
+                @click="savePageAccessRule(data)"
+              />
             </template>
           </Column>
         </DataTable>
@@ -271,13 +346,16 @@ const loading = ref(false);
 const users = ref([]);
 const groups = ref([]);
 const permissions = ref([]);
+const pageAccessRules = ref([]);
 const userSearch = ref('');
 const groupSearch = ref('');
+const pageAccessSearch = ref('');
 const userDialogVisible = ref(false);
 const groupDialogVisible = ref(false);
 const tokenDialogVisible = ref(false);
 const savingUser = ref(false);
 const savingGroup = ref(false);
+const savingPageAccess = ref({});
 const generatedToken = ref('');
 
 const helpSteps = [
@@ -285,6 +363,7 @@ const helpSteps = [
   'Группы удобнее персональных прав: `Admins` для администраторов, `Users` для ограниченного доступа, `Agent` для общих агентов.',
   '`PrinterAgents`, `MetricsAgents`, `VMAgents` можно использовать для разделения будущих установщиков агентов.',
   'API-ключ генерируется кнопкой с ключом в строке пользователя и затем вставляется в установщик агента.',
+  'В блоке доступа к страницам можно настроить, какие группы видят конкретные разделы интерфейса.',
   'Не выдавайте `superuser`, если достаточно группы `Admins` или конкретной агентской группы.',
 ];
 
@@ -332,6 +411,18 @@ const filteredGroups = computed(() => {
   ].join(' ').toLowerCase().includes(q));
 });
 
+const filteredPageAccessRules = computed(() => {
+  const q = pageAccessSearch.value.toLowerCase();
+  if (!q) return pageAccessRules.value;
+  return pageAccessRules.value.filter((item) => [
+    item.label,
+    item.route_name,
+    item.section,
+    ...(item.allowed_groups_detail || []).map((group) => group.name),
+    ...(item.allowed_group_names || []),
+  ].join(' ').toLowerCase().includes(q));
+});
+
 function normalizeList(data) {
   if (Array.isArray(data)) return data;
   if (Array.isArray(data?.results)) return data.results;
@@ -341,14 +432,21 @@ function normalizeList(data) {
 async function loadAll() {
   loading.value = true;
   try {
-    const [usersRes, groupsRes, permissionsRes] = await Promise.all([
+    const [usersRes, groupsRes, permissionsRes, pageAccessRes] = await Promise.all([
       apiClient.get('managed-users/'),
       apiClient.get('managed-groups/'),
       apiClient.get('auth-permissions/'),
+      apiClient.get('page-access/'),
     ]);
     users.value = normalizeList(usersRes.data);
     groups.value = normalizeList(groupsRes.data);
     permissions.value = normalizeList(permissionsRes.data);
+    pageAccessRules.value = normalizeList(pageAccessRes.data).map((row) => ({
+      ...row,
+      allowed_groups: Array.isArray(row.allowed_groups)
+        ? row.allowed_groups
+        : (row.allowed_groups_detail || []).map((group) => group.id),
+    }));
   } catch (error) {
     toast.add({ severity: 'error', summary: 'Ошибка', detail: 'Не удалось загрузить пользователей и группы', life: 4500 });
   } finally {
@@ -494,6 +592,39 @@ async function bootstrapGroups() {
   }
 }
 
+async function bootstrapPageAccess() {
+  try {
+    await apiClient.post('page-access/bootstrap-defaults/', {});
+    toast.add({ severity: 'success', summary: 'Правила проверены', detail: 'Базовые правила доступа к страницам созданы или обновлены', life: 3000 });
+    await loadAll();
+  } catch (error) {
+    toast.add({ severity: 'error', summary: 'Ошибка', detail: 'Не удалось создать правила страниц', life: 4500 });
+  }
+}
+
+async function savePageAccessRule(row) {
+  savingPageAccess.value = { ...savingPageAccess.value, [row.id]: true };
+  try {
+    const payload = {
+      route_name: row.route_name,
+      label: row.label,
+      section: row.section,
+      icon: row.icon,
+      order: Number(row.order || 100),
+      is_enabled: Boolean(row.is_enabled),
+      allowed_groups: row.allowed_groups || [],
+    };
+    await apiClient.patch(`page-access/${row.id}/`, payload);
+    toast.add({ severity: 'success', summary: 'Сохранено', detail: `Доступ к странице «${row.label}» обновлен`, life: 2500 });
+    await loadAll();
+  } catch (error) {
+    const detail = error?.response?.data?.detail || 'Не удалось сохранить доступ к странице';
+    toast.add({ severity: 'error', summary: 'Ошибка', detail, life: 4500 });
+  } finally {
+    savingPageAccess.value = { ...savingPageAccess.value, [row.id]: false };
+  }
+}
+
 async function copyGeneratedToken() {
   try {
     await navigator.clipboard.writeText(generatedToken.value);
@@ -505,6 +636,15 @@ async function copyGeneratedToken() {
 
 function userRowClass(user) {
   return user.is_active ? '' : 'row-disabled';
+}
+
+function sectionLabel(section) {
+  const map = {
+    main: 'основное меню',
+    monitoring: 'мониторинг',
+    admin: 'администрирование',
+  };
+  return map[section] || section || 'раздел не задан';
 }
 
 onMounted(loadAll);
@@ -553,11 +693,17 @@ onMounted(loadAll);
   min-width: 0;
 }
 
+.page-access-panel {
+  grid-column: 1 / -1;
+}
+
 .toolbar-row {
   display: flex;
   justify-content: space-between;
+  align-items: center;
   gap: 0.75rem;
   min-width: 0;
+  flex-wrap: wrap;
 }
 
 .search-box {
@@ -710,6 +856,14 @@ onMounted(loadAll);
 
 .safe-table :deep(.p-datatable-table) {
   min-width: 760px;
+}
+
+.page-access-panel .safe-table :deep(.p-datatable-table) {
+  min-width: 980px;
+}
+
+.compact-input {
+  width: 76px;
 }
 
 .users-page :deep(.p-inputtext),

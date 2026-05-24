@@ -1,5 +1,6 @@
 // frontend/src/router/index.js
 import { createRouter, createWebHistory } from 'vue-router'
+import { useAuthStore } from '@/stores/auth'
 import DeviceTable from '../components/DeviceTable.vue'
 import DeviceForm from '../components/DeviceForm.vue'
 import AuthPage from '../components/AuthPage.vue'
@@ -20,6 +21,19 @@ import MonitoringSettings from '../components/MonitoringSettings.vue'
 import UserManagement from '../components/UserManagement.vue'
 import PrintersPage from '../components/PrintersPage.vue'
 
+const NoAccessPage = {
+  template: `
+    <main class="p-4">
+      <section style="max-width: 720px; background: #fff; border: 1px solid #dbe3ef; border-radius: 16px; padding: 1.25rem;">
+        <h1 style="margin: 0 0 .5rem; color: #0f172a;">Нет доступа к разделам системы</h1>
+        <p style="margin: 0; color: #64748b; line-height: 1.5;">
+          Для вашей учетной записи не назначены страницы интерфейса. Обратитесь к администратору,
+          чтобы добавить вашу группу в правила доступа на странице «Пользователи».
+        </p>
+      </section>
+    </main>
+  `,
+}
 
 const routes = [
   {
@@ -62,6 +76,12 @@ const routes = [
     path: '/login', // <-- Путь для страницы входа
     name: 'AuthPage',
     component: AuthPage
+  },
+  {
+    path: '/no-access',
+    name: 'NoAccess',
+    component: NoAccessPage,
+    meta: { requiresAuth: true }
   },
   {
     path: '/monitoring-analysis',
@@ -160,38 +180,53 @@ const router = createRouter({ // <-- router создаётся ЗДЕСЬ
   routes
 })
 
-// Глобальный маршрут-страж (guard)
-// Проверяет, есть ли токен перед доступом к защищённым маршрутам
-router.beforeEach((to, from, next) => {
+function firstAllowedRoute(auth) {
+  const priority = [
+    'DeviceTable',
+    'MonitoringPipeline',
+    'Monitoring',
+    'Printers',
+    'RequestForm',
+    'Settings',
+  ];
+  return priority.find((name) => auth.canRoute(name)) || auth.allowedRouteNames?.[0] || 'NoAccess';
+}
+
+router.beforeEach(async (to, from, next) => {
+  const auth = useAuthStore();
   const hasToken = localStorage.getItem('auth_token') !== null;
 
-  if (to.name === 'DeviceTable' || to.name === 'DeviceCreate' || to.name === 'DeviceEdit' || to.name === 'RequestForm' || to.name === 'RequestList' || to.name === 'Printers' || to.name === 'Monitoring' || to.name === 'NetworkMonitoring' || to.name === 'MonitoringAnalysis' || to.name === 'AgentDiagnostics' || to.name === 'MonitoringForecast' || to.name === 'MonitoringPipeline' || to.name === 'MonitoringRisk' || to.name === 'MonitoringDecision' || to.name === 'MonitoringDemo' || to.name === 'MonitoringEvaluation' || to.name === 'MonitoringTasks' || to.name === 'Settings' || to.name === 'UserManagement' || to.name === 'AdminRequests') {
-    if (!hasToken) {
-      next({ name: 'AuthPage' });
-    } else {
-      const user = JSON.parse(localStorage.getItem('current_user') || 'null');
-      const isAdmin = user?.groups?.some(g => g.name === 'Admins');
-      const isUser = user?.groups?.some(g => g.name === 'Users');
-      if (to.meta?.requiresAdmin && !isAdmin) {
-        next({ name: 'DeviceTable' });
-        return;
-      }
-      if (to.meta?.forbidUsers && isUser) {
-        next({ name: 'DeviceTable' });
-        return;
-      }
-      next();
-    }
-  } else if (to.name === 'AuthPage') {
-    // Если уже вошёл, не показываем страницу входа
-    if (hasToken) {
-      next({ name: 'DeviceTable' });
-    } else {
-      next();
-    }
-  } else {
-    next(); // Для остальных маршрутов
+  if (to.name === 'AuthPage') {
+    next(hasToken ? { name: firstAllowedRoute(auth) } : undefined);
+    return;
   }
+
+  if (!to.meta?.requiresAuth) {
+    next();
+    return;
+  }
+
+  if (!hasToken) {
+    next({ name: 'AuthPage' });
+    return;
+  }
+
+  try {
+    if (!auth.user) {
+      await auth.fetchUser();
+    }
+    await auth.ensurePageAccess();
+  } catch {
+    next({ name: 'AuthPage' });
+    return;
+  }
+
+  if (to.name !== 'NoAccess' && !auth.canRoute(to.name)) {
+    next({ name: firstAllowedRoute(auth) });
+    return;
+  }
+
+  next();
 });
 
 export default router

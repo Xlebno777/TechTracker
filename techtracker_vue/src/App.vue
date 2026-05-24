@@ -12,7 +12,7 @@
       </div>
 
       <nav class="nav-menu">
-        <div v-if="!auth.isUser" class="nav-group">
+        <div v-if="visibleMonitoringMenuItems.length" class="nav-group">
           <button
             type="button"
             class="nav-link nav-link-toggle"
@@ -29,83 +29,28 @@
           </button>
 
           <div v-if="!isNavCollapsed && isMonitoringMenuOpen" class="nav-submenu">
-            <router-link :to="{ name: 'MonitoringPipeline' }" class="nav-sublink" active-class="active">
-              <i class="pi pi-sitemap"></i>
-              <span>Полный цикл</span>
-            </router-link>
-            <router-link :to="{ name: 'Monitoring' }" class="nav-sublink" active-class="active">
-              <i class="pi pi-wave-pulse"></i>
-              <span>Сырые метрики</span>
-            </router-link>
-            <router-link :to="{ name: 'MonitoringAnalysis' }" class="nav-sublink" active-class="active">
-              <i class="pi pi-chart-bar"></i>
-              <span>Анализ мониторинга</span>
-            </router-link>
-            <router-link :to="{ name: 'MonitoringForecast' }" class="nav-sublink" active-class="active">
-              <i class="pi pi-chart-scatter"></i>
-              <span>Прогнозы и состояния</span>
-            </router-link>
-            <router-link :to="{ name: 'MonitoringRisk' }" class="nav-sublink" active-class="active">
-              <i class="pi pi-exclamation-triangle"></i>
-              <span>Оценка риска</span>
-            </router-link>
-            <router-link :to="{ name: 'MonitoringDecision' }" class="nav-sublink" active-class="active">
-              <i class="pi pi-lightbulb"></i>
-              <span>Рекомендации СППР</span>
-            </router-link>
-            <router-link :to="{ name: 'MonitoringDemo' }" class="nav-sublink" active-class="active">
-              <i class="pi pi-database"></i>
-              <span>Мониторинг - Демо</span>
-            </router-link>
-            <router-link :to="{ name: 'MonitoringEvaluation' }" class="nav-sublink" active-class="active">
-              <i class="pi pi-chart-line"></i>
-              <span>Оценка прогноза</span>
-            </router-link>
-            <router-link :to="{ name: 'MonitoringTasks' }" class="nav-sublink" active-class="active">
-              <i class="pi pi-clock"></i>
-              <span>Центр задач</span>
+            <router-link
+              v-for="item in visibleMonitoringMenuItems"
+              :key="item.name"
+              :to="{ name: item.name }"
+              class="nav-sublink"
+              active-class="active"
+            >
+              <i :class="item.icon"></i>
+              <span>{{ item.label }}</span>
             </router-link>
           </div>
         </div>
 
-        <router-link v-if="auth.isAdmin" :to="{ name: 'NetworkMonitoring' }" class="nav-link" active-class="active">
-          <i class="pi pi-sitemap"></i>
-          <span>Сеть</span>
-        </router-link>
-
-        <router-link :to="{ name: 'DeviceTable' }" class="nav-link" active-class="active">
-          <i class="pi pi-table"></i>
-          <span>Устройства</span>
-        </router-link>
-
-        <router-link :to="{ name: 'Printers' }" class="nav-link" active-class="active">
-          <i class="pi pi-print"></i>
-          <span>Принтеры</span>
-        </router-link>
-
-        <router-link :to="{ name: 'RequestForm' }" class="nav-link" active-class="active">
-          <i class="pi pi-envelope"></i>
-          <span>Заявка</span>
-        </router-link>
-
-        <router-link v-if="auth.isAdmin" :to="{ name: 'AdminRequests' }" class="nav-link" active-class="active">
-          <i class="pi pi-list"></i>
-          <span>Заявки</span>
-        </router-link>
-
-        <router-link v-if="auth.isAdmin" :to="{ name: 'AgentDiagnostics' }" class="nav-link" active-class="active">
-          <i class="pi pi-shield"></i>
-          <span>Диагностика агента</span>
-        </router-link>
-
-        <router-link v-if="auth.isAdmin" :to="{ name: 'UserManagement' }" class="nav-link" active-class="active">
-          <i class="pi pi-users"></i>
-          <span>Пользователи</span>
-        </router-link>
-
-        <router-link v-if="!auth.isUser" :to="{ name: 'Settings' }" class="nav-link" active-class="active">
-          <i class="pi pi-cog"></i>
-          <span>Настройки</span>
+        <router-link
+          v-for="item in visibleMainMenuItems"
+          :key="item.name"
+          :to="{ name: item.name }"
+          class="nav-link"
+          active-class="active"
+        >
+          <i :class="item.icon"></i>
+          <span>{{ item.label }}</span>
         </router-link>
 
       </nav>
@@ -158,7 +103,31 @@ const route = useRoute();
 const isNavCollapsed = ref(false);
 const isMonitoringMenuOpen = ref(true);
 
-const monitoringRoutes = ['MonitoringPipeline', 'Monitoring', 'MonitoringAnalysis', 'MonitoringForecast', 'MonitoringRisk', 'MonitoringDecision', 'MonitoringDemo', 'MonitoringEvaluation', 'MonitoringTasks'];
+const monitoringMenuItems = [
+  { name: 'MonitoringPipeline', icon: 'pi pi-sitemap', label: 'Полный цикл' },
+  { name: 'Monitoring', icon: 'pi pi-wave-pulse', label: 'Сырые метрики' },
+  { name: 'MonitoringAnalysis', icon: 'pi pi-chart-bar', label: 'Анализ мониторинга' },
+  { name: 'MonitoringForecast', icon: 'pi pi-chart-scatter', label: 'Прогнозы и состояния' },
+  { name: 'MonitoringRisk', icon: 'pi pi-exclamation-triangle', label: 'Оценка риска' },
+  { name: 'MonitoringDecision', icon: 'pi pi-lightbulb', label: 'Рекомендации СППР' },
+  { name: 'MonitoringDemo', icon: 'pi pi-database', label: 'Мониторинг - Демо' },
+  { name: 'MonitoringEvaluation', icon: 'pi pi-chart-line', label: 'Оценка прогноза' },
+  { name: 'MonitoringTasks', icon: 'pi pi-clock', label: 'Центр задач' },
+];
+const mainMenuItems = [
+  { name: 'NetworkMonitoring', icon: 'pi pi-sitemap', label: 'Сеть' },
+  { name: 'DeviceTable', icon: 'pi pi-table', label: 'Устройства' },
+  { name: 'Printers', icon: 'pi pi-print', label: 'Принтеры' },
+  { name: 'RequestForm', icon: 'pi pi-envelope', label: 'Заявка' },
+  { name: 'AdminRequests', icon: 'pi pi-list', label: 'Заявки' },
+  { name: 'AgentDiagnostics', icon: 'pi pi-shield', label: 'Диагностика агента' },
+  { name: 'UserManagement', icon: 'pi pi-users', label: 'Пользователи' },
+  { name: 'Settings', icon: 'pi pi-cog', label: 'Настройки' },
+];
+
+const visibleMonitoringMenuItems = computed(() => monitoringMenuItems.filter((item) => auth.canRoute(item.name)));
+const visibleMainMenuItems = computed(() => mainMenuItems.filter((item) => auth.canRoute(item.name)));
+const monitoringRoutes = monitoringMenuItems.map((item) => item.name);
 const isMonitoringRoute = computed(() => monitoringRoutes.includes(route.name));
 
 const triggerLayoutRefresh = () => {

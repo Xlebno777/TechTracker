@@ -29,6 +29,7 @@ router.register(r'users', views.UserViewSet) # Только эндпоинты �
 router.register(r'managed-users', views.ManagedUserViewSet, basename='managed-users')
 router.register(r'managed-groups', views.ManagedGroupViewSet, basename='managed-groups')
 router.register(r'auth-permissions', views.PermissionViewSet, basename='auth-permissions')
+router.register(r'page-access', views.PageAccessRuleViewSet, basename='page-access')
 router.register(r'metrics', views.MetricViewSet)
 router.register(r'metrics-raw', views.RawMetricViewSet, basename='metrics-raw')
 router.register(r'metrics-computed', views.ComputedMetricViewSet, basename='metrics-computed')

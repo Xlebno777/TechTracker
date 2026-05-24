@@ -1,5 +1,5 @@
 from django.db import models
-from django.contrib.auth.models import User
+from django.contrib.auth.models import Group, User
 from django.core.exceptions import ValidationError
 from django.utils import timezone
 
@@ -1158,3 +1158,28 @@ class ApplicationUpdateJob(models.Model):
     def __str__(self):
         target = self.target_version or "latest"
         return f"update#{self.id} {target} ({self.status})"
+
+
+class PageAccessRule(models.Model):
+    route_name = models.CharField(max_length=100, unique=True)
+    label = models.CharField(max_length=160)
+    section = models.CharField(max_length=80, default='main')
+    icon = models.CharField(max_length=80, blank=True)
+    order = models.PositiveIntegerField(default=100)
+    is_enabled = models.BooleanField(default=True)
+    allowed_groups = models.ManyToManyField(Group, blank=True, related_name='page_access_rules')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Правило доступа к странице"
+        verbose_name_plural = "Правила доступа к страницам"
+        ordering = ['section', 'order', 'label']
+        indexes = [
+            models.Index(fields=['route_name']),
+            models.Index(fields=['section', 'order']),
+            models.Index(fields=['is_enabled']),
+        ]
+
+    def __str__(self):
+        return f"{self.route_name}: {self.label}"
