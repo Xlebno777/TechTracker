@@ -198,11 +198,21 @@ class ManagedUserSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ['id', 'last_login', 'date_joined', 'has_token', 'token_preview']
 
+    def _get_token(self, obj):
+        if hasattr(obj, '_managed_user_serializer_token'):
+            return obj._managed_user_serializer_token
+        try:
+            token = obj.auth_token
+        except (Token.DoesNotExist, AttributeError):
+            token = None
+        obj._managed_user_serializer_token = token
+        return token
+
     def get_has_token(self, obj):
-        return Token.objects.filter(user=obj).exists()
+        return self._get_token(obj) is not None
 
     def get_token_preview(self, obj):
-        token = Token.objects.filter(user=obj).first()
+        token = self._get_token(obj)
         if not token:
             return ''
         key = token.key or ''
@@ -288,6 +298,9 @@ class DeviceSerializer(serializers.ModelSerializer):
         extra_fields = ['logs_count']
 
     def get_logs_count(self, obj):
+        cached = getattr(obj, 'logs_count_cached', None)
+        if cached is not None:
+            return cached
         return obj.logs.count()
 
 # --- Сериализаторы для создания/обновления Device ---

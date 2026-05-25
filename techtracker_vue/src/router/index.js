@@ -1,25 +1,27 @@
 // frontend/src/router/index.js
 import { createRouter, createWebHistory } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
-import DeviceTable from '../components/DeviceTable.vue'
-import DeviceForm from '../components/DeviceForm.vue'
-import AuthPage from '../components/AuthPage.vue'
-import RequestForm from '../components/RequestForm.vue'
-import RequestList from '../components/RequestList.vue'
-import Dashboard from '../components/DashboardMain.vue'
-import MonitoringRaw from '../components/MonitoringRaw.vue'
-import NetworkMonitoring from '../components/NetworkMonitoring.vue'
-import AgentDiagnostics from '../components/AgentDiagnostics.vue'
-import MonitoringForecast from '../components/MonitoringForecast.vue'
-import MonitoringPipeline from '../components/MonitoringPipeline.vue'
-import MonitoringRisk from '../components/MonitoringRisk.vue'
-import MonitoringDecision from '../components/MonitoringDecision.vue'
-import MonitoringDemo from '../components/MonitoringDemo.vue'
-import MonitoringEvaluation from '../components/MonitoringEvaluation.vue'
-import MonitoringTasks from '../components/MonitoringTasks.vue'
-import MonitoringSettings from '../components/MonitoringSettings.vue'
-import UserManagement from '../components/UserManagement.vue'
-import PrintersPage from '../components/PrintersPage.vue'
+
+const DeviceTable = () => import(/* webpackChunkName: "devices" */ '../components/DeviceTable.vue')
+const DeviceForm = () => import(/* webpackChunkName: "devices" */ '../components/DeviceForm.vue')
+const AuthPage = () => import(/* webpackChunkName: "auth" */ '../components/AuthPage.vue')
+const RequestForm = () => import(/* webpackChunkName: "requests" */ '../components/RequestForm.vue')
+const RequestList = () => import(/* webpackChunkName: "requests" */ '../components/RequestList.vue')
+const Dashboard = () => import(/* webpackChunkName: "monitoring-analysis" */ '../components/DashboardMain.vue')
+const MonitoringRaw = () => import(/* webpackChunkName: "monitoring-raw" */ '../components/MonitoringRaw.vue')
+const NetworkMonitoring = () => import(/* webpackChunkName: "network-monitoring" */ '../components/NetworkMonitoring.vue')
+const AgentDiagnostics = () => import(/* webpackChunkName: "agent-diagnostics" */ '../components/AgentDiagnostics.vue')
+const MonitoringForecast = () => import(/* webpackChunkName: "monitoring-forecast" */ '../components/MonitoringForecast.vue')
+const MonitoringPipeline = () => import(/* webpackChunkName: "monitoring-pipeline" */ '../components/MonitoringPipeline.vue')
+const MonitoringRisk = () => import(/* webpackChunkName: "monitoring-risk" */ '../components/MonitoringRisk.vue')
+const MonitoringDecision = () => import(/* webpackChunkName: "monitoring-decision" */ '../components/MonitoringDecision.vue')
+const MonitoringDemo = () => import(/* webpackChunkName: "monitoring-demo" */ '../components/MonitoringDemo.vue')
+const MonitoringEvaluation = () => import(/* webpackChunkName: "monitoring-evaluation" */ '../components/MonitoringEvaluation.vue')
+const MonitoringTasks = () => import(/* webpackChunkName: "monitoring-tasks" */ '../components/MonitoringTasks.vue')
+const MonitoringSettings = () => import(/* webpackChunkName: "settings" */ '../components/MonitoringSettings.vue')
+const SystemHealth = () => import(/* webpackChunkName: "system-health" */ '../components/SystemHealth.vue')
+const UserManagement = () => import(/* webpackChunkName: "users" */ '../components/UserManagement.vue')
+const PrintersPage = () => import(/* webpackChunkName: "printers" */ '../components/PrintersPage.vue')
 
 const NoAccessPage = {
   template: `
@@ -154,6 +156,12 @@ const routes = [
     name: 'Settings',
     component: MonitoringSettings,
     meta: { requiresAuth: true, forbidUsers: true }
+  },
+  {
+    path: '/system-health',
+    name: 'SystemHealth',
+    component: SystemHealth,
+    meta: { requiresAuth: true, requiresAdmin: true }
   },
   {
     path: '/users',

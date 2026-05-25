@@ -121,6 +121,7 @@ const mainMenuItems = [
   { name: 'RequestForm', icon: 'pi pi-envelope', label: 'Заявка' },
   { name: 'AdminRequests', icon: 'pi pi-list', label: 'Заявки' },
   { name: 'AgentDiagnostics', icon: 'pi pi-shield', label: 'Диагностика агента' },
+  { name: 'SystemHealth', icon: 'pi pi-server', label: 'Состояние системы' },
   { name: 'UserManagement', icon: 'pi pi-users', label: 'Пользователи' },
   { name: 'Settings', icon: 'pi pi-cog', label: 'Настройки' },
 ];

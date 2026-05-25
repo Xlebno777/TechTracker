@@ -77,6 +77,14 @@ DEFAULT_PAGE_ACCESS_RULES = [
         "groups": ["Admins"],
     },
     {
+        "route_name": "SystemHealth",
+        "label": "Состояние системы",
+        "section": "admin",
+        "icon": "pi pi-server",
+        "order": 75,
+        "groups": ["Admins"],
+    },
+    {
         "route_name": "Settings",
         "label": "Настройки",
         "section": "admin",

@@ -13,6 +13,7 @@
         aria-label="Открыть справку по странице"
         @click="helpVisible = true"
       />
+      <SystemHealthIndicator v-if="systemStatusIndicator" />
       <Button
         v-if="refreshable"
         icon="pi pi-refresh"
@@ -44,6 +45,7 @@
 import { computed, defineEmits, defineProps, ref } from 'vue';
 import Button from 'primevue/button';
 import Dialog from 'primevue/dialog';
+import SystemHealthIndicator from '@/components/ui/SystemHealthIndicator.vue';
 
 const props = defineProps({
   title: {
@@ -86,6 +88,10 @@ const props = defineProps({
     type: String,
     default: '',
   },
+  systemStatusIndicator: {
+    type: Boolean,
+    default: true,
+  },
 });
 
 defineEmits(['refresh']);
@@ -126,6 +132,8 @@ const resolvedHelpTitle = computed(() => String(props.helpTitle || '').trim() ||
 .tt-page-header__actions {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 0.5rem;
 }
 
@@ -159,6 +167,10 @@ const resolvedHelpTitle = computed(() => String(props.helpTitle || '').trim() ||
   .tt-page-header {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .tt-page-header__actions {
+    justify-content: stretch;
   }
 }
 </style>

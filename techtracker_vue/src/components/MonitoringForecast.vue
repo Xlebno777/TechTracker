@@ -650,6 +650,11 @@
         </div>
       </div>
 
+      <div v-if="rawChartLimitWarning" class="chart-warning mt-2">
+        <i class="pi pi-exclamation-triangle" />
+        <span>{{ rawChartLimitWarning }}</span>
+      </div>
+
       <div v-if="scatterHasAnyData" class="chart-wrap mt-3">
         <Chart type="scatter" :data="scatterChartData" :options="scatterChartOptions" class="scatter-chart" />
       </div>
@@ -808,6 +813,9 @@ import { useTablePresetState } from '@/composables/useMonitoringTableState';
 
 const toast = useToast();
 const MAX_SPARKLINE_POINTS = 34;
+const RAW_SCATTER_MAX_POINTS = 10000;
+const RAW_TREND_MAX_POINTS = 5000;
+const RAW_TREND_FETCH_CONCURRENCY = 3;
 const SPARKLINE_WIDTH = 120;
 const SPARKLINE_HEIGHT = 28;
 const FRESH_RUN_WINDOW_HOURS = 24;
@@ -897,7 +905,15 @@ let workflowStreamController = null;
 const selectedMetricCode = ref('cpu_load_total');
 const chartWindowMinutes = ref(7 * 24 * 60);
 const rawScatterPoints = ref([]);
+const rawChartLimitWarning = ref('');
 const metricTrendMap = ref({});
+const rawFetchLimitForWindow = computed(() => {
+  const minutes = Number(chartWindowMinutes.value) || 0;
+  if (minutes <= 24 * 60) return 2500;
+  if (minutes <= 7 * 24 * 60) return 5000;
+  if (minutes <= 30 * 24 * 60) return 8000;
+  return RAW_SCATTER_MAX_POINTS;
+});
 const forecastUiMode = ref((() => {
   const raw = localStorage.getItem(FORECAST_UI_MODE_KEY);
   return raw === 'expert' ? 'expert' : 'basic';
@@ -2170,7 +2186,24 @@ const sparklineTooltip = (metricCode) => {
   return `${metricLabel(metricCode)}: ${entry.count} точек, последнее значение ${formatNum(entry.lastValue)} ${metricUnit(metricCode)}`;
 };
 
-const fetchRawSeriesRows = async (metricCode, limit = 50000, anchorTs = null) => {
+const resolveRawFetchLimit = (requestedLimit = null) => {
+  const requested = Number(requestedLimit);
+  const fallback = Number(rawFetchLimitForWindow.value) || RAW_SCATTER_MAX_POINTS;
+  const limit = Number.isFinite(requested) && requested > 0 ? requested : fallback;
+  return Math.max(200, Math.min(RAW_SCATTER_MAX_POINTS, Math.floor(limit)));
+};
+
+const mapInChunks = async (items, chunkSize, mapper) => {
+  const results = [];
+  for (let i = 0; i < items.length; i += chunkSize) {
+    const chunk = items.slice(i, i + chunkSize);
+    // Ограничиваем параллельные raw-запросы, иначе графики могут перегружать браузер и API.
+    results.push(...(await Promise.all(chunk.map(mapper))));
+  }
+  return results;
+};
+
+const fetchRawSeriesRows = async (metricCode, limit = null, anchorTs = null) => {
   if (!selectedDeviceId.value || !metricCode) return [];
 
   let endTs = Number(anchorTs);
@@ -2197,7 +2230,7 @@ const fetchRawSeriesRows = async (metricCode, limit = 50000, anchorTs = null) =>
   params.set('date_from', startIso);
   params.set('date_to', endIso);
   params.set('ordering', 'timestamp');
-  params.set('limit', String(limit));
+  params.set('limit', String(resolveRawFetchLimit(limit)));
   const res = await apiClient.get(`metrics-raw/?${params.toString()}`);
   return unwrap(res)
     .map((row) => ({ timestamp: row.timestamp, value: Number(row.value) }))
@@ -2217,10 +2250,14 @@ const loadMetricTrendSeries = async () => {
   )];
   if (!codes.length) return;
 
-  const entries = await Promise.all(codes.map(async (metricCode) => {
+  const entries = await mapInChunks(codes, RAW_TREND_FETCH_CONCURRENCY, async (metricCode) => {
     try {
       const forecastBounds = getChartForecastBounds(metricCode);
-      const rows = await fetchRawSeriesRows(metricCode, 50000, forecastBounds?.minTs || null);
+      const rows = await fetchRawSeriesRows(
+        metricCode,
+        Math.min(rawFetchLimitForWindow.value, RAW_TREND_MAX_POINTS),
+        forecastBounds?.minTs || null,
+      );
       const sampled = downsampleSeries(rows);
       const values = sampled.map((row) => row.value);
       return [
@@ -2235,7 +2272,7 @@ const loadMetricTrendSeries = async () => {
     } catch {
       return [metricCode, { count: 0, lastValue: null, latestTs: null, path: '' }];
     }
-  }));
+  });
 
   metricTrendMap.value = Object.fromEntries(entries);
 };
@@ -2390,16 +2427,26 @@ const loadEnsembleForecastPoints = async () => {
 
 const loadMetricScatter = async () => {
   rawScatterPoints.value = [];
+  rawChartLimitWarning.value = '';
   if (!selectedDeviceId.value || !selectedMetricCode.value) return;
   chartLoading.value = true;
   try {
     const forecastBounds = getChartForecastBounds(selectedMetricCode.value);
-    const rows = await fetchRawSeriesRows(selectedMetricCode.value, 50000, forecastBounds?.minTs || null);
+    const requestedLimit = resolveRawFetchLimit(rawFetchLimitForWindow.value);
+    const rows = await fetchRawSeriesRows(
+      selectedMetricCode.value,
+      requestedLimit,
+      forecastBounds?.minTs || null,
+    );
+    if (rows.length >= requestedLimit) {
+      rawChartLimitWarning.value = `Много raw-метрик, график загружен в ограниченном режиме: показано ${requestedLimit.toLocaleString('ru-RU')} точек. Уменьшите период или используйте агрегированный анализ.`;
+    }
     rawScatterPoints.value = rows
       .map((row) => ({ x: timestampValue(row.timestamp), y: Number(row.value) }))
       .filter((p) => Number.isFinite(p.x) && p.x > 0 && Number.isFinite(p.y));
   } catch {
     rawScatterPoints.value = [];
+    rawChartLimitWarning.value = '';
     toast.add({ severity: 'error', summary: 'Ошибка', detail: 'Не удалось загрузить точки для графика', life: 3500 });
   } finally {
     chartLoading.value = false;
@@ -3561,6 +3608,18 @@ onUnmounted(() => {
 .action-button {
   display: flex;
   align-items: end;
+}
+
+.chart-warning {
+  border: 1px solid #fbbf24;
+  border-radius: 12px;
+  background: #fffbeb;
+  color: #92400e;
+  padding: 0.65rem 0.75rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 700;
 }
 
 .chart-wrap {

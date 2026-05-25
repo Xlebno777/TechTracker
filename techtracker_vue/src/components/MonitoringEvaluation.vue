@@ -754,7 +754,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import apiClient from '@/api';
 import Button from 'primevue/button';
 import Checkbox from 'primevue/checkbox';
@@ -815,6 +815,7 @@ const loadingForecastRuns = ref(false);
 const runningEvaluation = ref(false);
 const previewLoading = ref(false);
 const downloadKey = ref('');
+let evaluationLongTimer = null;
 
 const devices = ref([]);
 const forecastRuns = ref([]);
@@ -2158,8 +2159,29 @@ async function previewEvaluationAvailability() {
   }
 }
 
+function clearEvaluationLongTimer() {
+  if (evaluationLongTimer) {
+    clearTimeout(evaluationLongTimer);
+    evaluationLongTimer = null;
+  }
+}
+
+function startEvaluationLongTimer() {
+  clearEvaluationLongTimer();
+  evaluationLongTimer = setTimeout(() => {
+    if (!runningEvaluation.value) return;
+    toast.add({
+      severity: 'warn',
+      summary: 'Оценка выполняется долго',
+      detail: 'Оценка прогноза выполняется долго. Это нормально для больших интервалов, но можно сузить даты, горизонты или модели.',
+      life: 7000,
+    });
+  }, 60_000);
+}
+
 async function runEvaluation() {
   runningEvaluation.value = true;
+  startEvaluationLongTimer();
   try {
     if (!canEvaluate.value) {
       toast.add({ severity: 'warn', summary: 'Внимание', detail: 'Сначала задайте оба интервала и отметьте горизонты/модели', life: 3200 });
@@ -2185,6 +2207,7 @@ async function runEvaluation() {
     toast.add({ severity: 'error', summary: 'Ошибка', detail, life: 4200 });
   } finally {
     runningEvaluation.value = false;
+    clearEvaluationLongTimer();
   }
 }
 
@@ -2233,6 +2256,10 @@ async function refreshAll() {
 
 onMounted(async () => {
   await refreshAll();
+});
+
+onUnmounted(() => {
+  clearEvaluationLongTimer();
 });
 
 watch(evaluationUiMode, (value) => {

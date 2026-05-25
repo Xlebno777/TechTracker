@@ -20,6 +20,7 @@ const FALLBACK_ROUTE_GROUPS = {
   MonitoringTasks: ['Admins'],
   NetworkMonitoring: ['Admins'],
   AgentDiagnostics: ['Admins'],
+  SystemHealth: ['Admins'],
   Settings: ['Admins'],
   UserManagement: ['Admins'],
   AdminRequests: ['Admins'],

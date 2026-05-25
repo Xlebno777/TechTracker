@@ -98,6 +98,13 @@
       </div>
     </div>
 
+    <div v-if="queueWarnings.length" class="warning-strip mb-3">
+      <span v-for="warning in queueWarnings" :key="warning" class="warning-chip">
+        <i class="pi pi-exclamation-triangle" />
+        {{ warning }}
+      </span>
+    </div>
+
     <div class="card p-3 mb-3">
       <div class="table-head">
         <h4 class="m-0">Очередь удаленного LSTM</h4>
@@ -384,6 +391,37 @@ const runsFailed24hCount = computed(() => {
   }).length;
 });
 
+const oldestActiveQueueAgeMinutes = computed(() => {
+  const ages = queueRows.value
+    .filter((row) => activeQueueStatuses.includes(String(row.status || '').toLowerCase()))
+    .map((row) => {
+      const createdTs = Number(new Date(row.created_at).getTime());
+      if (!Number.isFinite(createdTs)) return null;
+      return Math.max(0, Math.round((Date.now() - createdTs) / 60000));
+    })
+    .filter((value) => Number.isFinite(value));
+  if (!ages.length) return 0;
+  return Math.max(...ages);
+});
+
+const queueWarnings = computed(() => {
+  const warnings = [];
+  const activeCount = queueActiveCount.value;
+  const oldestAge = oldestActiveQueueAgeMinutes.value;
+  if (activeCount >= 5 || oldestAge >= 10) {
+    warnings.push(`Очередь LSTM растёт: активных задач ${activeCount}, старейшая ожидает ${oldestAge} мин.`);
+  }
+  if (runsInProgressCount.value > 0) {
+    const longRuns = runRows.value.filter((row) => {
+      if (!['pending', 'running'].includes(String(row.status || '').toLowerCase())) return false;
+      const startedTs = Number(new Date(row.started_at || row.created_at).getTime());
+      return Number.isFinite(startedTs) && Date.now() - startedTs >= 30 * 60000;
+    }).length;
+    if (longRuns > 0) warnings.push(`Оценка прогноза выполняется долго или forecast-run завис: долгих запусков ${longRuns}.`);
+  }
+  return warnings;
+});
+
 const unwrap = (res) => (Array.isArray(res.data) ? res.data : (res.data?.results || []));
 
 function queueStatusSeverity(status) {
@@ -601,6 +639,25 @@ onUnmounted(() => {
 .summary-card strong {
   color: #0f172a;
   font-size: 1.3rem;
+}
+
+.warning-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+}
+
+.warning-chip {
+  border: 1px solid #fbbf24;
+  border-radius: 999px;
+  background: #fffbeb;
+  color: #92400e;
+  padding: 0.45rem 0.7rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.9rem;
+  font-weight: 700;
 }
 
 .table-head {

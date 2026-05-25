@@ -521,6 +521,11 @@ def _collect_evaluation_point_rows(
             run__status="success",
         )
         .select_related("run", "device")
+        .only(
+            "id", "run_id", "device_id", "metric_code", "horizon", "target_ts", "model_kind",
+            "y_hat", "p10", "p50", "p90", "labels",
+            "device__serial_number", "run__status", "run__parameters",
+        )
         .order_by("target_ts", "id")
     )
     if serial:
@@ -547,7 +552,9 @@ def _collect_evaluation_point_rows(
 
         cache_key = (point.device_id, str(point.metric_code))
         if cache_key not in series_cache:
-            raw_rows = list(
+            ts_values = []
+            metric_values = []
+            raw_rows = (
                 RawMetric.objects
                 .filter(
                     device_id=point.device_id,
@@ -557,9 +564,8 @@ def _collect_evaluation_point_rows(
                 )
                 .order_by("timestamp", "id")
                 .values_list("timestamp", "value")
+                .iterator(chunk_size=5000)
             )
-            ts_values = []
-            metric_values = []
             for ts, value in raw_rows:
                 val = _as_float(value, None)
                 if val is None:

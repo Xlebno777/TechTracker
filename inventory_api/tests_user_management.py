@@ -71,6 +71,7 @@ class UserManagementApiTests(APITestCase):
         bootstrap_response = self.client.post(reverse("page-access-bootstrap-defaults"), {}, format="json")
         self.assertEqual(bootstrap_response.status_code, 200)
         self.assertTrue(PageAccessRule.objects.filter(route_name="MonitoringForecast").exists())
+        self.assertTrue(PageAccessRule.objects.filter(route_name="SystemHealth").exists())
 
         forecast_rule = PageAccessRule.objects.get(route_name="MonitoringForecast")
         patch_response = self.client.patch(
@@ -95,4 +96,5 @@ class UserManagementApiTests(APITestCase):
         routes = set(response.data["allowed_route_names"])
         self.assertTrue(response.data["is_admin"])
         self.assertIn("UserManagement", routes)
+        self.assertIn("SystemHealth", routes)
         self.assertIn("Settings", routes)

@@ -304,6 +304,7 @@ class RawMetric(models.Model):
         ordering = ['-timestamp']
         indexes = [
             models.Index(fields=['device', 'code', '-timestamp']),
+            models.Index(fields=['device', 'code', 'timestamp', 'id'], name='rawmetric_dev_code_ts_id'),
             models.Index(fields=['timestamp']),
         ]
 
@@ -674,6 +675,8 @@ class ForecastPoint(models.Model):
             models.Index(fields=['device', 'metric_code', 'horizon', '-target_ts']),
             models.Index(fields=['model_kind', 'horizon', '-target_ts']),
             models.Index(fields=['run', '-target_ts']),
+            models.Index(fields=['device', 'run', 'model_kind', 'horizon', 'target_ts'], name='fpoint_dev_run_kind_h_ts'),
+            models.Index(fields=['run', 'model_kind', 'horizon', 'metric_code', 'target_ts'], name='fpoint_run_kind_h_metric'),
         ]
 
     def __str__(self):

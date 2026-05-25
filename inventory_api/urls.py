@@ -43,6 +43,7 @@ router.register(r'state-inference-profiles', views.StateInferenceProfileViewSet,
 router.register(r'risk-assessment', views.RiskAssessmentViewSet, basename='risk-assessment')
 router.register(r'dissertation-evaluation', views.DissertationEvaluationViewSet, basename='dissertation-evaluation')
 router.register(r'monitoring-system', views.MonitoringSystemViewSet, basename='monitoring-system')
+router.register(r'system-health', views.SystemHealthViewSet, basename='system-health')
 router.register(r'application-updates', views.ApplicationUpdateViewSet, basename='application-updates')
 router.register(r'decision-actions', views.DecisionActionViewSet, basename='decision-actions')
 router.register(r'decision-criteria', views.DecisionCriterionViewSet, basename='decision-criteria')

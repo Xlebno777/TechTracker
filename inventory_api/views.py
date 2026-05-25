@@ -10,6 +10,7 @@ import shutil
 import os
 import secrets
 import time as pytime
+import socket
 from pathlib import Path
 from collections import defaultdict
 from urllib.parse import urlsplit
@@ -28,8 +29,9 @@ from rest_framework.authtoken.models import Token
 from django.db import models
 from django.db import IntegrityError
 from django.db import transaction
+from django.db import connection
 from django.db.utils import ProgrammingError
-from django.db.models import Q
+from django.db.models import Q, Count
 from django_filters.rest_framework import DjangoFilterBackend
 from django.core.management import call_command
 from django.conf import settings
@@ -83,6 +85,7 @@ from .release_management import check_for_update, get_current_release_info, laun
 from django.utils import timezone
 from django.utils.dateparse import parse_date, parse_datetime
 from datetime import timedelta, datetime
+import psutil
 
 
 def _normalize_ip(value):
@@ -149,6 +152,27 @@ def _parse_query_datetime(value, *, end_of_day=False):
     if timezone.is_naive(dt_value):
         dt_value = timezone.make_aware(dt_value, timezone.get_current_timezone())
     return dt_value
+
+
+API_DEFAULT_RAW_METRIC_LIMIT = 5000
+API_MAX_RAW_METRIC_LIMIT = 10000
+API_DEFAULT_FORECAST_POINT_LIMIT = 20000
+API_MAX_FORECAST_POINT_LIMIT = 50000
+API_DEFAULT_STATE_ESTIMATE_LIMIT = 5000
+API_MAX_STATE_ESTIMATE_LIMIT = 20000
+
+
+def _bounded_int_query_param(request, name, default, maximum):
+    raw = request.query_params.get(name)
+    if raw in (None, ""):
+        return default
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return default
+    if value <= 0:
+        return default
+    return min(value, maximum)
 
 
 def _normalize_mac(value):
@@ -380,8 +404,12 @@ class DeviceViewSet(viewsets.ModelViewSet):
     """
     Основной API для устройств с поддержкой фильтрации, поиска и сортировки.
     """
-    queryset = Device.objects.all().select_related('device_type', 'location', 'owner', 'assigned_to') \
-                                    .prefetch_related('logs')
+    queryset = (
+        Device.objects
+        .all()
+        .select_related('device_type', 'location', 'owner', 'assigned_to')
+        .annotate(logs_count_cached=Count('logs'))
+    )
     permission_classes = [IsAuthenticated, DjangoModelPermissions]
 
     # --- 🔍 Добавляем фильтрацию и поиск ---
@@ -788,6 +816,7 @@ class ManagedUserViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         return (
             User.objects
+            .select_related('auth_token')
             .prefetch_related('groups', 'user_permissions__content_type')
             .order_by('username')
         )
@@ -969,15 +998,14 @@ class RawMetricViewSet(viewsets.ReadOnlyModelViewSet):
 
     def list(self, request, *args, **kwargs):
         queryset = self.filter_queryset(self.get_queryset())
-
-        limit = request.query_params.get('limit')
-        if limit:
-            try:
-                limit_val = int(limit)
-                if limit_val > 0:
-                    queryset = queryset[:limit_val]
-            except ValueError:
-                pass
+        queryset = queryset.only('id', 'device_id', 'code', 'value', 'unit', 'timestamp', 'labels', 'created_at')
+        limit_val = _bounded_int_query_param(
+            request,
+            'limit',
+            API_DEFAULT_RAW_METRIC_LIMIT,
+            API_MAX_RAW_METRIC_LIMIT,
+        )
+        queryset = queryset[:limit_val]
 
         page = self.paginate_queryset(queryset)
         if page is not None:
@@ -1944,6 +1972,28 @@ class ForecastPointViewSet(viewsets.ReadOnlyModelViewSet):
             qs = qs.filter(target_ts__lte=date_to)
         return qs
 
+    def list(self, request, *args, **kwargs):
+        queryset = self.filter_queryset(self.get_queryset()).only(
+            'id', 'run_id', 'device_id', 'metric_code', 'horizon', 'target_ts', 'model_kind',
+            'y_hat', 'p10', 'p50', 'p90', 'alpha', 'labels', 'created_at',
+            'device__name', 'device__serial_number', 'run__model_kind', 'run__status',
+        )
+        limit_val = _bounded_int_query_param(
+            request,
+            'limit',
+            API_DEFAULT_FORECAST_POINT_LIMIT,
+            API_MAX_FORECAST_POINT_LIMIT,
+        )
+        queryset = queryset[:limit_val]
+
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data)
+
     @action(detail=False, methods=['get'])
     def latest(self, request):
         serial = request.query_params.get('serial')
@@ -2000,6 +2050,28 @@ class StateEstimateViewSet(viewsets.ReadOnlyModelViewSet):
         if model_kind:
             qs = qs.filter(run__model_kind=model_kind)
         return qs
+
+    def list(self, request, *args, **kwargs):
+        queryset = self.filter_queryset(self.get_queryset()).only(
+            'id', 'run_id', 'device_id', 'horizon', 'state',
+            'p_s0', 'p_s1', 'p_s2', 'confidence', 'evidence', 'timestamp', 'created_at',
+            'device__name', 'device__serial_number', 'run__model_kind', 'run__status',
+        )
+        limit_val = _bounded_int_query_param(
+            request,
+            'limit',
+            API_DEFAULT_STATE_ESTIMATE_LIMIT,
+            API_MAX_STATE_ESTIMATE_LIMIT,
+        )
+        queryset = queryset[:limit_val]
+
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data)
 
     @action(detail=False, methods=['get'])
     def latest(self, request):
@@ -3251,6 +3323,293 @@ class MonitoringSystemViewSet(viewsets.ViewSet):
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as exc:
             return Response({"detail": f"pipeline report failed: {exc}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class SystemHealthViewSet(viewsets.ViewSet):
+    permission_classes = [AdminGroupPermission]
+
+    ACTIVE_LSTM_STATUSES = ['queued', 'submitting', 'submitted', 'polling', 'retry_wait']
+    ACTIVE_RUN_STATUSES = ['pending', 'running']
+
+    @staticmethod
+    def _mb(value):
+        try:
+            return round(float(value) / (1024 * 1024), 2)
+        except (TypeError, ValueError):
+            return 0.0
+
+    @staticmethod
+    def _pct(value):
+        try:
+            return round(float(value), 1)
+        except (TypeError, ValueError):
+            return 0.0
+
+    @staticmethod
+    def _age_minutes(value):
+        if not value:
+            return None
+        try:
+            return round(max(0.0, (timezone.now() - value).total_seconds() / 60.0), 1)
+        except Exception:
+            return None
+
+    @staticmethod
+    def _table_estimate(model):
+        table_name = model._meta.db_table
+        if connection.vendor == "postgresql":
+            try:
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        "SELECT COALESCE((SELECT reltuples::bigint FROM pg_class WHERE oid = to_regclass(%s)), 0)",
+                        [table_name],
+                    )
+                    row = cursor.fetchone()
+                    return max(0, int(row[0] or 0)), True
+            except Exception:
+                pass
+        try:
+            return int(model.objects.count()), False
+        except Exception:
+            return 0, False
+
+    @staticmethod
+    def _db_size_bytes():
+        try:
+            if connection.vendor == "postgresql":
+                with connection.cursor() as cursor:
+                    cursor.execute("SELECT pg_database_size(current_database())")
+                    row = cursor.fetchone()
+                    return int(row[0] or 0)
+            db_name = str(settings.DATABASES.get("default", {}).get("NAME") or "")
+            if db_name and db_name != ":memory:":
+                path = Path(db_name)
+                if path.exists():
+                    return int(path.stat().st_size)
+        except Exception:
+            return None
+        return None
+
+    def _resource_payload(self):
+        proc = psutil.Process(os.getpid())
+        memory = psutil.virtual_memory()
+        disk = psutil.disk_usage(str(getattr(settings, "BASE_DIR", Path.cwd())))
+        try:
+            process_cpu = proc.cpu_percent(interval=0.05)
+        except Exception:
+            process_cpu = 0.0
+        try:
+            system_cpu = psutil.cpu_percent(interval=0.05)
+        except Exception:
+            system_cpu = 0.0
+        mem_info = proc.memory_info()
+        return {
+            "host": socket.gethostname(),
+            "process": {
+                "pid": proc.pid,
+                "cpu_percent": self._pct(process_cpu),
+                "rss_mb": self._mb(mem_info.rss),
+                "vms_mb": self._mb(mem_info.vms),
+                "threads": proc.num_threads(),
+                "started_at": datetime.fromtimestamp(proc.create_time(), tz=timezone.get_current_timezone()).isoformat(),
+            },
+            "system": {
+                "cpu_percent": self._pct(system_cpu),
+                "memory_total_mb": self._mb(memory.total),
+                "memory_used_mb": self._mb(memory.used),
+                "memory_available_mb": self._mb(memory.available),
+                "memory_percent": self._pct(memory.percent),
+                "disk_total_mb": self._mb(disk.total),
+                "disk_used_mb": self._mb(disk.used),
+                "disk_free_mb": self._mb(disk.free),
+                "disk_percent": self._pct(disk.percent),
+            },
+        }
+
+    def _counts_payload(self):
+        tables = {
+            "devices": Device,
+            "raw_metrics": RawMetric,
+            "computed_metrics": ComputedMetric,
+            "forecast_runs": ForecastRun,
+            "forecast_points": ForecastPoint,
+            "state_estimates": StateEstimate,
+            "lstm_queue_jobs": LSTMRemoteQueueJob,
+            "decision_runs": DecisionRun,
+            "application_updates": ApplicationUpdateJob,
+        }
+        counts = {}
+        estimates = {}
+        for key, model in tables.items():
+            value, estimated = self._table_estimate(model)
+            counts[key] = value
+            estimates[key] = estimated
+        return {"counts": counts, "estimated": estimates}
+
+    def _queue_payload(self):
+        now = timezone.now()
+        recent_cutoff = now - timedelta(hours=24)
+        active_qs = LSTMRemoteQueueJob.objects.filter(status__in=self.ACTIVE_LSTM_STATUSES)
+        failed_24h = LSTMRemoteQueueJob.objects.filter(status='failed', updated_at__gte=recent_cutoff).count()
+        oldest = active_qs.order_by('created_at').values('id', 'status', 'created_at', 'updated_at', 'last_error').first()
+        active_runs = ForecastRun.objects.filter(status__in=self.ACTIVE_RUN_STATUSES).count()
+        long_cutoff = now - timedelta(minutes=30)
+        long_runs = ForecastRun.objects.filter(status__in=self.ACTIVE_RUN_STATUSES).filter(
+            Q(started_at__lte=long_cutoff) | Q(started_at__isnull=True, created_at__lte=long_cutoff)
+        ).count()
+        update_active = ApplicationUpdateJob.objects.filter(status__in=['queued', 'running']).count()
+        return {
+            "lstm_active": active_qs.count(),
+            "lstm_failed_24h": failed_24h,
+            "lstm_oldest_active": {
+                **(oldest or {}),
+                "age_minutes": self._age_minutes(oldest.get('created_at')) if oldest else None,
+            } if oldest else None,
+            "forecast_runs_active": active_runs,
+            "forecast_runs_long": long_runs,
+            "application_updates_active": update_active,
+        }
+
+    def _lstm_payload(self, include_check=True):
+        config = MonitoringSystemViewSet._lstm_config_payload(include_token=True)
+        default_url = "http://127.0.0.1:8099"
+        configured = bool(config.get("env_file_exists") or config.get("has_token") or config.get("base_url") != default_url)
+        payload = {
+            "configured": configured,
+            "base_url": config.get("base_url"),
+            "has_token": bool(config.get("has_token")),
+            "status": "unknown" if not configured else "not_checked",
+            "latency_ms": None,
+            "service": None,
+            "version": None,
+            "error": "",
+        }
+        if not include_check or not configured:
+            return payload
+        try:
+            from .forecasting.lstm_remote_client import LSTMRemoteClient
+
+            started = pytime.perf_counter()
+            client = LSTMRemoteClient(
+                base_url=config.get("base_url") or default_url,
+                api_token=config.get("api_token") or "",
+                timeout_sec=min(float(config.get("timeout_sec") or 20), 2.0),
+                verify_ssl=bool(config.get("verify_ssl")),
+            )
+            health = client.check_health()
+            payload.update({
+                "status": "ok",
+                "latency_ms": round((pytime.perf_counter() - started) * 1000.0, 1),
+                "service": health.get("service"),
+                "version": health.get("version"),
+            })
+        except Exception as exc:
+            payload.update({
+                "status": "error",
+                "error": str(exc)[:500],
+            })
+        return payload
+
+    def _latest_failures(self):
+        failed_runs = list(
+            ForecastRun.objects
+            .filter(status='failed')
+            .select_related('device')
+            .order_by('-updated_at')[:5]
+            .values('id', 'model_kind', 'horizon_set', 'device__name', 'device__serial_number', 'updated_at', 'notes')
+        )
+        failed_lstm = list(
+            LSTMRemoteQueueJob.objects
+            .filter(status='failed')
+            .select_related('device')
+            .order_by('-updated_at')[:5]
+            .values('id', 'device__name', 'device__serial_number', 'updated_at', 'last_error', 'remote_job_id')
+        )
+        agent_errors = list(
+            AgentStatus.objects
+            .filter(status='error')
+            .select_related('device')
+            .order_by('-updated_at')[:5]
+            .values('id', 'device__name', 'device__serial_number', 'updated_at', 'message')
+        )
+        return {
+            "forecast_runs": failed_runs,
+            "lstm_queue": failed_lstm,
+            "agents": agent_errors,
+        }
+
+    def _build_payload(self, *, details=False, include_lstm=True):
+        generated_at = timezone.now()
+        warnings = []
+        resources = self._resource_payload()
+        counts_payload = self._counts_payload()
+        queue = self._queue_payload()
+        lstm = self._lstm_payload(include_check=include_lstm)
+        db_size = self._db_size_bytes()
+
+        system = resources["system"]
+        process = resources["process"]
+        if system["cpu_percent"] >= 90:
+            warnings.append({"code": "system_cpu_high", "severity": "critical", "message": f"CPU сервера загружен на {system['cpu_percent']}%."})
+        elif system["cpu_percent"] >= 75:
+            warnings.append({"code": "system_cpu_warning", "severity": "warning", "message": f"CPU сервера повышен: {system['cpu_percent']}%."})
+        if system["memory_percent"] >= 90:
+            warnings.append({"code": "system_memory_high", "severity": "critical", "message": f"Оперативная память занята на {system['memory_percent']}%."})
+        elif system["memory_percent"] >= 75:
+            warnings.append({"code": "system_memory_warning", "severity": "warning", "message": f"Оперативная память занята на {system['memory_percent']}%."})
+        if system["disk_percent"] >= 90:
+            warnings.append({"code": "disk_high", "severity": "critical", "message": f"Диск приложения заполнен на {system['disk_percent']}%."})
+        elif system["disk_percent"] >= 80:
+            warnings.append({"code": "disk_warning", "severity": "warning", "message": f"Диск приложения заполнен на {system['disk_percent']}%."})
+        if process["rss_mb"] >= 2048:
+            warnings.append({"code": "backend_memory_high", "severity": "warning", "message": f"Backend использует {process['rss_mb']} MB RAM."})
+
+        oldest_age = (queue.get("lstm_oldest_active") or {}).get("age_minutes")
+        if queue["lstm_active"] >= 15 or (oldest_age is not None and oldest_age >= 30):
+            warnings.append({"code": "lstm_queue_growing", "severity": "critical", "message": f"Очередь LSTM растёт: активных задач {queue['lstm_active']}, старейшая {oldest_age or 0} мин."})
+        elif queue["lstm_active"] >= 5 or (oldest_age is not None and oldest_age >= 10):
+            warnings.append({"code": "lstm_queue_growing", "severity": "warning", "message": f"Очередь LSTM растёт: активных задач {queue['lstm_active']}, старейшая {oldest_age or 0} мин."})
+        if queue["lstm_failed_24h"] > 0:
+            warnings.append({"code": "lstm_failed_recent", "severity": "warning", "message": f"За 24 часа есть failed LSTM-задачи: {queue['lstm_failed_24h']}."})
+        if queue["forecast_runs_long"] > 0:
+            warnings.append({"code": "forecast_runs_long", "severity": "warning", "message": f"Есть долгие forecast-запуски: {queue['forecast_runs_long']}."})
+        if lstm["configured"] and lstm["status"] == "error":
+            warnings.append({"code": "lstm_unavailable", "severity": "warning", "message": "Удалённый LSTM недоступен или вернул ошибку healthcheck."})
+
+        severity_order = {"ok": 0, "warning": 1, "critical": 2}
+        overall = "ok"
+        for item in warnings:
+            sev = item.get("severity") or "warning"
+            if severity_order.get(sev, 0) > severity_order.get(overall, 0):
+                overall = sev
+
+        payload = {
+            "status": overall,
+            "generated_at": generated_at.isoformat(),
+            "resources": resources,
+            "database": {
+                "vendor": connection.vendor,
+                "size_bytes": db_size,
+                "size_mb": self._mb(db_size) if db_size is not None else None,
+            },
+            **counts_payload,
+            "queues": queue,
+            "lstm": {key: value for key, value in lstm.items() if key != "api_token"},
+            "warnings": warnings,
+        }
+        if details:
+            payload["latest_failures"] = self._latest_failures()
+        return payload
+
+    @action(detail=False, methods=["get"], url_path="summary")
+    def summary(self, request):
+        include_lstm = MonitoringSystemViewSet._as_bool(request.query_params.get("lstm", "1"), default=True)
+        return Response(self._build_payload(details=False, include_lstm=include_lstm), status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=["get"], url_path="details")
+    def details(self, request):
+        include_lstm = MonitoringSystemViewSet._as_bool(request.query_params.get("lstm", "1"), default=True)
+        return Response(self._build_payload(details=True, include_lstm=include_lstm), status=status.HTTP_200_OK)
 
 
 class ApplicationUpdateViewSet(viewsets.ReadOnlyModelViewSet):
