@@ -197,12 +197,15 @@ try {
     }
 
     Set-Location $AppRoot
-    if (-not [string]::IsNullOrWhiteSpace($TargetVersion)) {
-        Invoke-Step "Updating APP_VERSION in .env.local" {
+    if ([string]::IsNullOrWhiteSpace($TargetVersion) -and (Test-Path "VERSION")) {
+        $TargetVersion = ((Get-Content "VERSION" -Raw) -as [string]).Trim()
+    }
+    Invoke-Step "Updating release settings in .env.local" {
+        if (-not [string]::IsNullOrWhiteSpace($TargetVersion)) {
             Set-EnvFileValue -Path (Join-Path $AppRoot ".env.local") -Key "APP_VERSION" -Value $TargetVersion
-            Set-EnvFileValue -Path (Join-Path $AppRoot ".env.local") -Key "TECHTRACKER_REPO_URL" -Value $RepoUrl
-            Set-EnvFileValue -Path (Join-Path $AppRoot ".env.local") -Key "APP_RELEASE_MANIFEST_URL" -Value "https://api.github.com/repos/Xlebno777/TechTracker/releases/latest"
         }
+        Set-EnvFileValue -Path (Join-Path $AppRoot ".env.local") -Key "TECHTRACKER_REPO_URL" -Value $RepoUrl
+        Set-EnvFileValue -Path (Join-Path $AppRoot ".env.local") -Key "APP_RELEASE_MANIFEST_URL" -Value "https://api.github.com/repos/Xlebno777/TechTracker/releases/latest"
     }
 
     $Python = Get-PythonExecutable

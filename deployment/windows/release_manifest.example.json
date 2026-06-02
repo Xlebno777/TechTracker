@@ -1,12 +1,12 @@
 {
-  "version": "0.1.23",
+  "version": "0.1.24",
   "channel": "single",
   "release_date": "2026-06-02",
-  "git_ref": "v0.1.23",
+  "git_ref": "v0.1.24",
   "notes": [
-    "Добавлены прямые backend routes для `/api/agents/*` и `/api/application-updates/agent-installer/` поверх DRF router.",
-    "Health endpoint `/api/health/?detail=1` теперь показывает версию, AppRoot и регистрацию agent routes.",
-    "Windows backend service пишет в лог фактические пути загруженных Django-модулей и проверку agent routes.",
-    "Windows update script проверяет наличие agent API routes после миграций."
+    "Проверка системных обновлений больше не зависит только от GitHub API JSON: при таймауте используется GitHub Releases HTML redirect и стабильный download URL.",
+    "Текущая версия приложения берется как максимум между `.env.local APP_VERSION` и файлом `VERSION`, чтобы старый env не скрывал фактически установленный релиз.",
+    "Windows update script всегда синхронизирует `.env.local APP_VERSION` с целевой версией или файлом `VERSION`.",
+    "Страница обновлений показывает расхождение между `APP_VERSION` и `VERSION`, если оно есть."
   ]
 }

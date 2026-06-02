@@ -17,6 +17,7 @@ DEFAULT_RELEASE_MANIFEST_URL = "https://api.github.com/repos/Xlebno777/TechTrack
 DEFAULT_AGENT_RELEASE_URL = "https://api.github.com/repos/Xlebno777/tracker-agent/releases/latest"
 DEFAULT_AGENT_INSTALLER_ASSET = "TechTrackerAgentInstaller.exe"
 DEFAULT_AGENT_INSTALLER_VERSION = "0.2.0"
+DEFAULT_SYSTEM_RELEASE_VERSION = "0.1.24"
 
 
 def _safe_text(value, default=""):
@@ -63,37 +64,47 @@ def _github_repo_from_release_url(url: str):
     return None
 
 
-def _github_latest_release_fallback(url: str, asset_name: str, api_error: Exception) -> dict | None:
+def _github_latest_tag_from_html(url: str, fallback_tag: str):
     repo = _github_repo_from_release_url(url)
     if not repo:
         return None
     owner, repo_name = repo
     latest_html_url = f"https://github.com/{owner}/{repo_name}/releases/latest"
-    tag_name = ""
     html_url = latest_html_url
     try:
         req = Request(latest_html_url, headers={"User-Agent": "TechTracker"})
         with urlopen(req, timeout=10) as response:
             html_url = response.geturl()
     except Exception:
-        html_url = f"https://github.com/{owner}/{repo_name}/releases/tag/v{DEFAULT_AGENT_INSTALLER_VERSION}"
+        html_url = f"https://github.com/{owner}/{repo_name}/releases/tag/{fallback_tag}"
 
     marker = "/releases/tag/"
+    tag_name = ""
     if marker in html_url:
         tag_name = html_url.split(marker, 1)[1].split("?", 1)[0].split("#", 1)[0].strip("/")
     if not tag_name:
-        tag_name = f"v{DEFAULT_AGENT_INSTALLER_VERSION}"
+        tag_name = fallback_tag
         html_url = f"https://github.com/{owner}/{repo_name}/releases/tag/{tag_name}"
+    return owner, repo_name, tag_name, html_url, latest_html_url
 
-    quoted_asset = quote(asset_name)
-    download_url = f"https://github.com/{owner}/{repo_name}/releases/download/{tag_name}/{quoted_asset}"
-    size_bytes = 0
+
+def _github_asset_size(download_url: str):
     try:
         req = Request(download_url, headers={"User-Agent": "TechTracker"}, method="HEAD")
         with urlopen(req, timeout=10) as response:
-            size_bytes = int(response.headers.get("Content-Length") or 0)
+            return int(response.headers.get("Content-Length") or 0)
     except Exception:
-        pass
+        return 0
+
+
+def _github_latest_release_fallback(url: str, asset_name: str, api_error: Exception) -> dict | None:
+    latest = _github_latest_tag_from_html(url, f"v{DEFAULT_AGENT_INSTALLER_VERSION}")
+    if not latest:
+        return None
+    owner, repo_name, tag_name, html_url, latest_html_url = latest
+    quoted_asset = quote(asset_name)
+    download_url = f"https://github.com/{owner}/{repo_name}/releases/download/{tag_name}/{quoted_asset}"
+    size_bytes = _github_asset_size(download_url)
 
     return {
         "release_url": url,
@@ -110,6 +121,36 @@ def _github_latest_release_fallback(url: str, asset_name: str, api_error: Except
             "GitHub API latest release недоступен, использован fallback через "
             f"{latest_html_url}. Ошибка API: {api_error}"
         ),
+    }
+
+
+def _system_release_manifest_fallback(url: str, api_error: Exception) -> dict | None:
+    latest = _github_latest_tag_from_html(url, f"v{DEFAULT_SYSTEM_RELEASE_VERSION}")
+    if not latest:
+        return None
+    owner, repo_name, tag_name, html_url, latest_html_url = latest
+    version = tag_name.lstrip("v")
+    asset_name = f"TechTracker-v{version}-windows-server.zip"
+    download_url = f"https://github.com/{owner}/{repo_name}/releases/download/{tag_name}/{quote(asset_name)}"
+    size_bytes = _github_asset_size(download_url)
+    return {
+        "version": version,
+        "tag_name": tag_name,
+        "name": f"TechTracker {tag_name}",
+        "channel": "single",
+        "published_at": "",
+        "html_url": html_url,
+        "body": (
+            "GitHub API latest release недоступен, использован fallback через "
+            f"{latest_html_url}. Ошибка API: {api_error}"
+        ),
+        "assets": [
+            {
+                "name": asset_name,
+                "browser_download_url": download_url,
+                "size": size_bytes,
+            }
+        ],
     }
 
 
@@ -150,11 +191,30 @@ def _git_value(args):
         return ""
 
 
+def _version_file_value():
+    try:
+        return (Path(settings.BASE_DIR) / "VERSION").read_text(encoding="utf-8").strip()
+    except Exception:
+        return ""
+
+
+def _effective_current_version():
+    env_version = _safe_text(getattr(settings, "APP_VERSION", ""), "0.1.0")
+    file_version = _safe_text(_version_file_value())
+    if file_version and compare_versions(env_version, file_version) < 0:
+        return file_version
+    return env_version
+
+
 def get_current_release_info() -> dict:
     script_path = Path(getattr(settings, "APP_UPDATE_SCRIPT", "") or "").expanduser()
     manifest_url = _safe_text(getattr(settings, "APP_RELEASE_MANIFEST_URL", ""), DEFAULT_RELEASE_MANIFEST_URL)
+    env_version = _safe_text(getattr(settings, "APP_VERSION", ""), "0.1.0")
+    file_version = _safe_text(_version_file_value())
     return {
-        "current_version": _safe_text(getattr(settings, "APP_VERSION", ""), "0.1.0"),
+        "current_version": _effective_current_version(),
+        "configured_version": env_version,
+        "version_file": file_version,
         "release_channel": _safe_text(getattr(settings, "APP_RELEASE_CHANNEL", ""), "single"),
         "manifest_url": manifest_url,
         "manifest_configured": bool(manifest_url),
@@ -207,7 +267,13 @@ def check_for_update(manifest_url: str | None = None) -> dict:
     current = get_current_release_info()
     url = _safe_text(manifest_url, current["manifest_url"])
     github_token = os.environ.get("APP_RELEASE_GITHUB_TOKEN") or os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
-    manifest = normalize_manifest(_read_json_from_url(url, github_token=github_token))
+    try:
+        raw_manifest = _read_json_from_url(url, github_token=github_token)
+    except Exception as exc:
+        raw_manifest = _system_release_manifest_fallback(url, exc)
+        if raw_manifest is None:
+            raise
+    manifest = normalize_manifest(raw_manifest)
     latest_version = manifest["version"]
     update_available = bool(latest_version) and compare_versions(current["current_version"], latest_version) < 0
     return {

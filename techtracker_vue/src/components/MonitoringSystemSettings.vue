@@ -308,6 +308,7 @@
           <span class="summary-label">Текущая версия</span>
           <strong>{{ releaseStatus.current_version || 'не указана' }}</strong>
           <small>Git: {{ releaseStatus.git_branch || 'n/a' }} {{ releaseStatus.git_commit || '' }}</small>
+          <small v-if="releaseVersionSourceNote">{{ releaseVersionSourceNote }}</small>
         </div>
         <div class="release-card">
           <span class="summary-label">Последняя версия</span>
@@ -536,6 +537,13 @@ const latestReleaseVersion = computed(() => (
   || releaseStatus.value?.latest_version
   || 'не проверялась'
 ));
+
+const releaseVersionSourceNote = computed(() => {
+  const configured = releaseStatus.value?.configured_version;
+  const versionFile = releaseStatus.value?.version_file;
+  if (!configured || !versionFile || configured === versionFile) return '';
+  return `env: ${configured}, VERSION: ${versionFile}`;
+});
 
 const updateAvailable = computed(() => Boolean(
   releaseCheck.value?.update_available || releaseStatus.value?.update_available,
