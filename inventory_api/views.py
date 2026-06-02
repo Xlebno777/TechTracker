@@ -35,6 +35,7 @@ from django.db.models import Q, Count
 from django_filters.rest_framework import DjangoFilterBackend
 from django.core.management import call_command
 from django.conf import settings
+from django.urls import get_resolver
 
 from .models import (
     Device, DeviceType, Location, UserProfile,
@@ -82,13 +83,55 @@ from .page_access import ensure_default_page_access_rules
 @api_view(["GET"])
 @permission_classes([AllowAny])
 def health_check(request):
-    return Response({"status": "ok", "service": "techtracker_backend"})
+    payload = {
+        "status": "ok",
+        "service": "techtracker_backend",
+        "app_version": getattr(settings, "APP_VERSION", ""),
+        "base_dir": str(getattr(settings, "BASE_DIR", "")),
+    }
+    if str(request.query_params.get("detail") or "").strip() == "1":
+        routes = []
+
+        def walk(patterns, prefix=""):
+            for item in patterns:
+                route = f"{prefix}{item.pattern}"
+                if hasattr(item, "url_patterns"):
+                    walk(item.url_patterns, route)
+                else:
+                    routes.append(route)
+
+        try:
+            walk(get_resolver().url_patterns)
+        except Exception as exc:
+            payload["route_error"] = str(exc)
+
+        agent_routes = sorted(route for route in routes if "agents" in route or "agent-installer" in route)
+        payload.update({
+            "git_commit": _git_short_commit(),
+            "agent_routes_registered": any(route.startswith("api/agents/") for route in agent_routes),
+            "agent_installer_route_registered": any("application-updates/agent-installer/" in route for route in routes),
+            "agent_routes": agent_routes[:50],
+        })
+    return Response(payload)
 from .forecasting.demo_seed import seed_demo_forecasts
 from .release_management import compare_versions, check_agent_installer_release, check_for_update, get_current_release_info, launch_update_worker
 from django.utils import timezone
 from django.utils.dateparse import parse_date, parse_datetime
 from datetime import timedelta, datetime
 import psutil
+
+
+def _git_short_commit():
+    try:
+        return subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=str(settings.BASE_DIR),
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=3,
+        ).strip()
+    except Exception:
+        return ""
 
 
 def _normalize_ip(value):

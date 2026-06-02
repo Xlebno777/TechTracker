@@ -97,9 +97,29 @@ def main() -> int:
 
     try:
         import django
+        from django.conf import settings
         from django.core.checks import run_checks
+        from django.urls import resolve
 
         django.setup()
+        import inventory_api.urls as inventory_urls
+        import inventory_api.views as inventory_views
+
+        log(f"settings_base_dir={getattr(settings, 'BASE_DIR', '')}")
+        log(f"app_version={getattr(settings, 'APP_VERSION', '')}")
+        log(f"inventory_api.urls={getattr(inventory_urls, '__file__', '')}")
+        log(f"inventory_api.views={getattr(inventory_views, '__file__', '')}")
+        for route in (
+            "/api/agents/",
+            "/api/agents/metric-catalog/",
+            "/api/application-updates/agent-installer/",
+        ):
+            try:
+                match = resolve(route)
+                log(f"route_ok {route} -> {match.view_name}")
+            except Exception as exc:
+                log(f"route_missing {route}: {exc}")
+
         errors = run_checks()
         if errors:
             log(f"django checks returned {len(errors)} issue(s)")

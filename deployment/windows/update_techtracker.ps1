@@ -217,6 +217,11 @@ try {
         if ($LASTEXITCODE -ne 0) { throw "manage.py migrate завершился с кодом $LASTEXITCODE" }
     }
 
+    Invoke-Step "Verifying agent API routes" {
+        & $Python -c "import os; os.environ.setdefault('DJANGO_SETTINGS_MODULE','TechTracker_django.settings'); import django; django.setup(); from django.urls import resolve; [resolve(path) for path in ('/api/agents/','/api/agents/metric-catalog/','/api/application-updates/agent-installer/')]; print('agent API routes OK')"
+        if ($LASTEXITCODE -ne 0) { throw "Проверка agent API routes завершилась с кодом $LASTEXITCODE" }
+    }
+
     if (Test-Path "techtracker_vue\package.json") {
         Push-Location "techtracker_vue"
         try {

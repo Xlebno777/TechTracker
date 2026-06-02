@@ -1,12 +1,12 @@
 {
-  "version": "0.1.22",
+  "version": "0.1.23",
   "channel": "single",
   "release_date": "2026-06-02",
-  "git_ref": "v0.1.22",
+  "git_ref": "v0.1.23",
   "notes": [
-    "Добавлен fallback проверки release агента через обычную страницу GitHub Releases, если GitHub API latest вернул 404 или сетевую ошибку.",
-    "Добавлена миграция, которая переносит существующие AgentStatus в ServiceAgent, чтобы уже установленные агенты появились на странице `Агенты`.",
-    "Сериализация списка агентов стала устойчивой к старым или неполным данным устройств.",
-    "Frontend страницы `Агенты` теперь показывает HTTP-код и подробность ошибки API вместо общего сообщения."
+    "Добавлены прямые backend routes для `/api/agents/*` и `/api/application-updates/agent-installer/` поверх DRF router.",
+    "Health endpoint `/api/health/?detail=1` теперь показывает версию, AppRoot и регистрацию agent routes.",
+    "Windows backend service пишет в лог фактические пути загруженных Django-модулей и проверку agent routes.",
+    "Windows update script проверяет наличие agent API routes после миграций."
   ]
 }
