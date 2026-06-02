@@ -1,12 +1,12 @@
 {
-  "version": "0.1.25",
+  "version": "0.1.26",
   "channel": "single",
   "release_date": "2026-06-02",
-  "git_ref": "v0.1.25",
+  "git_ref": "v0.1.26",
   "notes": [
-    "Страница агентов и страница инсталлятора получили прямые root-level backend routes для `/api/agents/*` и `/api/application-updates/agent-installer/`, чтобы исключить старые router-mismatch 404.",
-    "Всплывающие ошибки frontend теперь показывают HTTP-статус, метод, точный endpoint, тело ответа или клиентский код ошибки.",
-    "Проверка GitHub Releases агента возвращает подробность: какой release URL проверялся, какой asset ожидался и какие assets были найдены.",
-    "Fallback системного релиза обновлен на v0.1.25."
+    "Страница системных обновлений теперь автоматически опрашивает job после запуска обновления и синхронизирует блок версии, APP_VERSION и latest без ручного сохранения параметров сервера.",
+    "Для инсталлятора агента добавлен отдельный endpoint `/api/agent-installer/` без конфликта с router detail routes.",
+    "Frontend страницы инсталлятора агента сначала использует `/api/agent-installer/`, а старый `/api/application-updates/agent-installer/` оставлен только как резервный endpoint.",
+    "Fallback системного релиза обновлен на v0.1.26."
   ]
 }

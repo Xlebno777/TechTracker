@@ -29,6 +29,8 @@ urlpatterns = [
     path('api/agents/<int:pk>/restart/', inventory_views.ServiceAgentViewSet.as_view({'post': 'restart'}), name='root-agents-restart'),
     path('api/agents/<int:pk>/update/', inventory_views.ServiceAgentViewSet.as_view({'post': 'queue_update'}), name='root-agents-update'),
     path('api/agents/<int:pk>/set-metrics/', inventory_views.ServiceAgentViewSet.as_view({'post': 'set_metrics'}), name='root-agents-set-metrics'),
+    path('api/agent-installer/', inventory_views.agent_installer_release_status, name='root-agent-installer-status'),
+    path('api/installers/agent/', inventory_views.agent_installer_release_status, name='root-agent-installer-status-alt'),
     path('api/application-updates/agent-installer/', inventory_views.ApplicationUpdateViewSet.as_view({'get': 'agent_installer'}), name='root-agent-installer'),
     path('api/', include('inventory_api.urls')),     # <-- inventory_api
 ]

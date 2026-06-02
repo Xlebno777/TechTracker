@@ -61,6 +61,7 @@ router.register(r'tracked-vms', views.TrackedVMViewSet)
 # Подключаем маршруты роутера к этому файлу
 urlpatterns = [
     path('health/', views.health_check, name='api-health'),
+    path('agent-installer/', views.agent_installer_release_status, name='agent-installer-status'),
     path('agents/', views.ServiceAgentViewSet.as_view({'get': 'list'}), name='agents-list-direct'),
     path('agents/metric-catalog/', views.ServiceAgentViewSet.as_view({'get': 'metric_catalog'}), name='agents-metric-catalog-direct'),
     path('agents/checkin/', views.ServiceAgentViewSet.as_view({'post': 'checkin'}), name='agents-checkin-direct'),
@@ -69,6 +70,7 @@ urlpatterns = [
     path('agents/<int:pk>/restart/', views.ServiceAgentViewSet.as_view({'post': 'restart'}), name='agents-restart-direct'),
     path('agents/<int:pk>/update/', views.ServiceAgentViewSet.as_view({'post': 'queue_update'}), name='agents-update-direct'),
     path('agents/<int:pk>/set-metrics/', views.ServiceAgentViewSet.as_view({'post': 'set_metrics'}), name='agents-set-metrics-direct'),
+    path('installers/agent/', views.agent_installer_release_status, name='agent-installer-status-alt'),
     path('application-updates/agent-installer/', views.ApplicationUpdateViewSet.as_view({'get': 'agent_installer'}), name='agent-installer-direct'),
     path('', include(router.urls)),
     # Можно добавить дополнительные URL-ы, не связанные с ViewSet'ами, здесь

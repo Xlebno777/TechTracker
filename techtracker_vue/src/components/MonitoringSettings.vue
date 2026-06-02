@@ -213,7 +213,7 @@ function formatDateTime(value) {
 async function loadAgentInstaller() {
   agentInstallerLoading.value = true;
   try {
-    const response = await apiClient.get('application-updates/agent-installer/');
+    const response = await apiClient.get('agent-installer/');
     agentInstaller.value = response.data || null;
     if (agentInstaller.value?.status && agentInstaller.value.status !== 'ok') {
       const detail = [
@@ -236,7 +236,15 @@ async function loadAgentInstaller() {
       });
     }
   } catch (error) {
-    const detail = describeApiError(error, 'Не удалось проверить GitHub Releases агента');
+    const primaryDetail = describeApiError(error, 'Не удалось проверить GitHub Releases агента через /api/agent-installer/');
+    let detail = primaryDetail;
+    try {
+      const fallbackResponse = await apiClient.get('application-updates/agent-installer/');
+      agentInstaller.value = fallbackResponse.data || null;
+      return;
+    } catch (fallbackError) {
+      detail = `${primaryDetail}. Резервный endpoint тоже не ответил: ${describeApiError(fallbackError, 'GET /api/application-updates/agent-installer/')}`;
+    }
     agentInstaller.value = {
       status: 'error',
       connected: false,

@@ -416,7 +416,7 @@
 </template>
 
 <script setup>
-import { computed, defineProps, onMounted, ref } from 'vue';
+import { computed, defineProps, onBeforeUnmount, onMounted, ref } from 'vue';
 import apiClient, { describeApiError } from '@/api';
 import Button from 'primevue/button';
 import InputNumber from 'primevue/inputnumber';
@@ -458,6 +458,9 @@ const releaseStarting = ref(false);
 const releaseStatus = ref({});
 const releaseCheck = ref({});
 const updateJobs = ref([]);
+const ACTIVE_JOB_STATUSES = new Set(['queued', 'running']);
+const TERMINAL_JOB_STATUSES = new Set(['completed', 'failed', 'skipped']);
+let releasePollTimer = null;
 const lstmConfig = ref({
   base_url: 'http://127.0.0.1:8099',
   scheme: 'http',
@@ -575,6 +578,32 @@ const lastUpdateJobText = computed(() => {
   return `${version}, ${formatDateTime(job.updated_at || job.created_at)}`;
 });
 
+function latestUpdateJob() {
+  return releaseStatus.value?.last_job || updateJobs.value?.[0] || null;
+}
+
+function isActiveUpdateJob(job) {
+  return ACTIVE_JOB_STATUSES.has(String(job?.status || '').toLowerCase());
+}
+
+function isTerminalUpdateJob(job) {
+  return TERMINAL_JOB_STATUSES.has(String(job?.status || '').toLowerCase());
+}
+
+function stopReleasePolling() {
+  if (releasePollTimer) {
+    clearInterval(releasePollTimer);
+    releasePollTimer = null;
+  }
+}
+
+function startReleasePolling() {
+  if (releasePollTimer) return;
+  releasePollTimer = window.setInterval(() => {
+    pollReleaseUpdateStatus();
+  }, 5000);
+}
+
 async function loadSummary() {
   loading.value = true;
   try {
@@ -646,13 +675,15 @@ function normalizeEnvironmentConfig(data = {}) {
   };
 }
 
-async function loadEnvironmentConfig() {
+async function loadEnvironmentConfig({ silent = false } = {}) {
   environmentLoading.value = true;
   try {
     const res = await apiClient.get('monitoring-system/environment-config/');
     environmentConfig.value = normalizeEnvironmentConfig(res.data || {});
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Ошибка параметров сервера', detail: describeApiError(err, 'Не удалось загрузить параметры сервера'), life: 9000 });
+    if (!silent) {
+      toast.add({ severity: 'error', summary: 'Ошибка параметров сервера', detail: describeApiError(err, 'Не удалось загрузить параметры сервера'), life: 9000 });
+    }
   } finally {
     environmentLoading.value = false;
   }
@@ -815,7 +846,7 @@ function formatDateTime(value) {
   }
 }
 
-async function loadReleaseStatus() {
+async function loadReleaseStatus({ silent = false } = {}) {
   releaseLoading.value = true;
   try {
     const [statusRes, jobsRes] = await Promise.all([
@@ -825,14 +856,16 @@ async function loadReleaseStatus() {
     releaseStatus.value = statusRes.data || {};
     updateJobs.value = Array.isArray(jobsRes.data) ? jobsRes.data : (jobsRes.data?.results || []);
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Ошибка версии приложения', detail: describeApiError(err, 'Не удалось загрузить информацию о версии приложения'), life: 10000 });
+    if (!silent) {
+      toast.add({ severity: 'error', summary: 'Ошибка версии приложения', detail: describeApiError(err, 'Не удалось загрузить информацию о версии приложения'), life: 10000 });
+    }
   } finally {
     releaseLoading.value = false;
   }
 }
 
-async function checkReleaseUpdate() {
-  releaseChecking.value = true;
+async function checkReleaseUpdate({ notify = true } = {}) {
+  if (notify) releaseChecking.value = true;
   try {
     const res = await apiClient.post('application-updates/check/', {});
     releaseCheck.value = res.data || {};
@@ -843,13 +876,47 @@ async function checkReleaseUpdate() {
     const detail = res.data?.update_available
       ? `Доступна версия ${res.data?.latest_version || 'latest'}`
       : 'Установлена актуальная версия.';
-    toast.add({ severity: res.data?.update_available ? 'warn' : 'success', summary: 'Проверка завершена', detail, life: 3500 });
-    await loadReleaseStatus();
+    if (notify) {
+      toast.add({ severity: res.data?.update_available ? 'warn' : 'success', summary: 'Проверка завершена', detail, life: 3500 });
+    }
+    await loadReleaseStatus({ silent: !notify });
   } catch (err) {
     const detail = describeApiError(err, 'Не удалось проверить обновления');
-    toast.add({ severity: 'error', summary: 'Ошибка проверки обновлений', detail, life: 10000 });
+    if (notify) {
+      toast.add({ severity: 'error', summary: 'Ошибка проверки обновлений', detail, life: 10000 });
+    }
   } finally {
-    releaseChecking.value = false;
+    if (notify) releaseChecking.value = false;
+  }
+}
+
+async function pollReleaseUpdateStatus() {
+  const previousJob = latestUpdateJob();
+  await loadReleaseStatus({ silent: true });
+  const job = latestUpdateJob();
+  if (isActiveUpdateJob(job)) return;
+  if (!previousJob && !job) return;
+  if (!isTerminalUpdateJob(job)) return;
+
+  stopReleasePolling();
+  await loadEnvironmentConfig({ silent: true });
+  await checkReleaseUpdate({ notify: false });
+
+  const statusValue = String(job.status || '').toLowerCase();
+  if (statusValue === 'completed') {
+    toast.add({
+      severity: 'success',
+      summary: 'Обновление завершено',
+      detail: 'Версия приложения, APP_VERSION и проверка latest синхронизированы автоматически.',
+      life: 7000,
+    });
+  } else if (statusValue === 'failed') {
+    toast.add({
+      severity: 'error',
+      summary: 'Обновление завершилось ошибкой',
+      detail: job.error || 'Откройте журнал обновлений для деталей.',
+      life: 10000,
+    });
   }
 }
 
@@ -868,10 +935,12 @@ async function startReleaseUpdate() {
     toast.add({
       severity: 'success',
       summary: 'Обновление поставлено в очередь',
-      detail: `Задание #${res.data?.id || ''} запущено на сервере.`,
+      detail: `Задание #${res.data?.id || ''} запущено на сервере. Статус будет обновляться автоматически.`,
       life: 4500,
     });
-    await loadReleaseStatus();
+    releaseCheck.value = {};
+    await loadReleaseStatus({ silent: true });
+    startReleasePolling();
   } catch (err) {
     const detail = describeApiError(err, 'Не удалось запустить обновление');
     toast.add({ severity: 'error', summary: 'Ошибка запуска обновления', detail, life: 10000 });
@@ -924,6 +993,13 @@ async function refreshPage() {
 
 onMounted(async () => {
   await refreshPage();
+  if (isActiveUpdateJob(latestUpdateJob())) {
+    startReleasePolling();
+  }
+});
+
+onBeforeUnmount(() => {
+  stopReleasePolling();
 });
 </script>
 

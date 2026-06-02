@@ -134,6 +134,13 @@ def _git_short_commit():
         return ""
 
 
+@api_view(["GET"])
+@permission_classes([AdminGroupPermission])
+def agent_installer_release_status(request):
+    release_url = str(request.query_params.get("release_url") or "").strip() or None
+    return Response(check_agent_installer_release(release_url=release_url), status=status.HTTP_200_OK)
+
+
 def _normalize_ip(value):
     if not value:
         return None
