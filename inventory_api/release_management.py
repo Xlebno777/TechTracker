@@ -4,7 +4,7 @@ import platform
 import subprocess
 import sys
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 from urllib.request import Request, urlopen
 
 from django.conf import settings
@@ -16,6 +16,7 @@ from .models import ApplicationUpdateJob
 DEFAULT_RELEASE_MANIFEST_URL = "https://api.github.com/repos/Xlebno777/TechTracker/releases/latest"
 DEFAULT_AGENT_RELEASE_URL = "https://api.github.com/repos/Xlebno777/tracker-agent/releases/latest"
 DEFAULT_AGENT_INSTALLER_ASSET = "TechTrackerAgentInstaller.exe"
+DEFAULT_AGENT_INSTALLER_VERSION = "0.2.0"
 
 
 def _safe_text(value, default=""):
@@ -49,6 +50,67 @@ def _read_json_from_url(url: str, timeout: float = 10.0, github_token: str | Non
     req = Request(raw_url, headers=headers)
     with urlopen(req, timeout=timeout) as response:
         return json.loads(response.read().decode("utf-8"))
+
+
+def _github_repo_from_release_url(url: str):
+    parsed = urlsplit(_safe_text(url))
+    host = parsed.netloc.lower()
+    parts = [part for part in parsed.path.strip("/").split("/") if part]
+    if host == "api.github.com" and len(parts) >= 5 and parts[0] == "repos" and parts[3] == "releases":
+        return parts[1], parts[2]
+    if (host == "github.com" or host.endswith(".github.com")) and len(parts) >= 4 and parts[2] == "releases":
+        return parts[0], parts[1]
+    return None
+
+
+def _github_latest_release_fallback(url: str, asset_name: str, api_error: Exception) -> dict | None:
+    repo = _github_repo_from_release_url(url)
+    if not repo:
+        return None
+    owner, repo_name = repo
+    latest_html_url = f"https://github.com/{owner}/{repo_name}/releases/latest"
+    tag_name = ""
+    html_url = latest_html_url
+    try:
+        req = Request(latest_html_url, headers={"User-Agent": "TechTracker"})
+        with urlopen(req, timeout=10) as response:
+            html_url = response.geturl()
+    except Exception:
+        html_url = f"https://github.com/{owner}/{repo_name}/releases/tag/v{DEFAULT_AGENT_INSTALLER_VERSION}"
+
+    marker = "/releases/tag/"
+    if marker in html_url:
+        tag_name = html_url.split(marker, 1)[1].split("?", 1)[0].split("#", 1)[0].strip("/")
+    if not tag_name:
+        tag_name = f"v{DEFAULT_AGENT_INSTALLER_VERSION}"
+        html_url = f"https://github.com/{owner}/{repo_name}/releases/tag/{tag_name}"
+
+    quoted_asset = quote(asset_name)
+    download_url = f"https://github.com/{owner}/{repo_name}/releases/download/{tag_name}/{quoted_asset}"
+    size_bytes = 0
+    try:
+        req = Request(download_url, headers={"User-Agent": "TechTracker"}, method="HEAD")
+        with urlopen(req, timeout=10) as response:
+            size_bytes = int(response.headers.get("Content-Length") or 0)
+    except Exception:
+        pass
+
+    return {
+        "release_url": url,
+        "connected": True,
+        "status": "ok",
+        "latest_version": tag_name.lstrip("v"),
+        "tag_name": tag_name,
+        "published_at": "",
+        "html_url": html_url,
+        "installer_asset_name": asset_name,
+        "download_url": download_url,
+        "size_bytes": size_bytes,
+        "detail": (
+            "GitHub API latest release недоступен, использован fallback через "
+            f"{latest_html_url}. Ошибка API: {api_error}"
+        ),
+    }
 
 
 def _parse_version(version: str):
@@ -177,6 +239,9 @@ def check_agent_installer_release(release_url: str | None = None) -> dict:
         github_token = os.environ.get("AGENT_RELEASE_GITHUB_TOKEN") or os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
         release = _read_json_from_url(url, github_token=github_token)
     except Exception as exc:
+        fallback = _github_latest_release_fallback(url, asset_name, exc)
+        if fallback:
+            return fallback
         payload["detail"] = str(exc)
         return payload
 

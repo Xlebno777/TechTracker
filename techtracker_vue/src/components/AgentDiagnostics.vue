@@ -395,9 +395,26 @@ const toggleMetric = (name, enabled) => {
   selectedEnabledTasks.value = [...current];
 };
 
+const apiErrorDetail = (error, fallback) => {
+  const status = error?.response?.status;
+  const data = error?.response?.data;
+  if (data?.detail) return data.detail;
+  if (data?.message) return data.message;
+  if (typeof data === 'string' && data.trim()) {
+    return `${fallback}. HTTP ${status || '?'}: ${data.trim().slice(0, 220)}`;
+  }
+  if (status) return `${fallback}. HTTP ${status}`;
+  return error?.message || fallback;
+};
+
 const loadMetricCatalog = async () => {
-  const res = await apiClient.get('agents/metric-catalog/');
-  metricCatalog.value = normalizeList(res.data?.metrics);
+  try {
+    const res = await apiClient.get('agents/metric-catalog/');
+    metricCatalog.value = normalizeList(res.data?.metrics);
+  } catch (e) {
+    metricCatalog.value = [];
+    toast.add({ severity: 'error', summary: 'Ошибка', detail: apiErrorDetail(e, 'Не удалось загрузить каталог метрик'), life: 6000 });
+  }
 };
 
 const loadAgents = async () => {
@@ -416,8 +433,7 @@ const loadAgents = async () => {
       commands.value = [];
     }
   } catch (e) {
-    const detail = e?.response?.data?.detail || 'Не удалось загрузить агентов';
-    toast.add({ severity: 'error', summary: 'Ошибка', detail, life: 4000 });
+    toast.add({ severity: 'error', summary: 'Ошибка', detail: apiErrorDetail(e, 'Не удалось загрузить агентов'), life: 6000 });
   } finally {
     loadingAgents.value = false;
   }
@@ -430,8 +446,7 @@ const loadCommands = async (agentId) => {
     const res = await apiClient.get(`agents/${agentId}/commands/`);
     commands.value = Array.isArray(res.data) ? res.data : (res.data?.results || []);
   } catch (e) {
-    const detail = e?.response?.data?.detail || 'Не удалось загрузить команды агента';
-    toast.add({ severity: 'error', summary: 'Ошибка', detail, life: 4000 });
+    toast.add({ severity: 'error', summary: 'Ошибка', detail: apiErrorDetail(e, 'Не удалось загрузить команды агента'), life: 6000 });
   } finally {
     loadingCommands.value = false;
   }
@@ -451,8 +466,7 @@ const restartAgent = async () => {
     await loadAgents();
     await loadCommands(agentId);
   } catch (e) {
-    const detail = e?.response?.data?.detail || 'Не удалось создать команду перезапуска';
-    toast.add({ severity: 'error', summary: 'Ошибка', detail, life: 4000 });
+    toast.add({ severity: 'error', summary: 'Ошибка', detail: apiErrorDetail(e, 'Не удалось создать команду перезапуска'), life: 6000 });
   } finally {
     actionLoading.value.restart = false;
   }
@@ -471,8 +485,7 @@ const queueUpdate = async () => {
     await loadAgents();
     await loadCommands(agentId);
   } catch (e) {
-    const detail = e?.response?.data?.detail || 'Не удалось создать команду обновления';
-    toast.add({ severity: 'error', summary: 'Ошибка', detail, life: 4000 });
+    toast.add({ severity: 'error', summary: 'Ошибка', detail: apiErrorDetail(e, 'Не удалось создать команду обновления'), life: 6000 });
   } finally {
     actionLoading.value.update = false;
   }
@@ -491,8 +504,7 @@ const saveMetrics = async () => {
     await loadAgents();
     await loadCommands(agentId);
   } catch (e) {
-    const detail = e?.response?.data?.detail || 'Не удалось сохранить метрики';
-    toast.add({ severity: 'error', summary: 'Ошибка', detail, life: 4000 });
+    toast.add({ severity: 'error', summary: 'Ошибка', detail: apiErrorDetail(e, 'Не удалось сохранить метрики'), life: 6000 });
   } finally {
     actionLoading.value.metrics = false;
   }

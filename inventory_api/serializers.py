@@ -526,9 +526,9 @@ class AgentCommandSerializer(serializers.ModelSerializer):
 class ServiceAgentSerializer(serializers.ModelSerializer):
     device_name = serializers.CharField(source='device.name', read_only=True)
     device_serial = serializers.CharField(source='device.serial_number', read_only=True)
-    device_ip_address = serializers.CharField(source='device.ip_address', read_only=True)
-    device_location = serializers.CharField(source='device.location.name', read_only=True, allow_null=True)
-    device_type = serializers.CharField(source='device.device_type.name', read_only=True)
+    device_ip_address = serializers.SerializerMethodField()
+    device_location = serializers.SerializerMethodField()
+    device_type = serializers.SerializerMethodField()
     pending_commands_count = serializers.SerializerMethodField()
     latest_command = serializers.SerializerMethodField()
     health_state = serializers.SerializerMethodField()
@@ -548,6 +548,17 @@ class ServiceAgentSerializer(serializers.ModelSerializer):
 
     def get_pending_commands_count(self, obj):
         return obj.commands.filter(status__in=['pending', 'acknowledged', 'running']).count()
+
+    def get_device_ip_address(self, obj):
+        return str(getattr(obj.device, 'ip_address', '') or '')
+
+    def get_device_location(self, obj):
+        location = getattr(obj.device, 'location', None)
+        return getattr(location, 'name', '') or ''
+
+    def get_device_type(self, obj):
+        device_type = getattr(obj.device, 'device_type', None)
+        return getattr(device_type, 'name', '') or ''
 
     def get_latest_command(self, obj):
         command = obj.commands.order_by('-created_at').first()
