@@ -42,51 +42,24 @@ npm install
 npm run serve
 3) Агент (опционально)
 
-Папка агента теперь разделена:
-- agents\\ServerAgent (серверный агент метрик/Hyper-V)
-- agents\\PrintAgent (клиент печати)
-- agents\\ServerPrinterAgent (синхронизация принтеров)
+Агенты вынесены из основного проекта в отдельный репозиторий/папку:
+- локально: /home/zulixo/projects/tracker-agent
+- ожидаемый GitHub repo: tracker-agent или TechTrackerAgent
 
-Проверь config.ini или config.ini (где он лежит в твоей сборке), чтобы ApiUrl был вида http://<server>:8000/api/ и Token валиден.
-Запуск:
-cd C:\Users\mkv\Documents\Projects\TechTracker\agents\ServerAgent
-python agent_server.py
+В основном TechTracker остаются только управление токенами, вкладка `Настройки -> Инсталяторы` и загрузка установщиков из GitHub Releases репозитория агента.
 
-Синхронизация принтеров (отдельный агент):
-cd C:\Users\mkv\Documents\Projects\TechTracker\agents\ServerPrinterAgent
-python printer_agent.py
-Installer:
-- Папка: agents\\ServerPrinterAgent\\installer
-- Файл: server_printer_agent_installer.iss
-Если хочешь, могу сделать скрипты run-backend.ps1 и run-frontend.ps1, чтобы запуск был одной командой.
+Сборка агента выполняется отдельно на Windows:
+cd C:\path\to\tracker-agent
+build.bat
 
-Новые параметры агента:
-- RetentionDays (по умолчанию 365) — срок хранения сырых метрик
-- VmSyncInterval — частота обновления статуса Hyper-V ВМ
-- StorcliPath — путь до storcli64.exe или папки (например C:\Soft\storcli\Windows)
+После сборки .NET single-file установщик собирается отдельно:
+installer-dotnet\build-installer.bat
 
-Очистка сырых метрик (сервер):
-python manage.py purge_raw_metrics --default-days 365
+Итоговый релизный asset:
+TechTrackerAgentInstaller.exe
 
-Вычисление метрик уровня 2:
-python manage.py compute_derived_metrics
-
-Планировщик (Windows, раз в час):
-1) install-compute-metrics-task.ps1
-2) при необходимости удалить: uninstall-compute-metrics-task.ps1
-
-ServerAgent installer:
-- Папка: agents\\ServerAgent\\installer
-- Скрипт удаления на ПК: {app}\\remove_agent.ps1 (удаляет задачу автозапуска и папку)
-
-Встроенный auto-job для сетевого probe (без внешнего планировщика):
-- Запускается автоматически внутри backend-процесса Django.
-- Использует PostgreSQL advisory lock, чтобы не было дублей проверки при нескольких процессах.
-- Уважает interval_sec каждого NetworkPath.
-- Настройки через переменные окружения:
-  - NETWORK_PROBE_AUTOSTART=1
-  - NETWORK_PROBE_AUTO_INTERVAL_SEC=60
-  - NETWORK_PROBE_LOCK_KEY=4829137
+Документация по публикации релиза агента:
+/home/zulixo/projects/tracker-agent/docs/publish_and_integrate.md
 
 4) Рекомендованные библиотеки для прогноза (актуально)
 

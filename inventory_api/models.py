@@ -381,6 +381,112 @@ class AgentStatus(models.Model):
         ordering = ['-updated_at']
 
 
+class ServiceAgent(models.Model):
+    STATUS_CHOICES = [
+        ('online', 'Online'),
+        ('error', 'Error'),
+        ('offline', 'Offline'),
+        ('unknown', 'Unknown'),
+    ]
+
+    INSTALLATION_TYPE_CHOICES = [
+        ('service', 'Windows Service'),
+        ('legacy', 'Legacy'),
+    ]
+
+    UPDATE_STATUS_CHOICES = [
+        ('idle', 'Idle'),
+        ('pending', 'Pending'),
+        ('running', 'Running'),
+        ('success', 'Success'),
+        ('failed', 'Failed'),
+    ]
+
+    device = models.OneToOneField(Device, on_delete=models.CASCADE, related_name='service_agent')
+    name = models.CharField(max_length=200, default='TechTracker Agent')
+    agent_uid = models.CharField(max_length=100, unique=True, null=True, blank=True)
+    installation_type = models.CharField(max_length=20, choices=INSTALLATION_TYPE_CHOICES, default='service')
+    service_name = models.CharField(max_length=100, blank=True, default='TechTrackerAgent')
+    service_status = models.CharField(max_length=50, blank=True)
+    agent_version = models.CharField(max_length=50, blank=True)
+    host_name = models.CharField(max_length=200, blank=True)
+    os_name = models.CharField(max_length=200, blank=True)
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='unknown')
+    last_status_message = models.TextField(blank=True)
+    last_seen_at = models.DateTimeField(null=True, blank=True)
+    metrics_config = models.JSONField(default=dict, blank=True)
+    supported_metrics = models.JSONField(default=list, blank=True)
+    desired_version = models.CharField(max_length=50, blank=True)
+    last_update_status = models.CharField(max_length=20, choices=UPDATE_STATUS_CHOICES, default='idle')
+    last_update_started_at = models.DateTimeField(null=True, blank=True)
+    last_update_completed_at = models.DateTimeField(null=True, blank=True)
+    last_update_message = models.TextField(blank=True)
+    installed_at = models.DateTimeField(auto_now_add=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Сервисный агент"
+        verbose_name_plural = "Сервисные агенты"
+        ordering = ['-last_seen_at', 'device__name']
+        indexes = [
+            models.Index(fields=['status', '-last_seen_at']),
+            models.Index(fields=['service_name']),
+            models.Index(fields=['agent_version']),
+        ]
+
+    def __str__(self):
+        return f"{self.name} on {self.device}"
+
+
+class AgentCommand(models.Model):
+    COMMAND_CHOICES = [
+        ('restart', 'Restart'),
+        ('update', 'Update'),
+        ('set_metrics', 'Set metrics'),
+    ]
+
+    STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('acknowledged', 'Acknowledged'),
+        ('running', 'Running'),
+        ('success', 'Success'),
+        ('failed', 'Failed'),
+        ('cancelled', 'Cancelled'),
+    ]
+
+    agent = models.ForeignKey(ServiceAgent, on_delete=models.CASCADE, related_name='commands')
+    command = models.CharField(max_length=30, choices=COMMAND_CHOICES)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    payload = models.JSONField(default=dict, blank=True)
+    result_message = models.TextField(blank=True)
+    created_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='agent_commands_created',
+    )
+    acknowledged_at = models.DateTimeField(null=True, blank=True)
+    started_at = models.DateTimeField(null=True, blank=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Команда агента"
+        verbose_name_plural = "Команды агентов"
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['agent', 'status', 'created_at']),
+            models.Index(fields=['command', 'status', '-created_at']),
+        ]
+
+    def __str__(self):
+        return f"{self.command} -> {self.agent_id} ({self.status})"
+
+
 class DiagnosticReport(models.Model):
     SEVERITY_CHOICES = [
         ('low', 'Low'),

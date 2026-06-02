@@ -62,7 +62,7 @@ DEFAULT_PAGE_ACCESS_RULES = [
     },
     {
         "route_name": "AgentDiagnostics",
-        "label": "Диагностика агента",
+        "label": "Агенты",
         "section": "admin",
         "icon": "pi pi-shield",
         "order": 60,

@@ -18,7 +18,7 @@ from django.http import HttpResponse, StreamingHttpResponse, FileResponse
 from django.core.files.base import ContentFile
 from PIL import Image
 
-from django.shortcuts import render
+from django.shortcuts import render, get_object_or_404
 from rest_framework import viewsets, status, filters
 from rest_framework.response import Response
 from rest_framework.decorators import action, api_view, permission_classes
@@ -40,7 +40,7 @@ from .models import (
     Device, DeviceType, Location, UserProfile,
     ComputerSpecs, PrinterScannerSpecs, NetworkDeviceSpecs,
     Cartridge, CartridgeLog, Log, Metric, PrintJob,
-    MonitoringSetting, RawMetric, TrackedVM, ComputedMetric, AgentStatus, DiagnosticReport,
+    MonitoringSetting, RawMetric, TrackedVM, ComputedMetric, AgentStatus, ServiceAgent, AgentCommand, DiagnosticReport,
     NetworkPath, NetworkOutage, NetworkAlertRule,
     NetworkMapSnapshot, ForecastRun, ForecastPoint, StateEstimate, StateInferenceProfile, LSTMRemoteQueueJob,
     DecisionAction, DecisionCriterion, DecisionPolicy, DecisionPolicyLoss, DecisionRun,
@@ -55,6 +55,8 @@ from .serializers import (
     ManagedGroupSerializer, ManagedUserSerializer, PageAccessRuleSerializer, PermissionSerializer,
     MetricSerializer, PrintJobSerializer, RawMetricSerializer, RawMetricIngestSerializer,
     TrackedVMSerializer, TrackedVMSyncSerializer, ComputedMetricSerializer, AgentStatusSerializer, AgentStatusReportSerializer,
+    ServiceAgentSerializer, AgentCommandSerializer, AgentMetricsConfigSerializer, AgentRestartRequestSerializer,
+    AgentUpdateRequestSerializer, AgentCommandResultSerializer,
     DiagnosticReportSerializer, DiagnosticRunSerializer, NetworkPathSerializer, NetworkOutageSerializer,
     NetworkAlertRuleSerializer, NetworkMapSnapshotSerializer, NetworkMapSnapshotDetailSerializer,
     ForecastRunSerializer, ForecastPointSerializer, StateEstimateSerializer, StateInferenceProfileSerializer, LSTMRemoteQueueJobSerializer,
@@ -64,6 +66,7 @@ from .serializers import (
     ApplicationUpdateJobSerializer,
 )
 from .permissions import PrintJobPermission, PrinterAgentPermission, MetricsAgentPermission, VMStatusAgentPermission, AdminGroupPermission
+from .agent_catalog import AGENT_METRIC_TASKS, AGENT_METRIC_TASK_NAMES, default_agent_metrics_config
 from .diagnostics import generate_diagnostic_report
 from .network_probe import run_network_probe
 from .network_discovery import scan_network, suggest_local_cidrs
@@ -81,7 +84,7 @@ from .page_access import ensure_default_page_access_rules
 def health_check(request):
     return Response({"status": "ok", "service": "techtracker_backend"})
 from .forecasting.demo_seed import seed_demo_forecasts
-from .release_management import check_for_update, get_current_release_info, launch_update_worker
+from .release_management import compare_versions, check_agent_installer_release, check_for_update, get_current_release_info, launch_update_worker
 from django.utils import timezone
 from django.utils.dateparse import parse_date, parse_datetime
 from datetime import timedelta, datetime
@@ -968,6 +971,130 @@ class MetricViewSet(viewsets.ModelViewSet):
     # но пока оставим стандартную.
 
 
+def _normalize_agent_metric_names(value):
+    known = set(AGENT_METRIC_TASK_NAMES)
+    names = []
+    if not isinstance(value, list):
+        return []
+    for item in value:
+        name = item.get('name') if isinstance(item, dict) else item
+        name = str(name or '').strip()
+        if name and name in known and name not in names:
+            names.append(name)
+    return names
+
+
+def _normalize_agent_metrics_config(value=None, existing=None):
+    config = dict(existing) if isinstance(existing, dict) else default_agent_metrics_config()
+    if isinstance(value, dict):
+        config.update(value)
+        raw_enabled = value.get('enabled_tasks')
+    elif isinstance(value, list):
+        raw_enabled = value
+    else:
+        raw_enabled = config.get('enabled_tasks')
+
+    enabled = _normalize_agent_metric_names(raw_enabled)
+    if not enabled and raw_enabled in (None, ''):
+        enabled = list(AGENT_METRIC_TASK_NAMES)
+    config['enabled_tasks'] = enabled
+    return config
+
+
+def _normalize_agent_supported_metrics(value=None):
+    names = _normalize_agent_metric_names(value)
+    return names or list(AGENT_METRIC_TASK_NAMES)
+
+
+def _get_or_create_agent_device(serial, payload=None):
+    serial = str(serial or '').strip()
+    if not serial:
+        return None
+
+    device = Device.objects.filter(serial_number=serial).first()
+    if device:
+        return device
+
+    payload = payload or {}
+    device_info = payload.get('device_info') if isinstance(payload.get('device_info'), dict) else None
+    if device_info:
+        device = _create_device_from_info(device_info)
+        if device:
+            return device
+
+    name = (
+        (device_info or {}).get('name')
+        or payload.get('host_name')
+        or serial
+    )
+    return Device.objects.create(
+        name=str(name).strip() or serial,
+        serial_number=serial,
+        device_type=_get_pc_device_type(),
+        status='active',
+        ip_address=_normalize_ip((device_info or {}).get('ip_address') or payload.get('ip_address') or ''),
+        mac_address=((device_info or {}).get('mac_address') or '').strip() or None,
+    )
+
+
+def _upsert_service_agent(device, payload=None, *, status_value='ok', message='', touch_status=True):
+    payload = payload or {}
+    device_info = payload.get('device_info') if isinstance(payload.get('device_info'), dict) else {}
+    now = timezone.now()
+    agent_status = 'error' if status_value == 'error' else 'online'
+    service_name = (payload.get('service_name') or 'TechTrackerAgent').strip()
+    host_name = (payload.get('host_name') or device_info.get('name') or '').strip()
+    ip_address = _normalize_ip(payload.get('ip_address') or device_info.get('ip_address') or '')
+
+    agent, _ = ServiceAgent.objects.get_or_create(
+        device=device,
+        defaults={
+            'name': 'TechTracker Agent',
+            'installation_type': 'service',
+            'service_name': service_name,
+            'metrics_config': default_agent_metrics_config(),
+            'supported_metrics': list(AGENT_METRIC_TASK_NAMES),
+        },
+    )
+    agent.status = agent_status
+    agent.last_seen_at = now
+    if touch_status or message:
+        agent.last_status_message = message or ''
+    if service_name:
+        agent.service_name = service_name
+    if payload.get('service_status'):
+        agent.service_status = str(payload.get('service_status') or '').strip()
+    if payload.get('agent_version'):
+        agent.agent_version = str(payload.get('agent_version') or '').strip()
+        if (
+            agent.desired_version
+            and agent.last_update_status in ('pending', 'running', 'success')
+            and compare_versions(agent.agent_version, agent.desired_version) >= 0
+        ):
+            agent.last_update_status = 'success'
+            agent.last_update_completed_at = now
+            agent.last_update_message = f"Агент подтвердил версию {agent.agent_version}."
+    if host_name:
+        agent.host_name = host_name
+    if payload.get('os_name'):
+        agent.os_name = str(payload.get('os_name') or '').strip()
+    if ip_address:
+        agent.ip_address = ip_address
+    agent.metrics_config = _normalize_agent_metrics_config(payload.get('metrics_config'), agent.metrics_config)
+    agent.supported_metrics = _normalize_agent_supported_metrics(payload.get('supported_metrics') or agent.supported_metrics)
+    agent.save()
+    return agent
+
+
+def _queue_agent_command(agent, command, payload, user=None):
+    return AgentCommand.objects.create(
+        agent=agent,
+        command=command,
+        payload=payload or {},
+        created_by=user if user and user.is_authenticated else None,
+    )
+
+
 class RawMetricViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = RawMetric.objects.all()
     serializer_class = RawMetricSerializer
@@ -1033,6 +1160,13 @@ class RawMetricViewSet(viewsets.ReadOnlyModelViewSet):
                 {"detail": f"Device with serial number '{serial}' not found."},
                 status=status.HTTP_400_BAD_REQUEST
             )
+        _upsert_service_agent(
+            device,
+            {'device_info': device_info or {}},
+            status_value='ok',
+            message='',
+            touch_status=False,
+        )
 
         setting, _ = MonitoringSetting.objects.get_or_create(device=device)
         if retention_days and setting.retention_days != retention_days:
@@ -1082,7 +1216,7 @@ class ComputedMetricViewSet(viewsets.ReadOnlyModelViewSet):
 
 
 class AgentStatusViewSet(viewsets.ReadOnlyModelViewSet):
-    queryset = AgentStatus.objects.all()
+    queryset = AgentStatus.objects.select_related('device').all()
     serializer_class = AgentStatusSerializer
     permission_classes = [IsAuthenticated, DjangoModelPermissions]
 
@@ -1100,7 +1234,7 @@ class AgentStatusViewSet(viewsets.ReadOnlyModelViewSet):
         status_value = serializer.validated_data['status']
         message = serializer.validated_data.get('message', '')
 
-        device = Device.objects.filter(serial_number=serial).first()
+        device = _get_or_create_agent_device(serial, serializer.validated_data)
         if not device:
             return Response({"detail": "Device not found"}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -1111,7 +1245,200 @@ class AgentStatusViewSet(viewsets.ReadOnlyModelViewSet):
                 'message': message or ''
             }
         )
+        _upsert_service_agent(
+            device,
+            serializer.validated_data,
+            status_value=status_value,
+            message=message,
+            touch_status=True,
+        )
         return Response({"detail": "ok"}, status=status.HTTP_200_OK)
+
+
+class ServiceAgentViewSet(viewsets.ReadOnlyModelViewSet):
+    queryset = (
+        ServiceAgent.objects
+        .select_related('device', 'device__location', 'device__device_type')
+        .all()
+    )
+    serializer_class = ServiceAgentSerializer
+    permission_classes = [AdminGroupPermission]
+
+    filter_backends = [DjangoFilterBackend, filters.OrderingFilter, filters.SearchFilter]
+    filterset_fields = ['device', 'status', 'service_name']
+    search_fields = ['name', 'service_name', 'host_name', 'device__name', 'device__serial_number']
+    ordering_fields = ['last_seen_at', 'updated_at', 'status', 'agent_version']
+    ordering = ['-last_seen_at']
+
+    @action(detail=False, methods=['get'], url_path='metric-catalog')
+    def metric_catalog(self, request):
+        return Response({"metrics": AGENT_METRIC_TASKS}, status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=['post'], permission_classes=[MetricsAgentPermission])
+    def checkin(self, request):
+        serializer = AgentStatusReportSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        serial = serializer.validated_data['serial_number']
+        device = _get_or_create_agent_device(serial, serializer.validated_data)
+        if not device:
+            return Response({"detail": "Device not found"}, status=status.HTTP_400_BAD_REQUEST)
+
+        AgentStatus.objects.update_or_create(
+            device=device,
+            defaults={
+                'status': serializer.validated_data['status'],
+                'message': serializer.validated_data.get('message', '') or '',
+            },
+        )
+        agent = _upsert_service_agent(
+            device,
+            serializer.validated_data,
+            status_value=serializer.validated_data['status'],
+            message=serializer.validated_data.get('message', ''),
+            touch_status=True,
+        )
+
+        next_command = None
+        with transaction.atomic():
+            command = (
+                AgentCommand.objects
+                .select_for_update()
+                .filter(agent=agent, status='pending')
+                .order_by('created_at')
+                .first()
+            )
+            if command:
+                now = timezone.now()
+                command.status = 'acknowledged'
+                command.acknowledged_at = now
+                command.save(update_fields=['status', 'acknowledged_at', 'updated_at'])
+                next_command = command
+
+        payload = {
+            "detail": "ok",
+            "agent": ServiceAgentSerializer(agent).data,
+            "desired_metrics_config": agent.metrics_config,
+            "command": AgentCommandSerializer(next_command).data if next_command else None,
+        }
+        return Response(payload, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['get'])
+    def commands(self, request, pk=None):
+        agent = self.get_object()
+        qs = agent.commands.order_by('-created_at')[:50]
+        return Response(AgentCommandSerializer(qs, many=True).data, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['post'])
+    def restart(self, request, pk=None):
+        agent = self.get_object()
+        serializer = AgentRestartRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        command = _queue_agent_command(
+            agent,
+            'restart',
+            {'reason': serializer.validated_data.get('reason', '')},
+            request.user,
+        )
+        return Response(AgentCommandSerializer(command).data, status=status.HTTP_202_ACCEPTED)
+
+    @action(detail=True, methods=['post'], url_path='update')
+    def queue_update(self, request, pk=None):
+        agent = self.get_object()
+        serializer = AgentUpdateRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        release_payload = None
+        installer_url = serializer.validated_data.get('installer_url', '')
+        target_version = serializer.validated_data.get('target_version', '')
+        if not installer_url or not target_version:
+            release_payload = check_agent_installer_release()
+            if not installer_url:
+                installer_url = release_payload.get('download_url') or ''
+            if not target_version:
+                target_version = release_payload.get('latest_version') or ''
+        if not installer_url:
+            detail = "URL установщика не указан и последний release агента не найден."
+            if release_payload and release_payload.get('detail'):
+                detail += f" {release_payload.get('detail')}"
+            return Response({"detail": detail}, status=status.HTTP_400_BAD_REQUEST)
+        payload = {
+            'target_version': target_version,
+            'installer_url': installer_url,
+            'notes': serializer.validated_data.get('notes', ''),
+        }
+        command = _queue_agent_command(agent, 'update', payload, request.user)
+        agent.desired_version = payload['target_version'] or agent.desired_version
+        agent.last_update_status = 'pending'
+        agent.last_update_message = 'Команда обновления поставлена в очередь.'
+        agent.save(update_fields=['desired_version', 'last_update_status', 'last_update_message', 'updated_at'])
+        return Response(AgentCommandSerializer(command).data, status=status.HTTP_202_ACCEPTED)
+
+    @action(detail=True, methods=['post'], url_path='set-metrics')
+    def set_metrics(self, request, pk=None):
+        agent = self.get_object()
+        serializer = AgentMetricsConfigSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        metrics_config = _normalize_agent_metrics_config(serializer.validated_data, agent.metrics_config)
+        agent.metrics_config = metrics_config
+        agent.save(update_fields=['metrics_config', 'updated_at'])
+        command = _queue_agent_command(
+            agent,
+            'set_metrics',
+            {'metrics_config': metrics_config},
+            request.user,
+        )
+        return Response(
+            {
+                "agent": ServiceAgentSerializer(agent).data,
+                "command": AgentCommandSerializer(command).data,
+            },
+            status=status.HTTP_202_ACCEPTED,
+        )
+
+    @action(
+        detail=False,
+        methods=['post'],
+        url_path=r'commands/(?P<command_id>\d+)/result',
+        permission_classes=[MetricsAgentPermission],
+    )
+    def command_result(self, request, command_id=None):
+        serializer = AgentCommandResultSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        serial = serializer.validated_data['serial_number']
+        command = get_object_or_404(
+            AgentCommand.objects.select_related('agent', 'agent__device'),
+            id=command_id,
+            agent__device__serial_number=serial,
+        )
+        result_status = serializer.validated_data['status']
+        now = timezone.now()
+        command.status = result_status
+        command.result_message = serializer.validated_data.get('result_message', '') or ''
+        if result_status == 'running' and not command.started_at:
+            command.started_at = now
+        if result_status in ('success', 'failed'):
+            command.finished_at = now
+        command.save()
+
+        agent = command.agent
+        if command.command == 'update':
+            if result_status == 'running':
+                agent.last_update_status = 'running'
+                agent.last_update_started_at = command.started_at or now
+            elif result_status == 'success':
+                agent.last_update_status = 'success'
+                agent.last_update_completed_at = now
+            elif result_status == 'failed':
+                agent.last_update_status = 'failed'
+                agent.last_update_completed_at = now
+            if command.result_message:
+                agent.last_update_message = command.result_message
+            agent.save(update_fields=[
+                'last_update_status', 'last_update_started_at', 'last_update_completed_at',
+                'last_update_message', 'updated_at',
+            ])
+
+        return Response(AgentCommandSerializer(command).data, status=status.HTTP_200_OK)
 
 
 class DiagnosticReportViewSet(viewsets.ReadOnlyModelViewSet):
@@ -2784,6 +3111,8 @@ class MonitoringSystemViewSet(viewsets.ViewSet):
             "raw_metrics": RawMetric.objects.count(),
             "computed_metrics": ComputedMetric.objects.count(),
             "agent_status_rows": AgentStatus.objects.count(),
+            "service_agents": ServiceAgent.objects.count(),
+            "agent_commands": AgentCommand.objects.count(),
             "forecast_runs": ForecastRun.objects.count(),
             "forecast_points": ForecastPoint.objects.count(),
             "state_estimates": StateEstimate.objects.count(),
@@ -3646,6 +3975,11 @@ class ApplicationUpdateViewSet(viewsets.ReadOnlyModelViewSet):
             return Response({"detail": f"Не удалось проверить обновления: {exc}"}, status=status.HTTP_400_BAD_REQUEST)
         payload["last_job"] = self._last_job_payload()
         return Response(payload, status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=["get"], permission_classes=[AdminGroupPermission], url_path="agent-installer")
+    def agent_installer(self, request):
+        release_url = str(request.query_params.get("release_url") or "").strip() or None
+        return Response(check_agent_installer_release(release_url=release_url), status=status.HTTP_200_OK)
 
     @action(detail=False, methods=["post"], permission_classes=[AdminGroupPermission], url_path="start-update")
     def start_update(self, request):

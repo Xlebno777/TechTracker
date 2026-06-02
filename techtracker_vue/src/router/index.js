@@ -104,10 +104,14 @@ const routes = [
     meta: { requiresAuth: true, requiresAdmin: true }
   },
   {
-    path: '/agent-diagnostics',
+    path: '/agents',
     name: 'AgentDiagnostics',
     component: AgentDiagnostics,
     meta: { requiresAuth: true, requiresAdmin: true }
+  },
+  {
+    path: '/agent-diagnostics',
+    redirect: '/agents'
   },
   {
     path: '/monitoring-forecast',

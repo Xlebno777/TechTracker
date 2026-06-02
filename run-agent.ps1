@@ -1,18 +1,5 @@
-$ErrorActionPreference = 'Stop'
-
-$root = Split-Path -Parent $MyInvocation.MyCommand.Path
-$venvActivate = Join-Path $root '.venv\Scripts\Activate.ps1'
-$agentDir = Join-Path $root 'agents\ServerAgent'
-$agentPy = Join-Path $agentDir 'agent_server.py'
-
-if (!(Test-Path $venvActivate)) {
-  Write-Error "Missing .venv. Create it with: python -m venv .venv"
-}
-if (!(Test-Path $agentPy)) {
-  Write-Error "Missing agents/ServerAgent/agent_server.py"
-}
-
-. $venvActivate
-
-Set-Location $agentDir
-python agent_server.py
+Write-Host "Агенты TechTracker вынесены в отдельный проект."
+Write-Host "Локальный путь: /home/zulixo/projects/tracker-agent"
+Write-Host "На Windows используйте отдельный репозиторий tracker-agent и сборку build.bat."
+Write-Host "Документация: tracker-agent/docs/publish_and_integrate.md"
+exit 1

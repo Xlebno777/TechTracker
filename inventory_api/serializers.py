@@ -2,7 +2,8 @@ from rest_framework import serializers
 from .models import (
     Device, DeviceType, Location, UserProfile, ComputerSpecs,
     PrinterScannerSpecs, NetworkDeviceSpecs, Cartridge, CartridgeLog,
-    Log, Metric, PrintJob, MonitoringSetting, RawMetric, TrackedVM, ComputedMetric, AgentStatus, DiagnosticReport,
+    Log, Metric, PrintJob, MonitoringSetting, RawMetric, TrackedVM, ComputedMetric, AgentStatus, ServiceAgent,
+    AgentCommand, DiagnosticReport,
     NetworkPath, NetworkOutage, NetworkAlertRule,
     NetworkMapSnapshot, NetworkMapNode, NetworkMapEdge,
     ForecastRun, ForecastPoint, StateEstimate, StateInferenceProfile, LSTMRemoteQueueJob,
@@ -11,8 +12,10 @@ from .models import (
     DecisionRunUtility, DecisionFeedback, ApplicationUpdateJob, PageAccessRule,
 )
 from django.utils import timezone
+from datetime import timedelta
 from django.contrib.auth.models import Permission, User, Group
 from rest_framework.authtoken.models import Token
+from .agent_catalog import AGENT_METRIC_TASK_NAMES
 
 # --- Serializers для справочников ---
 class DeviceTypeSerializer(serializers.ModelSerializer):
@@ -496,6 +499,110 @@ class AgentStatusReportSerializer(serializers.Serializer):
     serial_number = serializers.CharField()
     status = serializers.ChoiceField(choices=['ok', 'error'])
     message = serializers.CharField(required=False, allow_blank=True, default='')
+    agent_version = serializers.CharField(required=False, allow_blank=True, default='')
+    service_name = serializers.CharField(required=False, allow_blank=True, default='TechTrackerAgent')
+    service_status = serializers.CharField(required=False, allow_blank=True, default='')
+    host_name = serializers.CharField(required=False, allow_blank=True, default='')
+    os_name = serializers.CharField(required=False, allow_blank=True, default='')
+    ip_address = serializers.CharField(required=False, allow_blank=True, default='')
+    metrics_config = serializers.JSONField(required=False)
+    supported_metrics = serializers.JSONField(required=False)
+    device_info = serializers.JSONField(required=False)
+
+
+class AgentCommandSerializer(serializers.ModelSerializer):
+    created_by_username = serializers.CharField(source='created_by.username', read_only=True)
+
+    class Meta:
+        model = AgentCommand
+        fields = [
+            'id', 'agent', 'command', 'status', 'payload', 'result_message',
+            'created_by', 'created_by_username', 'acknowledged_at', 'started_at',
+            'finished_at', 'created_at', 'updated_at',
+        ]
+        read_only_fields = fields
+
+
+class ServiceAgentSerializer(serializers.ModelSerializer):
+    device_name = serializers.CharField(source='device.name', read_only=True)
+    device_serial = serializers.CharField(source='device.serial_number', read_only=True)
+    device_ip_address = serializers.CharField(source='device.ip_address', read_only=True)
+    device_location = serializers.CharField(source='device.location.name', read_only=True, allow_null=True)
+    device_type = serializers.CharField(source='device.device_type.name', read_only=True)
+    pending_commands_count = serializers.SerializerMethodField()
+    latest_command = serializers.SerializerMethodField()
+    health_state = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ServiceAgent
+        fields = [
+            'id', 'device', 'device_name', 'device_serial', 'device_ip_address',
+            'device_location', 'device_type', 'name', 'agent_uid', 'installation_type',
+            'service_name', 'service_status', 'agent_version', 'host_name', 'os_name',
+            'ip_address', 'status', 'health_state', 'last_status_message', 'last_seen_at',
+            'metrics_config', 'supported_metrics', 'desired_version', 'last_update_status',
+            'last_update_started_at', 'last_update_completed_at', 'last_update_message',
+            'pending_commands_count', 'latest_command', 'installed_at', 'created_at', 'updated_at',
+        ]
+        read_only_fields = fields
+
+    def get_pending_commands_count(self, obj):
+        return obj.commands.filter(status__in=['pending', 'acknowledged', 'running']).count()
+
+    def get_latest_command(self, obj):
+        command = obj.commands.order_by('-created_at').first()
+        if not command:
+            return None
+        return AgentCommandSerializer(command).data
+
+    def get_health_state(self, obj):
+        if obj.status == 'error':
+            return 'error'
+        if not obj.last_seen_at:
+            return obj.status or 'unknown'
+        if timezone.now() - obj.last_seen_at > timedelta(minutes=10):
+            return 'offline'
+        return obj.status or 'unknown'
+
+
+class AgentMetricsConfigSerializer(serializers.Serializer):
+    enabled_tasks = serializers.ListField(
+        child=serializers.CharField(),
+        allow_empty=True,
+    )
+
+    def validate_enabled_tasks(self, value):
+        known = set(AGENT_METRIC_TASK_NAMES)
+        cleaned = []
+        unknown = []
+        for item in value:
+            name = str(item).strip()
+            if not name:
+                continue
+            if name not in known:
+                unknown.append(name)
+                continue
+            if name not in cleaned:
+                cleaned.append(name)
+        if unknown:
+            raise serializers.ValidationError(f"Unknown metric tasks: {', '.join(unknown)}")
+        return cleaned
+
+
+class AgentRestartRequestSerializer(serializers.Serializer):
+    reason = serializers.CharField(required=False, allow_blank=True, default='')
+
+
+class AgentUpdateRequestSerializer(serializers.Serializer):
+    target_version = serializers.CharField(required=False, allow_blank=True, default='')
+    installer_url = serializers.URLField(required=False, allow_blank=True, default='')
+    notes = serializers.CharField(required=False, allow_blank=True, default='')
+
+
+class AgentCommandResultSerializer(serializers.Serializer):
+    serial_number = serializers.CharField()
+    status = serializers.ChoiceField(choices=['running', 'success', 'failed'])
+    result_message = serializers.CharField(required=False, allow_blank=True, default='')
 
 
 class DiagnosticReportSerializer(serializers.ModelSerializer):

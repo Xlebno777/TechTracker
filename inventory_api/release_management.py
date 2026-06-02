@@ -4,6 +4,7 @@ import platform
 import subprocess
 import sys
 from pathlib import Path
+from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
 from django.conf import settings
@@ -13,6 +14,8 @@ from .models import ApplicationUpdateJob
 
 
 DEFAULT_RELEASE_MANIFEST_URL = "https://api.github.com/repos/Xlebno777/TechTracker/releases/latest"
+DEFAULT_AGENT_RELEASE_URL = "https://api.github.com/repos/Xlebno777/tracker-agent/releases/latest"
+DEFAULT_AGENT_INSTALLER_ASSET = "TechTrackerAgentInstaller.exe"
 
 
 def _safe_text(value, default=""):
@@ -20,7 +23,7 @@ def _safe_text(value, default=""):
     return text or default
 
 
-def _read_json_from_url(url: str, timeout: float = 10.0):
+def _read_json_from_url(url: str, timeout: float = 10.0, github_token: str | None = None):
     raw_url = _safe_text(url)
     if not raw_url:
         raise ValueError("APP_RELEASE_MANIFEST_URL is not configured")
@@ -38,7 +41,12 @@ def _read_json_from_url(url: str, timeout: float = 10.0):
             if fallback.exists():
                 path = fallback
         return json.loads(path.read_text(encoding="utf-8"))
-    req = Request(raw_url, headers={"Accept": "application/json"})
+    headers = {"Accept": "application/json", "User-Agent": "TechTracker"}
+    host = urlsplit(raw_url).netloc.lower()
+    if github_token and (host == "github.com" or host.endswith(".github.com")):
+        headers["Authorization"] = f"Bearer {github_token}"
+        headers["X-GitHub-Api-Version"] = "2022-11-28"
+    req = Request(raw_url, headers=headers)
     with urlopen(req, timeout=timeout) as response:
         return json.loads(response.read().decode("utf-8"))
 
@@ -136,7 +144,8 @@ def normalize_manifest(raw_manifest: dict) -> dict:
 def check_for_update(manifest_url: str | None = None) -> dict:
     current = get_current_release_info()
     url = _safe_text(manifest_url, current["manifest_url"])
-    manifest = normalize_manifest(_read_json_from_url(url))
+    github_token = os.environ.get("APP_RELEASE_GITHUB_TOKEN") or os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+    manifest = normalize_manifest(_read_json_from_url(url, github_token=github_token))
     latest_version = manifest["version"]
     update_available = bool(latest_version) and compare_versions(current["current_version"], latest_version) < 0
     return {
@@ -145,6 +154,68 @@ def check_for_update(manifest_url: str | None = None) -> dict:
         "update_available": update_available,
         "manifest": manifest,
     }
+
+
+def check_agent_installer_release(release_url: str | None = None) -> dict:
+    configured_url = os.environ.get("AGENT_RELEASE_URL") or os.environ.get("AGENT_RELEASE_MANIFEST_URL")
+    url = _safe_text(release_url, configured_url or DEFAULT_AGENT_RELEASE_URL)
+    asset_name = _safe_text(os.environ.get("AGENT_INSTALLER_ASSET_NAME"), DEFAULT_AGENT_INSTALLER_ASSET)
+    payload = {
+        "release_url": url,
+        "connected": False,
+        "status": "error",
+        "latest_version": "",
+        "tag_name": "",
+        "published_at": "",
+        "html_url": "",
+        "installer_asset_name": asset_name,
+        "download_url": "",
+        "size_bytes": 0,
+        "detail": "",
+    }
+    try:
+        github_token = os.environ.get("AGENT_RELEASE_GITHUB_TOKEN") or os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+        release = _read_json_from_url(url, github_token=github_token)
+    except Exception as exc:
+        payload["detail"] = str(exc)
+        return payload
+
+    assets = release.get("assets") if isinstance(release.get("assets"), list) else []
+    installer_asset = next(
+        (
+            asset for asset in assets
+            if isinstance(asset, dict) and str(asset.get("name") or "") == asset_name
+        ),
+        None,
+    )
+    if installer_asset is None:
+        installer_asset = next(
+            (
+                asset for asset in assets
+                if isinstance(asset, dict)
+                and str(asset.get("name") or "").lower().endswith(".exe")
+                and "installer" in str(asset.get("name") or "").lower()
+            ),
+            None,
+        )
+
+    tag_name = _safe_text(release.get("tag_name") or release.get("tag") or release.get("name"))
+    payload.update({
+        "connected": True,
+        "status": "ok" if installer_asset else "missing_asset",
+        "latest_version": tag_name.lstrip("v"),
+        "tag_name": tag_name,
+        "published_at": _safe_text(release.get("published_at") or release.get("created_at")),
+        "html_url": _safe_text(release.get("html_url")),
+        "detail": "" if installer_asset else f"В последнем release не найден asset {asset_name}.",
+    })
+    if installer_asset:
+        payload.update({
+            "installer_asset_name": _safe_text(installer_asset.get("name"), asset_name),
+            "download_url": _safe_text(installer_asset.get("browser_download_url") or installer_asset.get("url")),
+            "size_bytes": int(installer_asset.get("size") or 0),
+        })
+    return payload
 
 
 def append_job_log(job: ApplicationUpdateJob, message: str):

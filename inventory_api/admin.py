@@ -5,7 +5,7 @@ from import_export.admin import ImportExportModelAdmin
 from .models import (
     Device, DeviceType, Location, UserProfile, ComputerSpecs, PrinterScannerSpecs,
     NetworkDeviceSpecs, Cartridge, CartridgeLog, Log, Metric,
-    MonitoringSetting, RawMetric, TrackedVM, ComputedMetric, AgentStatus, DiagnosticReport,
+    MonitoringSetting, RawMetric, TrackedVM, ComputedMetric, AgentStatus, ServiceAgent, AgentCommand, DiagnosticReport,
     NetworkPath, NetworkOutage, NetworkAlertRule,
     NetworkMapSnapshot, NetworkMapNode, NetworkMapEdge
 )
@@ -177,6 +177,22 @@ class AgentStatusAdmin(admin.ModelAdmin):
     list_display = ('device', 'status', 'updated_at')
     list_filter = ('status', 'device')
     search_fields = ('device__name', 'device__serial_number', 'message')
+
+
+@admin.register(ServiceAgent)
+class ServiceAgentAdmin(admin.ModelAdmin):
+    list_display = ('device', 'service_name', 'status', 'agent_version', 'last_seen_at', 'last_update_status')
+    list_filter = ('status', 'service_name', 'last_update_status')
+    search_fields = ('device__name', 'device__serial_number', 'host_name', 'service_name')
+    readonly_fields = ('installed_at', 'created_at', 'updated_at')
+
+
+@admin.register(AgentCommand)
+class AgentCommandAdmin(admin.ModelAdmin):
+    list_display = ('agent', 'command', 'status', 'created_by', 'created_at', 'finished_at')
+    list_filter = ('command', 'status', 'created_at')
+    search_fields = ('agent__device__name', 'agent__device__serial_number', 'result_message')
+    readonly_fields = ('created_at', 'updated_at', 'acknowledged_at', 'started_at', 'finished_at')
 
 
 @admin.register(DiagnosticReport)

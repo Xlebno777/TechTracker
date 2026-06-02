@@ -44,47 +44,60 @@
         <section v-else-if="activeTabKey === 'installers'" class="installers-panel">
           <div class="installers-hero">
             <div>
-              <span class="installers-kicker">Подготовлено под релизы</span>
-              <h3>Инсталяторы TechTracker</h3>
+              <span class="installers-kicker">GitHub Releases</span>
+              <h3>Инсталятор агента</h3>
               <p>
-                Здесь будут отображаться установочные пакеты, которые прикреплены к обновлениям:
-                серверный пакет Windows, пакет LSTM-ПК и будущие агенты сбора метрик.
+                Один актуальный установщик агента берется из последнего release репозитория tracker-agent.
               </p>
             </div>
-            <span class="installers-badge">Заглушка</span>
+            <span :class="['installers-badge', `installers-badge--${agentInstallerStatusKind}`]">
+              {{ agentInstallerStatusLabel }}
+            </span>
           </div>
 
-          <div class="installers-grid">
-            <article
-              v-for="installer in installerPlaceholders"
-              :key="installer.key"
-              class="installer-card"
-            >
-              <div class="installer-card__icon">
-                <i :class="installer.icon" aria-hidden="true"></i>
+          <article class="installer-card installer-card--single">
+            <div class="installer-card__icon">
+              <i class="pi pi-desktop" aria-hidden="true"></i>
+            </div>
+            <div class="installer-card__body">
+              <div class="installer-card__head">
+                <strong>TechTracker Agent Installer</strong>
+                <span :class="['installer-status', `installer-status--${agentInstallerStatusKind}`]">
+                  {{ agentInstallerStatusLabel }}
+                </span>
               </div>
-              <div class="installer-card__body">
-                <div class="installer-card__head">
-                  <strong>{{ installer.title }}</strong>
-                  <span :class="['installer-status', `installer-status--${installer.statusKind}`]">
-                    {{ installer.status }}
-                  </span>
+              <div class="installer-facts">
+                <div>
+                  <span>Версия release</span>
+                  <strong>{{ agentInstaller?.latest_version || '-' }}</strong>
                 </div>
-                <p>{{ installer.description }}</p>
-                <small>{{ installer.source }}</small>
+                <div>
+                  <span>Asset</span>
+                  <strong>{{ agentInstaller?.installer_asset_name || '-' }}</strong>
+                </div>
+                <div>
+                  <span>Размер</span>
+                  <strong>{{ formatBytes(agentInstaller?.size_bytes) }}</strong>
+                </div>
+                <div>
+                  <span>Опубликован</span>
+                  <strong>{{ formatDateTime(agentInstaller?.published_at) }}</strong>
+                </div>
               </div>
-              <button class="installer-download" type="button" disabled>
+              <small class="installer-source">{{ agentInstaller?.release_url || agentInstallerDefaultUrl }}</small>
+              <p v-if="agentInstaller?.detail" class="installer-error">{{ agentInstaller.detail }}</p>
+            </div>
+            <div class="installer-actions">
+              <button class="installer-download" type="button" :disabled="agentInstallerLoading" @click="loadAgentInstaller">
+                <i class="pi pi-refresh" aria-hidden="true"></i>
+                Проверить
+              </button>
+              <button class="installer-download installer-download--primary" type="button" :disabled="!agentInstaller?.download_url" @click="downloadAgentInstaller">
                 <i class="pi pi-download" aria-hidden="true"></i>
                 Скачать
               </button>
-            </article>
-          </div>
-
-          <div class="installers-note">
-            <strong>Следующий шаг:</strong>
-            подключить чтение assets из GitHub Releases, чтобы эта вкладка автоматически показывала
-            доступные ZIP/MSI/архивы и позволяла скачать нужный инсталятор из интерфейса.
-          </div>
+            </div>
+          </article>
         </section>
         <MonitoringSystemSettings v-else embedded mode="history" />
       </div>
@@ -99,6 +112,7 @@ import PageHeader from '@/components/ui/PageHeader.vue';
 import MonitoringSystemSettings from '@/components/MonitoringSystemSettings.vue';
 import MonitoringStateSettings from '@/components/MonitoringStateSettings.vue';
 import MonitoringDecisionSettings from '@/components/MonitoringDecisionSettings.vue';
+import apiClient from '@/api';
 
 const route = useRoute();
 const router = useRouter();
@@ -132,8 +146,8 @@ const tabs = [
     key: 'installers',
     label: 'Инсталяторы',
     icon: 'pi pi-box',
-    hint: 'Пакеты установки из релизов',
-    description: 'Будущий каталог установочных пакетов: Windows Server, LSTM-ПК и агенты мониторинга.',
+    hint: 'Агент из GitHub Releases',
+    description: 'Проверка последнего release агента, версии установщика и доступности GitHub Releases.',
   },
   {
     key: 'history',
@@ -148,39 +162,72 @@ const helpSteps = [
   'Интеграции: настройка удаленного LSTM API, токена, сетевых параметров и обновлений приложения.',
   'Прогнозы и состояния: профили S0/S1/S2, пороги метрик, веса и управление alpha по метрикам.',
   'СППР: CRUD действий/критериев/политик, матрица потерь и AHP-настройки.',
-  'Инсталяторы: место для скачивания установочных пакетов из опубликованных релизов.',
+  'Инсталяторы: один актуальный установщик агента из release репозитория tracker-agent.',
   'История: сводка по данным мониторинга и очистка истории мониторингового контура.',
 ];
 
-const installerPlaceholders = [
-  {
-    key: 'windows-server',
-    title: 'Windows Server пакет',
-    status: 'Готовится',
-    statusKind: 'ready',
-    icon: 'pi pi-server',
-    description: 'Основной установочный пакет backend, frontend, WinSW-служб и скриптов обновления.',
-    source: 'Источник: assets текущего GitHub Release.',
-  },
-  {
-    key: 'lstm-pc',
-    title: 'LSTM-ПК сервис',
-    status: 'Планируется',
-    statusKind: 'planned',
-    icon: 'pi pi-bolt',
-    description: 'Отдельный пакет для удалённого нейросетевого узла, который выполняет LSTM-прогноз.',
-    source: 'Будет использоваться для установки на выделенный ПК/GPU-узел.',
-  },
-  {
-    key: 'monitoring-agent',
-    title: 'Агент сбора метрик',
-    status: 'Планируется',
-    statusKind: 'planned',
-    icon: 'pi pi-desktop',
-    description: 'Будущий агент для установки на серверы, с которых нужно собирать телеметрию.',
-    source: 'Будет добавлен после выделения агентской части проекта.',
-  },
-];
+const agentInstallerDefaultUrl = 'https://api.github.com/repos/Xlebno777/tracker-agent/releases/latest';
+const agentInstaller = ref(null);
+const agentInstallerLoading = ref(false);
+
+const agentInstallerStatusKind = computed(() => {
+  if (agentInstallerLoading.value) return 'planned';
+  if (!agentInstaller.value) return 'planned';
+  if (agentInstaller.value.status === 'ok') return 'ready';
+  if (agentInstaller.value.status === 'missing_asset') return 'warn';
+  return 'error';
+});
+
+const agentInstallerStatusLabel = computed(() => {
+  if (agentInstallerLoading.value) return 'Проверка';
+  if (!agentInstaller.value) return 'Не проверено';
+  if (agentInstaller.value.status === 'ok') return 'GitHub доступен';
+  if (agentInstaller.value.status === 'missing_asset') return 'Asset не найден';
+  return 'Нет соединения';
+});
+
+function formatBytes(value) {
+  const bytes = Number(value || 0);
+  if (!bytes) return '-';
+  const units = ['Б', 'КБ', 'МБ', 'ГБ'];
+  let size = bytes;
+  let unitIndex = 0;
+  while (size >= 1024 && unitIndex < units.length - 1) {
+    size /= 1024;
+    unitIndex += 1;
+  }
+  return `${size.toFixed(unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
+}
+
+function formatDateTime(value) {
+  if (!value) return '-';
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return String(value);
+  return parsed.toLocaleString('ru-RU');
+}
+
+async function loadAgentInstaller() {
+  agentInstallerLoading.value = true;
+  try {
+    const response = await apiClient.get('application-updates/agent-installer/');
+    agentInstaller.value = response.data || null;
+  } catch (error) {
+    agentInstaller.value = {
+      status: 'error',
+      connected: false,
+      release_url: agentInstallerDefaultUrl,
+      detail: error?.response?.data?.detail || error?.message || 'Не удалось проверить GitHub Releases.',
+    };
+  } finally {
+    agentInstallerLoading.value = false;
+  }
+}
+
+function downloadAgentInstaller() {
+  const url = agentInstaller.value?.download_url;
+  if (!url) return;
+  window.open(url, '_blank', 'noopener');
+}
 
 function normalizeTabKey(key) {
   const raw = String(key || '').trim().toLowerCase();
@@ -204,6 +251,9 @@ watch(
 );
 
 watch(activeTabKey, (value) => {
+  if (value === 'installers' && !agentInstaller.value) {
+    loadAgentInstaller();
+  }
   const current = String(route.query.tab || '').trim().toLowerCase();
   if (current === value) return;
   router.replace({
@@ -216,6 +266,9 @@ watch(activeTabKey, (value) => {
 });
 
 onMounted(() => {
+  if (activeTabKey.value === 'installers') {
+    loadAgentInstaller();
+  }
   if (typeof window === 'undefined' || !('IntersectionObserver' in window)) return;
   if (!tabsStickySentinel.value) return;
   stickyObserver = new IntersectionObserver(
@@ -433,17 +486,28 @@ onBeforeUnmount(() => {
 .installers-badge {
   border-radius: 999px;
   padding: 0.35rem 0.75rem;
-  background: #fef3c7;
-  color: #92400e;
   font-weight: 800;
   white-space: nowrap;
 }
 
-.installers-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
-  gap: 0.8rem;
-  min-width: 0;
+.installers-badge--ready {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.installers-badge--planned {
+  background: #e2e8f0;
+  color: #334155;
+}
+
+.installers-badge--warn {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.installers-badge--error {
+  background: #fee2e2;
+  color: #991b1b;
 }
 
 .installer-card {
@@ -456,6 +520,11 @@ onBeforeUnmount(() => {
   padding: 0.95rem;
   background: #fff;
   min-width: 0;
+}
+
+.installer-card--single {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
 }
 
 .installer-card__icon {
@@ -518,28 +587,107 @@ onBeforeUnmount(() => {
   color: #334155;
 }
 
+.installer-status--warn {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.installer-status--error {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.installer-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr));
+  gap: 0.6rem;
+}
+
+.installer-facts div {
+  display: flex;
+  flex-direction: column;
+  gap: 0.12rem;
+  min-width: 0;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 0.55rem;
+  background: #f8fafc;
+}
+
+.installer-facts span {
+  color: #64748b;
+  font-size: 0.76rem;
+  font-weight: 700;
+}
+
+.installer-facts strong {
+  color: #0f172a;
+  overflow-wrap: anywhere;
+}
+
+.installer-source {
+  color: #64748b;
+  overflow-wrap: anywhere;
+}
+
+.installer-error {
+  border: 1px solid #fecaca;
+  border-radius: 10px;
+  padding: 0.55rem;
+  background: #fef2f2;
+  color: #991b1b;
+  font-weight: 700;
+}
+
+.installer-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.55rem;
+  min-width: 0;
+}
+
 .installer-download {
-  grid-column: 1 / -1;
-  width: fit-content;
+  min-height: 2.35rem;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 0.45rem;
   border: 1px solid #cbd5e1;
   border-radius: 10px;
   padding: 0.55rem 0.75rem;
   background: #f8fafc;
-  color: #64748b;
+  color: #334155;
   font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.installer-download:hover:not(:disabled) {
+  border-color: #94a3b8;
+  background: #ffffff;
+}
+
+.installer-download:disabled {
+  color: #94a3b8;
   cursor: not-allowed;
 }
 
-.installers-note {
-  border: 1px dashed #bfdbfe;
-  border-radius: 14px;
-  padding: 0.85rem;
-  background: #f8fafc;
-  color: #334155;
-  line-height: 1.4;
+.installer-download--primary {
+  border-color: #2563eb;
+  background: #2563eb;
+  color: #ffffff;
+}
+
+.installer-download--primary:hover:not(:disabled) {
+  border-color: #1d4ed8;
+  background: #1d4ed8;
+}
+
+.installer-download--primary:disabled {
+  border-color: #cbd5e1;
+  background: #e2e8f0;
+  color: #94a3b8;
 }
 
 @media (max-width: 900px) {
@@ -572,6 +720,23 @@ onBeforeUnmount(() => {
 
   .installers-badge {
     width: fit-content;
+  }
+
+  .installer-card--single {
+    grid-template-columns: 1fr;
+  }
+
+  .installer-card__icon {
+    width: 2.25rem;
+    height: 2.25rem;
+  }
+
+  .installer-actions {
+    justify-content: stretch;
+  }
+
+  .installer-download {
+    width: 100%;
   }
 }
 </style>
