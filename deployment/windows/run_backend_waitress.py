@@ -110,6 +110,8 @@ def main() -> int:
         log(f"inventory_api.urls={getattr(inventory_urls, '__file__', '')}")
         log(f"inventory_api.views={getattr(inventory_views, '__file__', '')}")
         for route in (
+            "/api/agent-installer/",
+            "/api/installers/agent/",
             "/api/agents/",
             "/api/agents/metric-catalog/",
             "/api/application-updates/agent-installer/",

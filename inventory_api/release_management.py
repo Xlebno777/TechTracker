@@ -17,7 +17,7 @@ DEFAULT_RELEASE_MANIFEST_URL = "https://api.github.com/repos/Xlebno777/TechTrack
 DEFAULT_AGENT_RELEASE_URL = "https://api.github.com/repos/Xlebno777/tracker-agent/releases/latest"
 DEFAULT_AGENT_INSTALLER_ASSET = "TechTrackerAgentInstaller.exe"
 DEFAULT_AGENT_INSTALLER_VERSION = "0.2.0"
-DEFAULT_SYSTEM_RELEASE_VERSION = "0.1.26"
+DEFAULT_SYSTEM_RELEASE_VERSION = "0.1.27"
 
 
 def _safe_text(value, default=""):

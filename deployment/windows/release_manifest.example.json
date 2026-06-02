@@ -1,12 +1,13 @@
 {
-  "version": "0.1.26",
+  "version": "0.1.27",
   "channel": "single",
   "release_date": "2026-06-02",
-  "git_ref": "v0.1.26",
+  "git_ref": "v0.1.27",
   "notes": [
-    "Страница системных обновлений теперь автоматически опрашивает job после запуска обновления и синхронизирует блок версии, APP_VERSION и latest без ручного сохранения параметров сервера.",
-    "Для инсталлятора агента добавлен отдельный endpoint `/api/agent-installer/` без конфликта с router detail routes.",
-    "Frontend страницы инсталлятора агента сначала использует `/api/agent-installer/`, а старый `/api/application-updates/agent-installer/` оставлен только как резервный endpoint.",
-    "Fallback системного релиза обновлен на v0.1.26."
+    "Health detail теперь показывает PID backend, путь загруженного inventory_api.views и результат resolve для agent endpoints.",
+    "Windows update script проверяет, что backend реально остановлен перед копированием файлов, чтобы не оставить старый Python-процесс на порту.",
+    "После старта backend update script ждет `/api/health/?detail=1`, сверяет APP_VERSION и проверяет, что `/api/agent-installer/` больше не возвращает 404.",
+    "Backend runner логирует resolve для `/api/agent-installer/`, `/api/installers/agent/`, `/api/agents/` и старого fallback endpoint.",
+    "Fallback системного релиза обновлен на v0.1.27."
   ]
 }

@@ -11,6 +11,7 @@ import os
 import secrets
 import time as pytime
 import socket
+import sys
 from pathlib import Path
 from collections import defaultdict
 from urllib.parse import urlsplit
@@ -35,7 +36,7 @@ from django.db.models import Q, Count
 from django_filters.rest_framework import DjangoFilterBackend
 from django.core.management import call_command
 from django.conf import settings
-from django.urls import get_resolver
+from django.urls import get_resolver, resolve
 
 from .models import (
     Device, DeviceType, Location, UserProfile,
@@ -106,10 +107,35 @@ def health_check(request):
             payload["route_error"] = str(exc)
 
         agent_routes = sorted(route for route in routes if "agents" in route or "agent-installer" in route)
+        route_checks = {}
+        for path_value in (
+            "/api/agent-installer/",
+            "/api/installers/agent/",
+            "/api/application-updates/agent-installer/",
+            "/api/agents/",
+            "/api/agents/metric-catalog/",
+        ):
+            try:
+                match = resolve(path_value)
+                route_checks[path_value] = {
+                    "ok": True,
+                    "view_name": match.view_name,
+                }
+            except Exception as exc:
+                route_checks[path_value] = {
+                    "ok": False,
+                    "error": str(exc),
+                }
         payload.update({
             "git_commit": _git_short_commit(),
+            "process_id": os.getpid(),
+            "python": sys.executable,
+            "settings_module": os.environ.get("DJANGO_SETTINGS_MODULE", ""),
+            "inventory_api_views_file": __file__,
             "agent_routes_registered": any(route.startswith("api/agents/") for route in agent_routes),
             "agent_installer_route_registered": any("application-updates/agent-installer/" in route for route in routes),
+            "agent_installer_status_route_registered": bool(route_checks.get("/api/agent-installer/", {}).get("ok")),
+            "route_checks": route_checks,
             "agent_routes": agent_routes[:50],
         })
     return Response(payload)
