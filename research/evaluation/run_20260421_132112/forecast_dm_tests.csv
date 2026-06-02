@@ -1,4 +1,0 @@
-horizon,model_a,model_b,samples,mean_loss_diff,dm_stat,p_value,significant_005,winner
-7d,lstm,ensemble,0,,,,False,
-7d,sarima,ensemble,1176,220.19587584801675,6.61271052046614,3.7734591811213696e-11,True,ensemble
-7d,sarima,lstm,0,,,,False,

@@ -51,8 +51,7 @@ rm -rf \
   "$STAGING/techtracker_vue/dist" \
   "$STAGING/logs" \
   "$STAGING/backups" \
-  "$STAGING/research/evaluation" \
-  "$STAGING/research/pipeline_reports"
+  "$STAGING/research"
 
 find "$STAGING" -name ".env.local" -delete
 find "$STAGING" -name ".env" -delete

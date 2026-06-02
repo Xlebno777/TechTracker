@@ -1,8 +1,0 @@
-{
-  "serial": "DEMO-SARIMA-001",
-  "horizon": "30d",
-  "decision_mode": "advanced",
-  "generated_at": "2026-04-05T06:26:20.963259+00:00",
-  "dominant_run_id": 199,
-  "evaluation_run_id": "run_20260402_092326_pipeline_overview"
-}

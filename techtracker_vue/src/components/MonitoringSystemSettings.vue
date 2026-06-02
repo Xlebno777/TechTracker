@@ -417,7 +417,7 @@
 
 <script setup>
 import { computed, defineProps, onMounted, ref } from 'vue';
-import apiClient from '@/api';
+import apiClient, { describeApiError } from '@/api';
 import Button from 'primevue/button';
 import InputNumber from 'primevue/inputnumber';
 import InputSwitch from 'primevue/inputswitch';
@@ -582,7 +582,7 @@ async function loadSummary() {
     counts.value = res.data || {};
   } catch (err) {
     counts.value = {};
-    toast.add({ severity: 'error', summary: 'Ошибка', detail: 'Не удалось загрузить сводку по системе', life: 3500 });
+    toast.add({ severity: 'error', summary: 'Ошибка сводки', detail: describeApiError(err, 'Не удалось загрузить сводку по системе'), life: 9000 });
   } finally {
     loading.value = false;
   }
@@ -604,7 +604,7 @@ async function loadLstmConfig() {
       token_preview: res.data?.token_preview || '',
     };
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Ошибка', detail: 'Не удалось загрузить настройки LSTM', life: 4000 });
+    toast.add({ severity: 'error', summary: 'Ошибка LSTM', detail: describeApiError(err, 'Не удалось загрузить настройки LSTM'), life: 9000 });
   } finally {
     lstmLoading.value = false;
   }
@@ -652,7 +652,7 @@ async function loadEnvironmentConfig() {
     const res = await apiClient.get('monitoring-system/environment-config/');
     environmentConfig.value = normalizeEnvironmentConfig(res.data || {});
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Ошибка', detail: 'Не удалось загрузить параметры сервера', life: 4000 });
+    toast.add({ severity: 'error', summary: 'Ошибка параметров сервера', detail: describeApiError(err, 'Не удалось загрузить параметры сервера'), life: 9000 });
   } finally {
     environmentLoading.value = false;
   }
@@ -698,8 +698,8 @@ async function saveEnvironmentConfig() {
     });
     await loadReleaseStatus();
   } catch (err) {
-    const detail = err?.response?.data?.detail || 'Не удалось сохранить параметры сервера';
-    toast.add({ severity: 'error', summary: 'Ошибка', detail, life: 5000 });
+    const detail = describeApiError(err, 'Не удалось сохранить параметры сервера');
+    toast.add({ severity: 'error', summary: 'Ошибка сохранения сервера', detail, life: 10000 });
   } finally {
     environmentSaving.value = false;
   }
@@ -737,8 +737,8 @@ async function saveLstmConfig() {
       life: 3000,
     });
   } catch (err) {
-    const detail = err?.response?.data?.detail || 'Не удалось сохранить настройки LSTM';
-    toast.add({ severity: 'error', summary: 'Ошибка', detail, life: 4200 });
+    const detail = describeApiError(err, 'Не удалось сохранить настройки LSTM');
+    toast.add({ severity: 'error', summary: 'Ошибка сохранения LSTM', detail, life: 10000 });
   } finally {
     lstmSaving.value = false;
   }
@@ -768,8 +768,8 @@ async function generateLstmToken() {
       life: 5000,
     });
   } catch (err) {
-    const detail = err?.response?.data?.detail || 'Не удалось сгенерировать токен';
-    toast.add({ severity: 'error', summary: 'Ошибка', detail, life: 4200 });
+    const detail = describeApiError(err, 'Не удалось сгенерировать токен');
+    toast.add({ severity: 'error', summary: 'Ошибка генерации токена', detail, life: 10000 });
   } finally {
     lstmGenerating.value = false;
   }
@@ -825,7 +825,7 @@ async function loadReleaseStatus() {
     releaseStatus.value = statusRes.data || {};
     updateJobs.value = Array.isArray(jobsRes.data) ? jobsRes.data : (jobsRes.data?.results || []);
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Ошибка', detail: 'Не удалось загрузить информацию о версии приложения', life: 4000 });
+    toast.add({ severity: 'error', summary: 'Ошибка версии приложения', detail: describeApiError(err, 'Не удалось загрузить информацию о версии приложения'), life: 10000 });
   } finally {
     releaseLoading.value = false;
   }
@@ -846,8 +846,8 @@ async function checkReleaseUpdate() {
     toast.add({ severity: res.data?.update_available ? 'warn' : 'success', summary: 'Проверка завершена', detail, life: 3500 });
     await loadReleaseStatus();
   } catch (err) {
-    const detail = err?.response?.data?.detail || 'Не удалось проверить обновления';
-    toast.add({ severity: 'error', summary: 'Ошибка', detail, life: 5000 });
+    const detail = describeApiError(err, 'Не удалось проверить обновления');
+    toast.add({ severity: 'error', summary: 'Ошибка проверки обновлений', detail, life: 10000 });
   } finally {
     releaseChecking.value = false;
   }
@@ -873,8 +873,8 @@ async function startReleaseUpdate() {
     });
     await loadReleaseStatus();
   } catch (err) {
-    const detail = err?.response?.data?.detail || 'Не удалось запустить обновление';
-    toast.add({ severity: 'error', summary: 'Ошибка', detail, life: 5500 });
+    const detail = describeApiError(err, 'Не удалось запустить обновление');
+    toast.add({ severity: 'error', summary: 'Ошибка запуска обновления', detail, life: 10000 });
   } finally {
     releaseStarting.value = false;
   }
@@ -902,8 +902,8 @@ async function handleClearHistory() {
       await loadSummary();
     }
   } catch (err) {
-    const detail = err?.response?.data?.detail || 'Не удалось очистить историю мониторинга';
-    toast.add({ severity: 'error', summary: 'Ошибка', detail, life: 4200 });
+    const detail = describeApiError(err, 'Не удалось очистить историю мониторинга');
+    toast.add({ severity: 'error', summary: 'Ошибка очистки истории', detail, life: 10000 });
   } finally {
     clearing.value = false;
   }

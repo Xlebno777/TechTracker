@@ -1,1 +1,0 @@
-run_id,created_at,device_serial,horizon,mode,recommended_action_code,baseline_action_code,expected_loss_with_system,expected_loss_without_system,delta_r,overall_risk,markov_p_s2,feedback_state,feedback_incident_cost

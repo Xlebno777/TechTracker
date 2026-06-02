@@ -1,5 +1,6 @@
 <template>
   <div class="monitoring-settings-page p-4">
+    <Toast v-if="activeTabKey === 'installers'" />
     <PageHeader
       title="Настройки"
       :refreshable="false"
@@ -112,10 +113,13 @@ import PageHeader from '@/components/ui/PageHeader.vue';
 import MonitoringSystemSettings from '@/components/MonitoringSystemSettings.vue';
 import MonitoringStateSettings from '@/components/MonitoringStateSettings.vue';
 import MonitoringDecisionSettings from '@/components/MonitoringDecisionSettings.vue';
-import apiClient from '@/api';
+import apiClient, { describeApiError } from '@/api';
+import Toast from 'primevue/toast';
+import { useToast } from 'primevue/usetoast';
 
 const route = useRoute();
 const router = useRouter();
+const toast = useToast();
 const tabsStickySentinel = ref(null);
 const isTabsPinned = ref(false);
 let stickyObserver = null;
@@ -211,13 +215,35 @@ async function loadAgentInstaller() {
   try {
     const response = await apiClient.get('application-updates/agent-installer/');
     agentInstaller.value = response.data || null;
+    if (agentInstaller.value?.status && agentInstaller.value.status !== 'ok') {
+      const detail = [
+        agentInstaller.value.detail || 'GitHub Releases агента ответил с ошибкой.',
+        `Release URL: ${agentInstaller.value.release_url || agentInstallerDefaultUrl}`,
+        `Ожидаемый asset: ${agentInstaller.value.installer_asset_name || 'TechTrackerAgentInstaller.exe'}`,
+      ].filter(Boolean).join(' ');
+      toast.add({
+        severity: agentInstaller.value.status === 'missing_asset' ? 'warn' : 'error',
+        summary: 'Проблема GitHub Releases агента',
+        detail,
+        life: 10000,
+      });
+    } else if (agentInstaller.value?.detail) {
+      toast.add({
+        severity: 'warn',
+        summary: 'GitHub Releases агента',
+        detail: agentInstaller.value.detail,
+        life: 9000,
+      });
+    }
   } catch (error) {
+    const detail = describeApiError(error, 'Не удалось проверить GitHub Releases агента');
     agentInstaller.value = {
       status: 'error',
       connected: false,
       release_url: agentInstallerDefaultUrl,
-      detail: error?.response?.data?.detail || error?.message || 'Не удалось проверить GitHub Releases.',
+      detail,
     };
+    toast.add({ severity: 'error', summary: 'Ошибка инсталлятора агента', detail, life: 10000 });
   } finally {
     agentInstallerLoading.value = false;
   }

@@ -12,6 +12,11 @@ db.sqlite3-journal
 # Build project
 agents/build
 dist/
+research/
+alg_pro.pdf
+alg_pro_source.md
+deep-research.md
+final_dissertation_plan.md
 
 # Environment
 env/

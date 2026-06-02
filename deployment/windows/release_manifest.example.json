@@ -1,12 +1,12 @@
 {
-  "version": "0.1.24",
+  "version": "0.1.25",
   "channel": "single",
   "release_date": "2026-06-02",
-  "git_ref": "v0.1.24",
+  "git_ref": "v0.1.25",
   "notes": [
-    "Проверка системных обновлений больше не зависит только от GitHub API JSON: при таймауте используется GitHub Releases HTML redirect и стабильный download URL.",
-    "Текущая версия приложения берется как максимум между `.env.local APP_VERSION` и файлом `VERSION`, чтобы старый env не скрывал фактически установленный релиз.",
-    "Windows update script всегда синхронизирует `.env.local APP_VERSION` с целевой версией или файлом `VERSION`.",
-    "Страница обновлений показывает расхождение между `APP_VERSION` и `VERSION`, если оно есть."
+    "Страница агентов и страница инсталлятора получили прямые root-level backend routes для `/api/agents/*` и `/api/application-updates/agent-installer/`, чтобы исключить старые router-mismatch 404.",
+    "Всплывающие ошибки frontend теперь показывают HTTP-статус, метод, точный endpoint, тело ответа или клиентский код ошибки.",
+    "Проверка GitHub Releases агента возвращает подробность: какой release URL проверялся, какой asset ожидался и какие assets были найдены.",
+    "Fallback системного релиза обновлен на v0.1.25."
   ]
 }

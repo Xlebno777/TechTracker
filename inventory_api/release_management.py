@@ -17,7 +17,7 @@ DEFAULT_RELEASE_MANIFEST_URL = "https://api.github.com/repos/Xlebno777/TechTrack
 DEFAULT_AGENT_RELEASE_URL = "https://api.github.com/repos/Xlebno777/tracker-agent/releases/latest"
 DEFAULT_AGENT_INSTALLER_ASSET = "TechTrackerAgentInstaller.exe"
 DEFAULT_AGENT_INSTALLER_VERSION = "0.2.0"
-DEFAULT_SYSTEM_RELEASE_VERSION = "0.1.24"
+DEFAULT_SYSTEM_RELEASE_VERSION = "0.1.25"
 
 
 def _safe_text(value, default=""):
@@ -308,7 +308,11 @@ def check_agent_installer_release(release_url: str | None = None) -> dict:
         fallback = _github_latest_release_fallback(url, asset_name, exc)
         if fallback:
             return fallback
-        payload["detail"] = str(exc)
+        payload["detail"] = (
+            "Не удалось получить latest release агента. "
+            f"Проверялся URL: {url}. Ожидаемый asset: {asset_name}. "
+            f"Ошибка GitHub/API: {exc}"
+        )
         return payload
 
     assets = release.get("assets") if isinstance(release.get("assets"), list) else []
@@ -338,7 +342,10 @@ def check_agent_installer_release(release_url: str | None = None) -> dict:
         "tag_name": tag_name,
         "published_at": _safe_text(release.get("published_at") or release.get("created_at")),
         "html_url": _safe_text(release.get("html_url")),
-        "detail": "" if installer_asset else f"В последнем release не найден asset {asset_name}.",
+        "detail": "" if installer_asset else (
+            f"В последнем release {tag_name or 'без тега'} не найден asset {asset_name}. "
+            f"Полученные assets: {', '.join(_safe_text(asset.get('name')) for asset in assets if isinstance(asset, dict)) or 'пустой список'}."
+        ),
     })
     if installer_asset:
         payload.update({
