@@ -133,22 +133,46 @@
               <h4>Обновление агента</h4>
               <Tag :value="updateStatusLabel(selectedAgent.last_update_status)" :severity="updateSeverity(selectedAgent.last_update_status)" />
             </div>
-            <div class="update-form">
-              <div class="field-block">
-                <label>Целевая версия</label>
-                <InputText v-model.trim="updateForm.target_version" placeholder="например 0.2.0" />
+            <div class="agent-update-card">
+              <div class="agent-update-facts">
+                <div>
+                  <span>Версия агента</span>
+                  <strong>{{ selectedAgent.agent_version || 'не определена' }}</strong>
+                </div>
+                <div>
+                  <span>Новейшая версия</span>
+                  <strong>{{ latestAgentVersionLabel }}</strong>
+                </div>
+                <div>
+                  <span>Asset</span>
+                  <strong>{{ agentInstaller?.installer_asset_name || 'не проверялся' }}</strong>
+                </div>
               </div>
-              <div class="field-block field-wide">
-                <label>URL установщика</label>
-                <InputText v-model.trim="updateForm.installer_url" placeholder="https://..." />
+              <div class="agent-update-actions">
+                <p :class="['status-message', agentUpdateStateClass]">{{ agentUpdateStateLabel }}</p>
+                <div class="agent-update-buttons">
+                  <Button
+                    icon="pi pi-refresh"
+                    label="Проверить"
+                    outlined
+                    :loading="actionLoading.checkUpdate"
+                    :disabled="actionLoading.checkUpdate || actionLoading.update"
+                    @click="checkAgentUpdate"
+                  />
+                  <Button
+                    icon="pi pi-download"
+                    label="Обновить"
+                    severity="success"
+                    :loading="actionLoading.update"
+                    :disabled="!canQueueAgentUpdate || actionLoading.checkUpdate || actionLoading.update"
+                    @click="queueUpdate"
+                  />
+                </div>
               </div>
-              <Button
-                icon="pi pi-download"
-                label="Поставить обновление"
-                :loading="actionLoading.update"
-                @click="queueUpdate"
-              />
             </div>
+            <p v-if="agentInstaller?.detail" class="status-message status-message-warn">
+              {{ agentInstaller.detail }}
+            </p>
             <p v-if="selectedAgent.last_update_message" class="status-message">
               {{ selectedAgent.last_update_message }}
             </p>
@@ -214,6 +238,33 @@
                   <span class="command-result">{{ data.result_message || '—' }}</span>
                 </template>
               </Column>
+              <Column header="Действия" style="width: 190px">
+                <template #body="{ data }">
+                  <div class="command-actions">
+                    <Button
+                      v-if="canCancelCommand(data)"
+                      icon="pi pi-ban"
+                      label="Отменить"
+                      size="small"
+                      severity="warning"
+                      outlined
+                      :loading="actionLoading.commandAction === 'cancel' && actionLoading.commandId === data.id"
+                      :disabled="Boolean(actionLoading.commandAction)"
+                      @click="cancelCommand(data)"
+                    />
+                    <Button
+                      icon="pi pi-trash"
+                      label="Удалить"
+                      size="small"
+                      severity="danger"
+                      text
+                      :loading="actionLoading.commandAction === 'delete' && actionLoading.commandId === data.id"
+                      :disabled="Boolean(actionLoading.commandAction)"
+                      @click="deleteCommand(data)"
+                    />
+                  </div>
+                </template>
+              </Column>
             </DataTable>
           </section>
         </template>
@@ -238,12 +289,15 @@ import InputText from 'primevue/inputtext';
 import Tag from 'primevue/tag';
 import Toast from 'primevue/toast';
 import { useToast } from 'primevue/usetoast';
+import { useConfirmAction } from '@/composables/useConfirmAction';
 
 const toast = useToast();
+const { confirmAction } = useConfirmAction();
 
 const agents = ref([]);
 const commands = ref([]);
 const metricCatalog = ref([]);
+const agentInstaller = ref(null);
 const selectedAgent = ref(null);
 const selectedEnabledTasks = ref([]);
 const search = ref('');
@@ -252,11 +306,10 @@ const loadingCommands = ref(false);
 const actionLoading = ref({
   restart: false,
   update: false,
+  checkUpdate: false,
   metrics: false,
-});
-const updateForm = ref({
-  target_version: '',
-  installer_url: '',
+  commandId: null,
+  commandAction: '',
 });
 
 const normalizeList = (value) => (Array.isArray(value) ? value : []);
@@ -291,6 +344,63 @@ const hasMetricChanges = computed(() => {
   return current !== draft;
 });
 
+const latestAgentVersionLabel = computed(() => {
+  if (actionLoading.value.checkUpdate) return 'проверяем';
+  return agentInstaller.value?.latest_version || 'не проверялась';
+});
+
+const agentVersionCompare = computed(() => {
+  const current = selectedAgent.value?.agent_version;
+  const latest = agentInstaller.value?.latest_version;
+  if (!current || !latest) return null;
+  return compareVersions(current, latest);
+});
+
+const canQueueAgentUpdate = computed(() => (
+  Boolean(selectedAgent.value)
+  && agentInstaller.value?.status === 'ok'
+  && Boolean(agentInstaller.value?.download_url)
+  && Boolean(agentInstaller.value?.latest_version)
+  && agentVersionCompare.value !== 0
+));
+
+const agentUpdateStateLabel = computed(() => {
+  if (actionLoading.value.checkUpdate) return 'Проверяем последнюю версию агента в GitHub Releases.';
+  if (!agentInstaller.value) return 'Нажмите «Проверить», чтобы получить последнюю версию агента.';
+  if (agentInstaller.value.status && agentInstaller.value.status !== 'ok') return 'Не удалось получить release агента. Подробность показана ниже.';
+  if (!selectedAgent.value?.agent_version) return 'Версия установленного агента не определена. Можно поставить последнюю найденную версию.';
+  if (agentVersionCompare.value < 0) return 'Доступно обновление агента.';
+  if (agentVersionCompare.value === 0) return 'На устройстве установлена актуальная версия агента.';
+  if (agentVersionCompare.value > 0) return 'Установленная версия агента новее опубликованного release.';
+  return 'Сравнение версий пока недоступно.';
+});
+
+const agentUpdateStateClass = computed(() => {
+  if (agentInstaller.value?.status && agentInstaller.value.status !== 'ok') return 'text-error';
+  if (agentVersionCompare.value < 0) return 'text-warn';
+  if (agentVersionCompare.value === 0) return 'text-ok';
+  return 'text-muted';
+});
+
+const compareVersions = (left, right) => {
+  const parse = (value) => String(value || '')
+    .trim()
+    .replace(/^v/i, '')
+    .split(/[.-]/)
+    .map((part) => Number.parseInt(part, 10))
+    .map((part) => (Number.isFinite(part) ? part : 0));
+  const a = parse(left);
+  const b = parse(right);
+  const length = Math.max(a.length, b.length);
+  for (let index = 0; index < length; index += 1) {
+    const current = a[index] || 0;
+    const latest = b[index] || 0;
+    if (current < latest) return -1;
+    if (current > latest) return 1;
+  }
+  return 0;
+};
+
 const formatTime = (value) => {
   if (!value) return '—';
   try {
@@ -323,6 +433,7 @@ const updateStatusLabel = (value) => ({
   running: 'Выполняется',
   success: 'Успешно',
   failed: 'Ошибка',
+  cancelled: 'Отменено',
 }[value] || 'Нет задач');
 
 const updateSeverity = (value) => ({
@@ -331,6 +442,7 @@ const updateSeverity = (value) => ({
   running: 'info',
   success: 'success',
   failed: 'danger',
+  cancelled: 'secondary',
 }[value] || 'secondary');
 
 const commandLabel = (value) => ({
@@ -376,8 +488,6 @@ const updateCaption = (agent) => {
 const setSelectedAgentData = (agent) => {
   selectedAgent.value = agent;
   selectedEnabledTasks.value = enabledTasksFromAgent(agent);
-  updateForm.value.target_version = agent?.desired_version || '';
-  updateForm.value.installer_url = '';
 };
 
 const selectAgent = async (agent) => {
@@ -441,7 +551,7 @@ const loadCommands = async (agentId) => {
 };
 
 const refreshData = async () => {
-  await Promise.all([loadMetricCatalog(), loadAgents()]);
+  await Promise.all([loadMetricCatalog(), loadAgents(), checkAgentUpdate({ silent: true })]);
 };
 
 const restartAgent = async () => {
@@ -462,20 +572,68 @@ const restartAgent = async () => {
 
 const queueUpdate = async () => {
   if (!selectedAgent.value) return;
+  if (!agentInstaller.value?.download_url) {
+    await checkAgentUpdate({ silent: true });
+  }
+  if (!agentInstaller.value?.download_url) {
+    toast.add({
+      severity: 'warn',
+      summary: 'Обновление недоступно',
+      detail: agentInstaller.value?.detail || 'Сначала нужно успешно проверить release агента.',
+      life: 7000,
+    });
+    return;
+  }
   const agentId = selectedAgent.value.id;
   actionLoading.value.update = true;
   try {
     await apiClient.post(`agents/${agentId}/update/`, {
-      target_version: updateForm.value.target_version,
-      installer_url: updateForm.value.installer_url,
+      target_version: agentInstaller.value.latest_version || '',
+      installer_url: agentInstaller.value.download_url || '',
     });
-    toast.add({ severity: 'success', summary: 'Команда создана', detail: 'Обновление поставлено в очередь.', life: 3000 });
+    toast.add({
+      severity: 'success',
+      summary: 'Команда создана',
+      detail: `Обновление агента до версии ${agentInstaller.value.latest_version || 'latest'} поставлено в очередь.`,
+      life: 3500,
+    });
     await loadAgents();
     await loadCommands(agentId);
   } catch (e) {
     toast.add({ severity: 'error', summary: 'Ошибка обновления агента', detail: describeApiError(e, 'Не удалось создать команду обновления'), life: 10000 });
   } finally {
     actionLoading.value.update = false;
+  }
+};
+
+const checkAgentUpdate = async ({ silent = false } = {}) => {
+  actionLoading.value.checkUpdate = !silent;
+  try {
+    const res = await apiClient.get('agent-installer/');
+    agentInstaller.value = res.data || null;
+    if (!silent) {
+      const status = agentInstaller.value?.status;
+      const detail = status === 'ok'
+        ? `Последняя версия агента: ${agentInstaller.value?.latest_version || 'не указана'}.`
+        : (agentInstaller.value?.detail || 'GitHub Releases агента ответил с ошибкой.');
+      toast.add({
+        severity: status === 'ok' ? 'success' : 'error',
+        summary: status === 'ok' ? 'Release агента проверен' : 'Ошибка проверки release агента',
+        detail,
+        life: status === 'ok' ? 3500 : 10000,
+      });
+    }
+  } catch (e) {
+    const detail = describeApiError(e, 'Не удалось проверить release агента');
+    agentInstaller.value = {
+      status: 'error',
+      detail,
+    };
+    if (!silent) {
+      toast.add({ severity: 'error', summary: 'Ошибка проверки release агента', detail, life: 10000 });
+    }
+  } finally {
+    actionLoading.value.checkUpdate = false;
   }
 };
 
@@ -495,6 +653,58 @@ const saveMetrics = async () => {
     toast.add({ severity: 'error', summary: 'Ошибка настройки метрик', detail: describeApiError(e, 'Не удалось сохранить метрики'), life: 10000 });
   } finally {
     actionLoading.value.metrics = false;
+  }
+};
+
+const canCancelCommand = (command) => ['pending', 'acknowledged', 'running'].includes(String(command?.status || '').toLowerCase());
+
+const cancelCommand = async (command) => {
+  if (!command?.id || !selectedAgent.value) return;
+  const confirmed = await confirmAction({
+    header: 'Отменить команду агента',
+    message: `Команда #${command.id} будет помечена как отмененная. Агент больше не сможет записать по ней результат.`,
+    acceptLabel: 'Отменить команду',
+    acceptSeverity: 'warning',
+  });
+  if (!confirmed) return;
+
+  actionLoading.value.commandId = command.id;
+  actionLoading.value.commandAction = 'cancel';
+  try {
+    await apiClient.post(`agents/commands/${command.id}/cancel/`, {});
+    toast.add({ severity: 'success', summary: 'Команда отменена', detail: `Команда #${command.id} прервана.`, life: 3000 });
+    await loadAgents();
+    await loadCommands(selectedAgent.value.id);
+  } catch (e) {
+    toast.add({ severity: 'error', summary: 'Ошибка отмены команды', detail: describeApiError(e, 'Не удалось отменить команду агента'), life: 10000 });
+  } finally {
+    actionLoading.value.commandId = null;
+    actionLoading.value.commandAction = '';
+  }
+};
+
+const deleteCommand = async (command) => {
+  if (!command?.id || !selectedAgent.value) return;
+  const confirmed = await confirmAction({
+    header: 'Удалить команду агента',
+    message: `Команда #${command.id} будет удалена из журнала. Это действие нельзя отменить.`,
+    acceptLabel: 'Удалить',
+    acceptSeverity: 'danger',
+  });
+  if (!confirmed) return;
+
+  actionLoading.value.commandId = command.id;
+  actionLoading.value.commandAction = 'delete';
+  try {
+    await apiClient.delete(`agents/commands/${command.id}/`);
+    toast.add({ severity: 'success', summary: 'Команда удалена', detail: `Команда #${command.id} удалена из журнала.`, life: 3000 });
+    await loadAgents();
+    await loadCommands(selectedAgent.value.id);
+  } catch (e) {
+    toast.add({ severity: 'error', summary: 'Ошибка удаления команды', detail: describeApiError(e, 'Не удалось удалить команду агента'), life: 10000 });
+  } finally {
+    actionLoading.value.commandId = null;
+    actionLoading.value.commandAction = '';
   }
 };
 
@@ -717,11 +927,59 @@ onMounted(() => {
   border-top: 1px solid #e2e8f0;
 }
 
-.update-form {
-  align-items: end;
-  justify-content: flex-start;
-  flex-wrap: wrap;
+.agent-update-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.85rem;
+  align-items: center;
   margin-top: 0.8rem;
+  padding: 0.85rem;
+  border: 1px solid #dbe4ef;
+  border-radius: 8px;
+  background: #f8fafc;
+  min-width: 0;
+}
+
+.agent-update-facts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.65rem;
+  min-width: 0;
+}
+
+.agent-update-facts div {
+  min-width: 0;
+}
+
+.agent-update-facts span {
+  display: block;
+  color: #64748b;
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.agent-update-facts strong {
+  display: block;
+  color: #0f172a;
+  margin-top: 0.25rem;
+  overflow-wrap: anywhere;
+}
+
+.agent-update-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.55rem;
+  min-width: 14rem;
+}
+
+.agent-update-buttons,
+.command-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.45rem;
 }
 
 .field-block {
@@ -745,6 +1003,36 @@ onMounted(() => {
   color: #475569;
   margin: 0.75rem 0 0;
   overflow-wrap: anywhere;
+}
+
+.agent-update-actions .status-message {
+  margin: 0;
+  text-align: right;
+  max-width: 28rem;
+}
+
+.status-message-warn {
+  border: 1px solid #fed7aa;
+  border-radius: 8px;
+  padding: 0.55rem 0.65rem;
+  background: #fff7ed;
+  color: #9a3412;
+}
+
+.text-muted {
+  color: #64748b;
+}
+
+.text-warn {
+  color: #b45309;
+}
+
+.text-ok {
+  color: #15803d;
+}
+
+.text-error {
+  color: #b91c1c;
 }
 
 .metric-list {
@@ -857,8 +1145,23 @@ onMounted(() => {
   .search-input,
   .detail-actions :deep(.p-button),
   .section-title :deep(.p-button),
-  .update-form :deep(.p-button) {
+  .agent-update-buttons :deep(.p-button),
+  .command-actions :deep(.p-button) {
     width: 100%;
+  }
+
+  .agent-update-card,
+  .agent-update-facts {
+    grid-template-columns: 1fr;
+  }
+
+  .agent-update-actions {
+    align-items: stretch;
+    min-width: 0;
+  }
+
+  .agent-update-actions .status-message {
+    text-align: left;
   }
 }
 </style>

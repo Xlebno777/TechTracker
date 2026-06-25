@@ -1,13 +1,13 @@
 {
-  "version": "0.1.27",
+  "version": "0.1.28",
   "channel": "single",
-  "release_date": "2026-06-02",
-  "git_ref": "v0.1.27",
+  "release_date": "2026-06-25",
+  "git_ref": "v0.1.28",
   "notes": [
-    "Health detail теперь показывает PID backend, путь загруженного inventory_api.views и результат resolve для agent endpoints.",
-    "Windows update script проверяет, что backend реально остановлен перед копированием файлов, чтобы не оставить старый Python-процесс на порту.",
-    "После старта backend update script ждет `/api/health/?detail=1`, сверяет APP_VERSION и проверяет, что `/api/agent-installer/` больше не возвращает 404.",
-    "Backend runner логирует resolve для `/api/agent-installer/`, `/api/installers/agent/`, `/api/agents/` и старого fallback endpoint.",
-    "Fallback системного релиза обновлен на v0.1.27."
+    "Страница агентов теперь берет последнюю версию агента из GitHub Releases и не требует ручного URL установщика.",
+    "Команды агентов можно отменять и удалять из интерфейса; отмененная команда не перезаписывается поздним ответом агента.",
+    "Обновления TechTracker перенесены во вкладку инсталляторов, APP_VERSION больше не редактируется вручную из UI.",
+    "Карточка инсталлятора агента переименована и убран дублирующий верхний блок.",
+    "Fallback системного релиза обновлен на v0.1.28."
   ]
 }

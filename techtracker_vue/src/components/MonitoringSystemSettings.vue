@@ -251,34 +251,11 @@
       <div class="env-section">
         <div class="env-section__head">
           <div>
-            <strong>Обновления и администратор</strong>
-            <small>Настройки release-обновлений и справочная информация о первом администраторе.</small>
+            <strong>Первый администратор</strong>
+            <small>Справочная информация из первого запуска. Пароль здесь не хранится и не показывается.</small>
           </div>
         </div>
         <div class="environment-grid">
-          <div class="field">
-            <label class="field-label">APP_VERSION</label>
-            <InputText v-model.trim="environmentConfig.updates.app_version" class="w-full" :disabled="environmentLoading || environmentSaving" />
-          </div>
-          <div class="field">
-            <label class="field-label">Канал релизов</label>
-            <InputText v-model.trim="environmentConfig.updates.release_channel" class="w-full" :disabled="environmentLoading || environmentSaving" />
-          </div>
-          <div class="field field--wide">
-            <label class="field-label">Manifest URL</label>
-            <InputText v-model.trim="environmentConfig.updates.manifest_url" class="w-full" :disabled="environmentLoading || environmentSaving" />
-          </div>
-          <div class="field">
-            <label class="field-label">Обновления из UI</label>
-            <div class="switch-row">
-              <InputSwitch v-model="environmentConfig.updates.update_enabled" :disabled="environmentLoading || environmentSaving" />
-              <span>{{ environmentConfig.updates.update_enabled ? 'Включены' : 'Выключены' }}</span>
-            </div>
-          </div>
-          <div class="field">
-            <label class="field-label">Timeout обновления, сек.</label>
-            <InputNumber v-model="environmentConfig.updates.update_timeout_sec" class="w-full" :min="60" :max="86400" :use-grouping="false" :disabled="environmentLoading || environmentSaving" />
-          </div>
           <div class="field">
             <label class="field-label">Первый admin username</label>
             <InputText v-model.trim="environmentConfig.admin.username" class="w-full" :disabled="environmentLoading || environmentSaving" />
@@ -302,7 +279,54 @@
       </div>
     </FilterPanel>
 
-    <FilterPanel v-if="showIntegrations" title="Версия и обновления приложения">
+    <FilterPanel v-if="showReleaseSettings" title="Обновления системы">
+      <div class="settings-note">
+        Версия приложения определяется сервером автоматически. Вручную указывается только manifest URL и параметры запуска обновления.
+      </div>
+
+      <div class="release-config-grid">
+        <div class="release-readonly">
+          <span class="summary-label">Установленная версия</span>
+          <strong>{{ releaseStatus.current_version || environmentConfig.updates.app_version || 'не указана' }}</strong>
+          <small v-if="releaseVersionSourceNote">{{ releaseVersionSourceNote }}</small>
+          <small v-else>Определяется по серверу и файлу VERSION.</small>
+        </div>
+        <div class="release-readonly">
+          <span class="summary-label">Канал релизов</span>
+          <strong>{{ environmentConfig.updates.release_channel || releaseStatus.release_channel || 'single' }}</strong>
+          <small>Служебный канал обновления.</small>
+        </div>
+        <div class="field field--wide">
+          <label class="field-label">Manifest URL</label>
+          <InputText v-model.trim="environmentConfig.updates.manifest_url" class="w-full" :disabled="environmentLoading || environmentSaving" />
+          <small class="field-hint">Ссылка на latest release или manifest обновления TechTracker.</small>
+        </div>
+        <div class="field">
+          <label class="field-label">Обновления из UI</label>
+          <div class="switch-row">
+            <InputSwitch v-model="environmentConfig.updates.update_enabled" :disabled="environmentLoading || environmentSaving" />
+            <span>{{ environmentConfig.updates.update_enabled ? 'Включены' : 'Выключены' }}</span>
+          </div>
+        </div>
+        <div class="field">
+          <label class="field-label">Timeout обновления, сек.</label>
+          <InputNumber v-model="environmentConfig.updates.update_timeout_sec" class="w-full" :min="60" :max="86400" :use-grouping="false" :disabled="environmentLoading || environmentSaving" />
+        </div>
+      </div>
+
+      <div class="lstm-actions mt-2">
+        <Button
+          icon="pi pi-save"
+          label="Сохранить ссылку обновлений"
+          severity="success"
+          :loading="environmentSaving"
+          :disabled="environmentLoading || environmentSaving"
+          @click="saveEnvironmentConfig({ releaseOnly: true })"
+        />
+      </div>
+    </FilterPanel>
+
+    <FilterPanel v-if="showReleaseSettings" title="Версия и обновления приложения">
       <div class="release-grid">
         <div class="release-card">
           <span class="summary-label">Текущая версия</span>
@@ -337,7 +361,7 @@
         Manifest: {{ releaseStatus.manifest_url }}
       </div>
       <div v-else class="release-note release-note--warn">
-        Manifest обновлений не настроен. Укажите `APP_RELEASE_MANIFEST_URL` на Windows Server.
+        Manifest обновлений не настроен. Укажите ссылку во вкладке инсталляторов.
       </div>
 
       <div v-if="releaseNotes.length" class="release-notes">
@@ -512,6 +536,7 @@ const helpSteps = [
 ];
 
 const showIntegrations = computed(() => props.mode === 'all' || props.mode === 'integrations');
+const showReleaseSettings = computed(() => props.mode === 'all' || props.mode === 'installers');
 const showHistory = computed(() => props.mode === 'all' || props.mode === 'history');
 const showSummary = computed(() => props.mode === 'all' || props.mode === 'history');
 
@@ -689,7 +714,8 @@ async function loadEnvironmentConfig({ silent = false } = {}) {
   }
 }
 
-async function saveEnvironmentConfig() {
+async function saveEnvironmentConfig(options = {}) {
+  const releaseOnly = Boolean(options.releaseOnly);
   environmentSaving.value = true;
   try {
     const payload = {
@@ -708,7 +734,6 @@ async function saveEnvironmentConfig() {
         db_password: environmentConfig.value.database.db_password || '',
       },
       updates: {
-        app_version: environmentConfig.value.updates.app_version,
         release_channel: environmentConfig.value.updates.release_channel,
         manifest_url: environmentConfig.value.updates.manifest_url,
         update_enabled: Boolean(environmentConfig.value.updates.update_enabled),
@@ -723,8 +748,8 @@ async function saveEnvironmentConfig() {
     environmentConfig.value = normalizeEnvironmentConfig(res.data?.config || {});
     toast.add({
       severity: 'success',
-      summary: 'Сохранено',
-      detail: res.data?.detail || 'Параметры сервера сохранены.',
+      summary: releaseOnly ? 'Ссылка обновлений сохранена' : 'Сохранено',
+      detail: releaseOnly ? 'Manifest URL и параметры запуска обновлений сохранены.' : (res.data?.detail || 'Параметры сервера сохранены.'),
       life: 4500,
     });
     await loadReleaseStatus();
@@ -985,7 +1010,11 @@ async function refreshPage() {
   }
   if (showIntegrations.value) {
     jobs.push(loadLstmConfig());
+  }
+  if (showIntegrations.value || showReleaseSettings.value) {
     jobs.push(loadEnvironmentConfig());
+  }
+  if (showReleaseSettings.value) {
     jobs.push(loadReleaseStatus());
   }
   await Promise.all(jobs);
@@ -993,7 +1022,7 @@ async function refreshPage() {
 
 onMounted(async () => {
   await refreshPage();
-  if (isActiveUpdateJob(latestUpdateJob())) {
+  if (showReleaseSettings.value && isActiveUpdateJob(latestUpdateJob())) {
     startReleasePolling();
   }
 });
@@ -1140,6 +1169,34 @@ onBeforeUnmount(() => {
 
 .field--wide {
   grid-column: span 2;
+}
+
+.release-config-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr));
+  gap: 0.9rem;
+  min-width: 0;
+}
+
+.release-readonly {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  min-width: 0;
+  border: 1px solid #dbe3ef;
+  border-radius: 12px;
+  padding: 0.85rem;
+  background: #f8fafc;
+}
+
+.release-readonly strong {
+  color: #0f172a;
+  overflow-wrap: anywhere;
+}
+
+.release-readonly small {
+  color: #64748b;
+  overflow-wrap: anywhere;
 }
 
 .release-grid {

@@ -1405,6 +1405,50 @@ class ServiceAgentViewSet(viewsets.ReadOnlyModelViewSet):
         qs = agent.commands.order_by('-created_at')[:50]
         return Response(AgentCommandSerializer(qs, many=True).data, status=status.HTTP_200_OK)
 
+    @action(
+        detail=False,
+        methods=['post'],
+        url_path=r'commands/(?P<command_id>\d+)/cancel',
+        permission_classes=[AdminGroupPermission],
+    )
+    def cancel_command(self, request, command_id=None):
+        command = get_object_or_404(
+            AgentCommand.objects.select_related('agent'),
+            id=command_id,
+        )
+        if command.status in ('success', 'failed', 'cancelled'):
+            return Response(
+                {"detail": "Команда уже завершена.", "command": AgentCommandSerializer(command).data},
+                status=status.HTTP_200_OK,
+            )
+
+        now = timezone.now()
+        reason = str(request.data.get('reason') or '').strip() or 'Команда отменена администратором.'
+        command.status = 'cancelled'
+        command.result_message = reason
+        command.finished_at = now
+        command.save(update_fields=['status', 'result_message', 'finished_at', 'updated_at'])
+
+        if command.command == 'update':
+            agent = command.agent
+            agent.last_update_status = 'failed'
+            agent.last_update_completed_at = now
+            agent.last_update_message = reason
+            agent.save(update_fields=['last_update_status', 'last_update_completed_at', 'last_update_message', 'updated_at'])
+
+        return Response(AgentCommandSerializer(command).data, status=status.HTTP_200_OK)
+
+    @action(
+        detail=False,
+        methods=['delete'],
+        url_path=r'commands/(?P<command_id>\d+)',
+        permission_classes=[AdminGroupPermission],
+    )
+    def delete_command(self, request, command_id=None):
+        command = get_object_or_404(AgentCommand, id=command_id)
+        command.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
     @action(detail=True, methods=['post'])
     def restart(self, request, pk=None):
         agent = self.get_object()
@@ -1486,6 +1530,8 @@ class ServiceAgentViewSet(viewsets.ReadOnlyModelViewSet):
             id=command_id,
             agent__device__serial_number=serial,
         )
+        if command.status == 'cancelled':
+            return Response(AgentCommandSerializer(command).data, status=status.HTTP_200_OK)
         result_status = serializer.validated_data['status']
         now = timezone.now()
         command.status = result_status

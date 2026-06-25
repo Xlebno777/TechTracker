@@ -1,6 +1,5 @@
 <template>
   <div class="monitoring-settings-page p-4">
-    <Toast v-if="activeTabKey === 'installers'" />
     <PageHeader
       title="Настройки"
       :refreshable="false"
@@ -43,18 +42,7 @@
         <MonitoringStateSettings v-else-if="activeTabKey === 'forecast-state'" embedded />
         <MonitoringDecisionSettings v-else-if="activeTabKey === 'decision'" embedded />
         <section v-else-if="activeTabKey === 'installers'" class="installers-panel">
-          <div class="installers-hero">
-            <div>
-              <span class="installers-kicker">GitHub Releases</span>
-              <h3>Инсталятор агента</h3>
-              <p>
-                Один актуальный установщик агента берется из последнего release репозитория tracker-agent.
-              </p>
-            </div>
-            <span :class="['installers-badge', `installers-badge--${agentInstallerStatusKind}`]">
-              {{ agentInstallerStatusLabel }}
-            </span>
-          </div>
+          <MonitoringSystemSettings embedded mode="installers" />
 
           <article class="installer-card installer-card--single">
             <div class="installer-card__icon">
@@ -62,7 +50,7 @@
             </div>
             <div class="installer-card__body">
               <div class="installer-card__head">
-                <strong>TechTracker Agent Installer</strong>
+                <strong>Инсталлятор агента</strong>
                 <span :class="['installer-status', `installer-status--${agentInstallerStatusKind}`]">
                   {{ agentInstallerStatusLabel }}
                 </span>
@@ -114,7 +102,6 @@ import MonitoringSystemSettings from '@/components/MonitoringSystemSettings.vue'
 import MonitoringStateSettings from '@/components/MonitoringStateSettings.vue';
 import MonitoringDecisionSettings from '@/components/MonitoringDecisionSettings.vue';
 import apiClient, { describeApiError } from '@/api';
-import Toast from 'primevue/toast';
 import { useToast } from 'primevue/usetoast';
 
 const route = useRoute();
@@ -129,8 +116,8 @@ const tabs = [
     key: 'integrations',
     label: 'Интеграции',
     icon: 'pi pi-link',
-    hint: 'LSTM и обновления приложения',
-    description: 'Настройка удалённого LSTM API, версии приложения, manifest релиза и запуска обновлений на Windows Server.',
+    hint: 'LSTM и сетевые параметры',
+    description: 'Настройка удалённого LSTM API, сетевых параметров сервера, базы данных и справки по первому администратору.',
   },
   {
     key: 'forecast-state',
@@ -150,8 +137,8 @@ const tabs = [
     key: 'installers',
     label: 'Инсталяторы',
     icon: 'pi pi-box',
-    hint: 'Агент из GitHub Releases',
-    description: 'Проверка последнего release агента, версии установщика и доступности GitHub Releases.',
+    hint: 'Обновления и агент',
+    description: 'Обновление TechTracker и проверка последнего release установщика агента из GitHub Releases.',
   },
   {
     key: 'history',
@@ -163,10 +150,10 @@ const tabs = [
 ];
 
 const helpSteps = [
-  'Интеграции: настройка удаленного LSTM API, токена, сетевых параметров и обновлений приложения.',
+  'Интеграции: настройка удаленного LSTM API, токена, сетевых параметров и базы данных.',
   'Прогнозы и состояния: профили S0/S1/S2, пороги метрик, веса и управление alpha по метрикам.',
   'СППР: CRUD действий/критериев/политик, матрица потерь и AHP-настройки.',
-  'Инсталяторы: один актуальный установщик агента из release репозитория tracker-agent.',
+  'Инсталяторы: обновление TechTracker и один актуальный установщик агента из release репозитория tracker-agent.',
   'История: сводка по данным мониторинга и очистка истории мониторингового контура.',
 ];
 
@@ -479,71 +466,6 @@ onBeforeUnmount(() => {
   min-width: 0;
 }
 
-.installers-hero {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 1rem;
-  align-items: start;
-  border: 1px solid #dbeafe;
-  border-radius: 16px;
-  padding: 1rem;
-  background: linear-gradient(135deg, #f8fafc 0%, #eff6ff 100%);
-  min-width: 0;
-}
-
-.installers-kicker {
-  display: inline-flex;
-  width: fit-content;
-  border-radius: 999px;
-  padding: 0.25rem 0.6rem;
-  background: #dbeafe;
-  color: #1d4ed8;
-  font-size: 0.78rem;
-  font-weight: 800;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
-}
-
-.installers-hero h3 {
-  margin: 0.55rem 0 0.35rem;
-  color: #0f172a;
-  font-size: 1.2rem;
-}
-
-.installers-hero p {
-  margin: 0;
-  max-width: 760px;
-  color: #475569;
-  line-height: 1.45;
-}
-
-.installers-badge {
-  border-radius: 999px;
-  padding: 0.35rem 0.75rem;
-  font-weight: 800;
-  white-space: nowrap;
-}
-
-.installers-badge--ready {
-  background: #dcfce7;
-  color: #166534;
-}
-
-.installers-badge--planned {
-  background: #e2e8f0;
-  color: #334155;
-}
-
-.installers-badge--warn {
-  background: #fef3c7;
-  color: #92400e;
-}
-
-.installers-badge--error {
-  background: #fee2e2;
-  color: #991b1b;
-}
-
 .installer-card {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
@@ -746,14 +668,6 @@ onBeforeUnmount(() => {
 @media (max-width: 640px) {
   .settings-tabs-grid {
     grid-template-columns: 1fr;
-  }
-
-  .installers-hero {
-    grid-template-columns: 1fr;
-  }
-
-  .installers-badge {
-    width: fit-content;
   }
 
   .installer-card--single {
